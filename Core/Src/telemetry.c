@@ -11,8 +11,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#define TELEMETRY_ENABLED
-
 #ifndef TELEMETRY_ENABLED
 static void print_data_no_telem(void *data, size_t len) {
   (void)data;

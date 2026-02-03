@@ -20,15 +20,14 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "app_threadx.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include "main.h"
 #include "sedsprintf.h"
 #include "telemetry.h"
 #include "VB-Threads.h"
 #include "tx_api.h"
-
-
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
-
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -64,7 +63,6 @@
 UINT App_ThreadX_Init(VOID *memory_ptr)
 {
   UINT ret = TX_SUCCESS;
-
   /* USER CODE BEGIN App_ThreadX_MEM_POOL */
   if (init_telemetry_router() != SEDS_OK) {
     Error_Handler();
