@@ -63,10 +63,10 @@ class UI:
             }.get(kind, "[*]")
         return {
             "ok": "✅",
-            "warn": "⚠️",
+            "warn": "⚠️ ",
             "err": "❌",
-            "run": "▶️",
-            "info": "ℹ️",
+            "run": "▶️ ",
+            "info": "ℹ️ ",
         }.get(kind, "•")
 
     def say(self, kind: str, msg: str) -> None:
@@ -512,3 +512,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
