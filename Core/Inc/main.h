@@ -36,7 +36,7 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
-
+void cdc_printf_init(void);
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
@@ -57,6 +57,10 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define BLUE_LED_Pin GPIO_PIN_8
+#define BLUE_LED_GPIO_Port GPIOC
+#define GREEN_LED_Pin GPIO_PIN_10
+#define GREEN_LED_GPIO_Port GPIOA
 
 /* USER CODE BEGIN Private defines */
 
