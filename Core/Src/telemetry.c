@@ -39,9 +39,9 @@ static void print_data_no_telem(void *data, size_t len)
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
-#define UNUSED_FUNCTION __attribute__((unused))
+#define UNUSED_VALUE __attribute__((unused))
 #else
-#define UNUSED_FUNCTION
+#define UNUSED_VALUE
 #endif
 
 #ifndef TELEMETRY_ENABLE_TIMESYNC_ENDPOINT
@@ -57,7 +57,7 @@ static void print_data_no_telem(void *data, size_t len)
 #endif
 
 static uint8_t g_can_rx_subscribed = 0;
-static int32_t g_can_side_id = -1; // side ID returned by seds_router_add_side_serialized
+static UNUSED_VALUE int32_t g_can_side_id = -1; // side ID returned by seds_router_add_side_serialized
 
 #ifndef TX_TIMER_TICKS_PER_SECOND
 #error "TX_TIMER_TICKS_PER_SECOND must be defined by ThreadX."
@@ -88,7 +88,7 @@ static uint64_t tx_raw_now_ms_locked(void)
  * hold telemetry_lock(). Re-acquiring telemetry_lock() here can deadlock on
  * some RTOS mutex configurations. Keep this path lock-free.
  */
-static uint64_t tx_raw_now_ms(void *user)
+static UNUSED_VALUE uint64_t tx_raw_now_ms(void *user)
 {
   (void)user;
   return tx_raw_now_ms_locked();
@@ -263,7 +263,7 @@ void telemetry_timesync_process_queue(void)
 #define NET_TIMESYNC_SMOOTH_DIV 4 /* slew = offset/div */
 #endif
 
-static SedsResult on_timesync(const SedsPacketView *pkt, void *user)
+static UNUSED_VALUE SedsResult on_timesync(const SedsPacketView *pkt, void *user)
 {
   (void)user;
   if (!pkt || !pkt->payload)
@@ -391,7 +391,7 @@ static SedsResult on_timesync(const SedsPacketView *pkt, void *user)
   return SEDS_OK;
 }
 
-static uint64_t node_now_since_ms(void *user)
+static UNUSED_VALUE uint64_t node_now_since_ms(void *user)
 {
   (void)user;
   const RouterState s = g_router;
@@ -552,7 +552,7 @@ void rx_asynchronous(const uint8_t *bytes, size_t len)
 #endif
 }
 
-static UNUSED_FUNCTION void rx_synchronous(const uint8_t *bytes, size_t len)
+static UNUSED_VALUE void rx_synchronous(const uint8_t *bytes, size_t len)
 {
 #ifndef TELEMETRY_ENABLED
   (void)bytes;
@@ -584,7 +584,7 @@ static UNUSED_FUNCTION void rx_synchronous(const uint8_t *bytes, size_t len)
 #endif
 }
 
-static uint64_t g_timesync_seq = 1;
+static UNUSED_VALUE uint64_t g_timesync_seq = 1;
 
 SedsResult telemetry_timesync_request(void)
 {
