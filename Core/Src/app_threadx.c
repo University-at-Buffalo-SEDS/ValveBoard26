@@ -1,21 +1,21 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file    app_threadx.c
-  * @author  MCD Application Team
-  * @brief   ThreadX applicative file
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2020-2021 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file    app_threadx.c
+ * @author  MCD Application Team
+ * @brief   ThreadX applicative file
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2020-2021 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 
 /* Includes ------------------------------------------------------------------*/
@@ -57,15 +57,15 @@ extern void telemetry_init_lock(void);
 /* USER CODE END PFP */
 
 /**
-  * @brief  Application ThreadX Initialization.
-  * @param memory_ptr: memory pointer
-  * @retval int
-  */
+ * @brief  Application ThreadX Initialization.
+ * @param memory_ptr: memory pointer
+ * @retval int
+ */
 UINT App_ThreadX_Init(VOID *memory_ptr)
 {
   UINT ret = TX_SUCCESS;
   /* USER CODE BEGIN App_ThreadX_MEM_POOL */
- TX_BYTE_POOL *byte_pool = (TX_BYTE_POOL*)memory_ptr;
+  TX_BYTE_POOL *byte_pool = (TX_BYTE_POOL *)memory_ptr;
   /* USER CODE END App_ThreadX_MEM_POOL */
 
   /* USER CODE BEGIN App_ThreadX_Init */
@@ -84,11 +84,11 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
   return ret;
 }
 
-  /**
-  * @brief  Function that implements the kernel's initialization.
-  * @param  None
-  * @retval None
-  */
+/**
+ * @brief  Function that implements the kernel's initialization.
+ * @param  None
+ * @retval None
+ */
 void MX_ThreadX_Init(void)
 {
   /* USER CODE BEGIN  Before_Kernel_Start */
