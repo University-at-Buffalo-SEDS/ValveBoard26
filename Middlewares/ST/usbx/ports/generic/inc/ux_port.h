@@ -51,7 +51,6 @@
 
 #ifndef UX_PORT_H
 #define UX_PORT_H
-#pragma GCC diagnostic ignored "-Warray-bounds"
 
 
 /* Determine if the optional USBX user define file should be used.  */

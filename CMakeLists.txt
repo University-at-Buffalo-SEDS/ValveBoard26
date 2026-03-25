@@ -45,6 +45,10 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/can_bus.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/telemetry_thread.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/telemetry.c 
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/telemetry_hooks.c 
 )
 
 # Add include paths
@@ -70,11 +74,20 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 
 # Telemetry Library
 set(SEDSPRINTF_RS_DEVICE_IDENTIFIER "VB" CACHE STRING "" FORCE)
+set(SEDSPRINTF_RS_MAX_STACK_PAYLOAD "128" CACHE STRING "" FORCE)
+set(SEDSPRINTF_RS_ENV_MAX_QUEUE_SIZE "4096" CACHE STRING "" FORCE)
+set(SEDSPRINTF_RS_ENV_STARTING_QUEUE_SIZE "512" CACHE STRING "" FORCE)
+set(SEDSPRINTF_RS_ENV_QUEUE_GROW_STEP "1.25" CACHE STRING "" FORCE)
+set(SEDSPRINTF_RS_ENV_MAX_RECENT_RX_IDS "32" CACHE STRING "" FORCE)
+set(SEDSPRINTF_RS_ENV_STARTING_RECENT_RX_IDS "16" CACHE STRING "" FORCE)
+set(SEDSPRINTF_RS_ENV_PAYLOAD_COMPRESS_THRESHOLD "30" CACHE STRING "" FORCE)
+
 add_subdirectory(${CMAKE_SOURCE_DIR}/sedsprintf_rs)
 target_link_libraries(${CMAKE_PROJECT_NAME} sedsprintf_rs)
 
 # Option defaults to ON
-option(ENABLE_TELEMETRY "Enable the telemetry subsystem" ON)
+option(ENABLE_TELEMETRY "Enable the telemetry subsystem" OFF)
+set(TELEMETRY_TIMESYNC_MASTER_PRIO "-1" CACHE STRING "Timesync source priority. Values < 0 make this board a consumer; values >= 0 make it a source with that priority." FORCE)
 
 # Print its state for debugging
 message(STATUS "Telemetry enabled: ${ENABLE_TELEMETRY}")

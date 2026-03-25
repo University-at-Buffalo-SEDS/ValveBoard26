@@ -24,7 +24,10 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "ux_api.h"
+#include "ux_device_class_cdc_acm.h"
+#include <stdint.h>
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -36,11 +39,21 @@ typedef struct{
   uint32_t pressure; // ADC 
 } valveBoardPayload_t; 
 
+extern UX_SLAVE_CLASS_CDC_ACM *cdc_acm;
+
+#ifndef MIN
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))
+#endif
+
+static void busy_delay(volatile uint32_t n)
+{
+  while (n--) { __NOP(); }
+}
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+void cdc_printf_init(void);
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -55,6 +68,8 @@ FDCAN_HandleTypeDef hfdcan1;
 
 I2C_HandleTypeDef hi2c2;
 
+PCD_HandleTypeDef hpcd_USB_FS;
+
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -65,6 +80,7 @@ static void MX_GPIO_Init(void);
 static void MX_ADC3_Init(void);
 static void MX_I2C2_Init(void);
 static void MX_FDCAN1_Init(void);
+static void MX_USB_PCD_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -106,6 +122,7 @@ int main(void)
   MX_ADC3_Init();
   MX_I2C2_Init();
   MX_FDCAN1_Init();
+  MX_USB_PCD_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -141,9 +158,10 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_HSI48;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -316,19 +334,75 @@ static void MX_I2C2_Init(void)
 }
 
 /**
+  * @brief USB Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USB_PCD_Init(void)
+{
+
+  /* USER CODE BEGIN USB_Init 0 */
+
+  /* USER CODE END USB_Init 0 */
+
+  /* USER CODE BEGIN USB_Init 1 */
+
+  /* USER CODE END USB_Init 1 */
+  hpcd_USB_FS.Instance = USB;
+  hpcd_USB_FS.Init.dev_endpoints = 8;
+  hpcd_USB_FS.Init.speed = PCD_SPEED_FULL;
+  hpcd_USB_FS.Init.phy_itface = PCD_PHY_EMBEDDED;
+  hpcd_USB_FS.Init.Sof_enable = DISABLE;
+  hpcd_USB_FS.Init.low_power_enable = DISABLE;
+  hpcd_USB_FS.Init.lpm_enable = DISABLE;
+  hpcd_USB_FS.Init.battery_charging_enable = DISABLE;
+  if (HAL_PCD_Init(&hpcd_USB_FS) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USB_Init 2 */
+
+  /* USER CODE END USB_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
   */
 static void MX_GPIO_Init(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
 
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(BLUE_LED_GPIO_Port, BLUE_LED_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : BLUE_LED_Pin */
+  GPIO_InitStruct.Pin = BLUE_LED_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(BLUE_LED_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : GREEN_LED_Pin */
+  GPIO_InitStruct.Pin = GREEN_LED_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GREEN_LED_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -337,7 +411,191 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+static inline int cdc_in_isr(void)
+{
+  return (__get_IPSR() != 0U);
+}
+
+/* ------------ Mutex for multi-thread serialization ------------ */
+
+static TX_MUTEX cdc_mutex;
+
+/*
+ * NOTE:
+ * Call this from a ThreadX thread AFTER USBX device init (MX_USBX_Device_Init)
+ * has run. It's OK to call multiple times if you guard creation elsewhere,
+ * but simplest is call once from your "app" thread entry.
+ */
+void cdc_printf_init(void)
+{
+  (void)tx_mutex_create(&cdc_mutex, "cdc_tx_mutex", TX_INHERIT);
+}
+
+extern volatile ULONG _tx_thread_system_state;
+
+static inline int tx_is_running(void)
+{
+  return (__get_IPSR() == 0U) && (_tx_thread_system_state == 0U);
+}
+
+static void cdc_lock(void)
+{
+  if (!tx_is_running() || cdc_in_isr()) return;
+  (void)tx_mutex_get(&cdc_mutex, TX_WAIT_FOREVER);
+}
+
+static void cdc_unlock(void)
+{
+  if (!tx_is_running() || cdc_in_isr()) return;
+  (void)tx_mutex_put(&cdc_mutex);
+}
+
+/* ------------ USB ready helper ------------ */
+
+static inline UINT usb_cdc_ready(void)
+{
+  return (cdc_acm != UX_NULL);
+}
+
+/* ------------ Bounded, drop-on-trouble CDC write ------------ */
+
+static void cdc_write_raw(const uint8_t *buf, uint16_t len)
+{
+  if (!buf || !len || cdc_in_isr()) return;
+  if (!usb_cdc_ready()) return;
+
+  cdc_lock();
+
+  /* Keep it simple: one synchronous write. If host isn't ready, drop. */
+  ULONG actual = 0;
+  UINT st = ux_device_class_cdc_acm_write(cdc_acm, (UCHAR *)buf, (ULONG)len, &actual);
+  if (st != UX_SUCCESS || actual == 0)
+  {
+    /* Host not ready or write failed — drop the data instead of hard-failing.
+       This avoids entering Error_Handler when USB is connected but the
+       host-side serial port isn't opened. */
+    cdc_unlock();
+    return;
+  }
+  (void)actual;
+
+  cdc_unlock();
+}
+
+/* ---------- printf redirection ---------- */
+
+#ifdef __GNUC__
+int _write(int file, char *ptr, int len)
+{
+  (void)file;
+  if (len <= 0) return 0;
+
+  /* If USB not configured, pretend we consumed everything (best-effort debug) */
+  if (!usb_cdc_ready()) return len;
+
+  uint8_t buf[128];
+  int i = 0;
+  static uint8_t last_was_cr = 0;
+
+  while (i < len)
+  {
+    uint16_t w = 0;
+
+    while (i < len && w < sizeof(buf))
+    {
+      uint8_t c = (uint8_t)ptr[i++];
+
+      if (c == '\n')
+      {
+        if (!last_was_cr)
+        {
+          if (w > (uint16_t)(sizeof(buf) - 2))
+          {
+            i--;
+            break;
+          }
+          buf[w++] = '\r';
+        }
+
+        if (w >= sizeof(buf))
+        {
+          i--;
+          break;
+        }
+        buf[w++] = '\n';
+        last_was_cr = 0;
+      }
+      else
+      {
+        if (w >= sizeof(buf))
+        {
+          i--;
+          break;
+        }
+        buf[w++] = c;
+        last_was_cr = (c == '\r');
+      }
+    }
+
+    if (w > 0)
+    {
+      cdc_write_raw(buf, w);
+    }
+  }
+
+  return len;
+}
+#else
+int fputc(int ch, FILE *f)
+{
+  (void)f;
+
+  static uint8_t last_was_cr = 0;
+  uint8_t buf[2];
+  uint16_t w = 0;
+
+  if (!usb_cdc_ready()) return ch;
+
+  if (ch == '\n')
+  {
+    if (!last_was_cr) buf[w++] = '\r';
+    buf[w++] = '\n';
+    last_was_cr = 0;
+  }
+  else
+  {
+    buf[w++] = (uint8_t)ch;
+    last_was_cr = (ch == '\r');
+  }
+
+  if (w > 0) cdc_write_raw(buf, w);
+  return ch;
+}
+#endif
+
 /* USER CODE END 4 */
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM6 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM6)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.
@@ -350,6 +608,9 @@ void Error_Handler(void)
   __disable_irq();
   while (1)
   {
+    HAL_GPIO_TogglePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin);
+    HAL_GPIO_TogglePin(BLUE_LED_GPIO_Port, BLUE_LED_Pin);
+    busy_delay(100000);
   }
   /* USER CODE END Error_Handler_Debug */
 }
