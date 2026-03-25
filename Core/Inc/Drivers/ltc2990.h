@@ -77,8 +77,8 @@ HAL_StatusTypeDef LTC2990_TriggerConversion(LTC2990_Handle_t *handle);
 void LTC2990_Step(LTC2990_Handle_t *handle);
 HAL_StatusTypeDef LTC2990_ReadADCData(LTC2990_Handle_t *handle, uint8_t msb_reg, uint16_t *adc_code, uint8_t *data_valid);
 // single ended
-void LTC2990_GetSingleEndedVoltage(LTC2990_Handle_t *dev, uint8_t channel, float *voltage)
-float LTC2990_SingleEndedCodeToData(LTC2990_Handle_t *dev, uint16_t adc_code, uint8_t channel) 
+void LTC2990_GetSingleEndedVoltage(LTC2990_Handle_t *dev, uint8_t channel, float *voltage);
+float LTC2990_SingleEndedCodeToData(LTC2990_Handle_t *dev, uint16_t adc_code, uint8_t channel); 
 
 // differential
 float LTC2990_GetCurrent(LTC2990_Handle_t *dev);
