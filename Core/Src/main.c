@@ -18,7 +18,9 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "app_threadx.h"
+#include <stdint.h>
 #include "main.h"
+#include <Drivers/ltc2990.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -26,7 +28,13 @@
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
+
 /* USER CODE BEGIN PTD */
+typedef struct{
+  float voltages[4]; // V1-V4
+  float differential; // V1-V2
+  uint32_t pressure; // ADC 
+} valveBoardPayload_t; 
 
 /* USER CODE END PTD */
 
