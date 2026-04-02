@@ -49,6 +49,8 @@ void cdc_printf_init(void);
 
 /* USER CODE END EM */
 
+void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
+
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
 
@@ -57,11 +59,22 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define Solenoid_Current_Pin GPIO_PIN_0
+#define Solenoid_Current_GPIO_Port GPIOC
+#define DUMP_SERVO_Pin GPIO_PIN_0
+#define DUMP_SERVO_GPIO_Port GPIOA
+#define NORMALLY_OPEN_Pin GPIO_PIN_1
+#define NORMALLY_OPEN_GPIO_Port GPIOA
+#define Solenoid_Pin GPIO_PIN_11
+#define Solenoid_GPIO_Port GPIOB
+#define PRESS_IN_Pin GPIO_PIN_13
+#define PRESS_IN_GPIO_Port GPIOB
 #define BLUE_LED_Pin GPIO_PIN_8
 #define BLUE_LED_GPIO_Port GPIOC
+#define BUZZER_Pin GPIO_PIN_9
+#define BUZZER_GPIO_Port GPIOC
 #define GREEN_LED_Pin GPIO_PIN_10
 #define GREEN_LED_GPIO_Port GPIOA
-
 
 /* USER CODE BEGIN Private defines */
 
