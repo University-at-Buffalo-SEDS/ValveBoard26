@@ -26,6 +26,7 @@
 #include "main.h"
 #include "sedsprintf.h"
 #include "telemetry.h"
+#include "thread_comm.h"
 #include "VB-Threads.h"
 #include "tx_api.h"
 /* USER CODE END Includes */
@@ -72,6 +73,11 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
   telemetry_set_byte_pool(byte_pool);
   /* Initialize telemetry lock used by Rust (telemetry_lock/telemetry_unlock). */
   telemetry_init_lock();
+  ret = thread_comm_init(byte_pool);
+  if (ret != TX_SUCCESS)
+  {
+    Error_Handler();
+  }
 
   ret = create_telemetry_thread(byte_pool);
   if (ret != TX_SUCCESS)
