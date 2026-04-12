@@ -1,44 +1,35 @@
 #include "thread_comm.h"
 
-static TX_QUEUE g_thread_comm_queue;
 static TX_MUTEX g_thread_comm_state_mutex;
-static thread_comm_msg_t *g_thread_comm_queue_storage = TX_NULL;
+static TX_MUTEX g_thread_comm_ring_mutex;
+static TX_SEMAPHORE g_thread_comm_items_sem;
+static TX_SEMAPHORE g_thread_comm_spaces_sem;
+static thread_comm_msg_t g_thread_comm_ring[THREAD_COMM_QUEUE_DEPTH];
+static uint32_t g_thread_comm_head = 0U;
+static uint32_t g_thread_comm_tail = 0U;
 static uint8_t g_thread_comm_initialized = 0U;
 static uint8_t g_thread_comm_abort = 0U;
 static int32_t g_thread_comm_shared_value = 0;
 
+static uint32_t thread_comm_ring_next(uint32_t index)
+{
+    index++;
+    if (index >= THREAD_COMM_QUEUE_DEPTH)
+    {
+        index = 0U;
+    }
+    return index;
+}
+
 UINT thread_comm_init(TX_BYTE_POOL *byte_pool)
 {
     UINT status;
-    ULONG queue_storage_size;
+
+    (void)byte_pool;
 
     if (g_thread_comm_initialized != 0U)
     {
         return TX_SUCCESS;
-    }
-
-    if (byte_pool == TX_NULL)
-    {
-        return TX_POOL_ERROR;
-    }
-
-    queue_storage_size = (ULONG)(sizeof(thread_comm_msg_t) * THREAD_COMM_QUEUE_DEPTH);
-
-    status = tx_byte_allocate(byte_pool, (VOID **)&g_thread_comm_queue_storage,
-                              queue_storage_size, TX_NO_WAIT);
-    if (status != TX_SUCCESS)
-    {
-        return status;
-    }
-
-    status = tx_queue_create(&g_thread_comm_queue,
-                             "thread_comm_queue",
-                             TX_1_ULONG,
-                             g_thread_comm_queue_storage,
-                             queue_storage_size);
-    if (status != TX_SUCCESS)
-    {
-        return status;
     }
 
     status = tx_mutex_create(&g_thread_comm_state_mutex,
@@ -49,6 +40,32 @@ UINT thread_comm_init(TX_BYTE_POOL *byte_pool)
         return status;
     }
 
+    status = tx_mutex_create(&g_thread_comm_ring_mutex,
+                             "thread_comm_ring_mutex",
+                             TX_INHERIT);
+    if (status != TX_SUCCESS)
+    {
+        return status;
+    }
+
+    status = tx_semaphore_create(&g_thread_comm_items_sem,
+                                 "thread_comm_items_sem",
+                                 0U);
+    if (status != TX_SUCCESS)
+    {
+        return status;
+    }
+
+    status = tx_semaphore_create(&g_thread_comm_spaces_sem,
+                                 "thread_comm_spaces_sem",
+                                 THREAD_COMM_QUEUE_DEPTH);
+    if (status != TX_SUCCESS)
+    {
+        return status;
+    }
+
+    g_thread_comm_head = 0U;
+    g_thread_comm_tail = 0U;
     g_thread_comm_abort = 0U;
     g_thread_comm_shared_value = 0;
     g_thread_comm_initialized = 1U;
@@ -58,22 +75,70 @@ UINT thread_comm_init(TX_BYTE_POOL *byte_pool)
 
 UINT thread_comm_send(thread_comm_msg_t msg, ULONG wait_option)
 {
+    UINT status;
+
     if (g_thread_comm_initialized == 0U)
     {
         return TX_QUEUE_ERROR;
     }
 
-    return tx_queue_send(&g_thread_comm_queue, &msg, wait_option);
+    status = tx_semaphore_get(&g_thread_comm_spaces_sem, wait_option);
+    if (status != TX_SUCCESS)
+    {
+        return status;
+    }
+
+    status = tx_mutex_get(&g_thread_comm_ring_mutex, wait_option);
+    if (status != TX_SUCCESS)
+    {
+        (void)tx_semaphore_put(&g_thread_comm_spaces_sem);
+        return status;
+    }
+
+    g_thread_comm_ring[g_thread_comm_head] = msg;
+    g_thread_comm_head = thread_comm_ring_next(g_thread_comm_head);
+
+    status = tx_mutex_put(&g_thread_comm_ring_mutex);
+    if (status != TX_SUCCESS)
+    {
+        return status;
+    }
+
+    return tx_semaphore_put(&g_thread_comm_items_sem);
 }
 
 UINT thread_comm_receive(thread_comm_msg_t *msg, ULONG wait_option)
 {
+    UINT status;
+
     if ((g_thread_comm_initialized == 0U) || (msg == TX_NULL))
     {
         return TX_QUEUE_ERROR;
     }
 
-    return tx_queue_receive(&g_thread_comm_queue, msg, wait_option);
+    status = tx_semaphore_get(&g_thread_comm_items_sem, wait_option);
+    if (status != TX_SUCCESS)
+    {
+        return status;
+    }
+
+    status = tx_mutex_get(&g_thread_comm_ring_mutex, wait_option);
+    if (status != TX_SUCCESS)
+    {
+        (void)tx_semaphore_put(&g_thread_comm_items_sem);
+        return status;
+    }
+
+    *msg = g_thread_comm_ring[g_thread_comm_tail];
+    g_thread_comm_tail = thread_comm_ring_next(g_thread_comm_tail);
+
+    status = tx_mutex_put(&g_thread_comm_ring_mutex);
+    if (status != TX_SUCCESS)
+    {
+        return status;
+    }
+
+    return tx_semaphore_put(&g_thread_comm_spaces_sem);
 }
 
 UINT thread_comm_set_abort(uint8_t abort_requested)
