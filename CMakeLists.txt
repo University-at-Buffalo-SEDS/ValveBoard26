@@ -82,12 +82,13 @@ set(SEDSPRINTF_RS_ENV_QUEUE_GROW_STEP "1.25" CACHE STRING "" FORCE)
 set(SEDSPRINTF_RS_ENV_MAX_RECENT_RX_IDS "32" CACHE STRING "" FORCE)
 set(SEDSPRINTF_RS_ENV_STARTING_RECENT_RX_IDS "16" CACHE STRING "" FORCE)
 set(SEDSPRINTF_RS_ENV_PAYLOAD_COMPRESS_THRESHOLD "30" CACHE STRING "" FORCE)
+set(SEDSPRINTF_RS_FORCE_RELEASE ON CACHE BOOL "Build the Rust telemetry library in release mode even for Debug firmware builds" FORCE)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/sedsprintf_rs)
 target_link_libraries(${CMAKE_PROJECT_NAME} sedsprintf_rs)
 
 # Option defaults to ON
-option(ENABLE_TELEMETRY "Enable the telemetry subsystem" OFF)
+option(ENABLE_TELEMETRY "Enable the telemetry subsystem" ON)
 set(TELEMETRY_TIMESYNC_MASTER_PRIO "-1" CACHE STRING "Timesync source priority. Values < 0 make this board a consumer; values >= 0 make it a source with that priority." FORCE)
 
 # Print its state for debugging
