@@ -25,11 +25,6 @@ HAL_StatusTypeDef can_bus_send_large(const uint8_t *bytes, size_t len, uint32_t 
  */
 void can_bus_process_rx(void);
 
-/*
- * Subscribe a callback to RX events (FIFO1).
- * Can be called at startup before interrupts start firing.
- * Returns HAL_OK on success, HAL_ERROR if the list is full or duplicate.
- */
 HAL_StatusTypeDef can_bus_subscribe_rx(can_bus_rx_cb_t cb, void *user);
 
 /*
