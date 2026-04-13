@@ -7,7 +7,7 @@ extern TX_THREAD telemetry_thread;
 void telemetry_thread_entry(ULONG initial_input);
 UINT create_telemetry_thread(TX_BYTE_POOL *byte_pool);
 
-void main_thread_entry(ULONG initial_input)
+void main_thread_entry(ULONG initial_input);
 UINT create_main_thread(TX_BYTE_POOL *byte_pool);
 
 void safety_thread_entry(ULONG initial_input);

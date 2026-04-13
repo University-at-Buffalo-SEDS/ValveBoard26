@@ -30,19 +30,7 @@ static void publish_board_data(valveBoardPayload_t *payload);
 static void emit_umbilical_status(void);
 void main_thread_entry(ULONG initial_input)
 {
-    (void)initial_input;
-
-    // Ensure router exists early (so we can send requests immediately)
-    (void)init_telemetry_router();
-
-    for (;;) {
-        can_bus_process_rx();
-        (void)telemetry_poll_discovery();
-        (void)process_all_queues_timeout(50);
-        (void)telemetry_poll_timesync();
-
-        tx_thread_sleep(1);
-    }
+    
 }
 
 UINT create_main_thread(TX_BYTE_POOL *byte_pool)
