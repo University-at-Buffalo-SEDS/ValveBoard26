@@ -536,6 +536,9 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void startInstrumentation(){
+  
+}
 
 static inline int cdc_in_isr(void)
 {
