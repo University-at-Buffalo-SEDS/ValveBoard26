@@ -287,7 +287,6 @@ static void can_bus_drain_rx_fifo(FDCAN_HandleTypeDef *hfdcan, uint32_t rx_fifo)
     if (HAL_FDCAN_GetRxMessage(hfdcan, rx_fifo, &hdr, data) != HAL_OK) {
       break;
     }
-
     rb_push_drop_oldest(hdr.Identifier & 0x7FFu, data,
                         (uint8_t)can_bus_dlc_to_len(hdr.DataLength));
   }

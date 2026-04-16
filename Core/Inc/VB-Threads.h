@@ -6,13 +6,14 @@ extern TX_THREAD telemetry_thread;
 
 void telemetry_thread_entry(ULONG initial_input);
 UINT create_telemetry_thread(TX_BYTE_POOL *byte_pool);
+/* ------ Telemetry Thread ------ */
 
-void main_thread_entry(ULONG initial_input);
-UINT create_main_thread(TX_BYTE_POOL *byte_pool);
+void main_task_entry(ULONG initial_input);
+UINT create_main_task(TX_BYTE_POOL *byte_pool);
 
 void safety_thread_entry(ULONG initial_input);
 UINT create_safety_thread(TX_BYTE_POOL *byte_pool);
 
 extern TX_EVENT_FLAGS_GROUP event_flags;
 extern TX_QUEUE tx_queue;
-/* ------ Telemetry Thread ------ */
+

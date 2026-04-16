@@ -85,6 +85,11 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
     Error_Handler();
   }
 
+  ret = create_main_task(byte_pool);
+  if (ret != TX_SUCCESS)  {
+    Error_Handler();
+  }
+
   /* USER CODE END App_ThreadX_Init */
 
   return ret;

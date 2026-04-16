@@ -50,6 +50,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/telemetry.c 
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/telemetry_hooks.c 
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/thread_comm.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/main_task.c
 )
 
 # Add include paths
