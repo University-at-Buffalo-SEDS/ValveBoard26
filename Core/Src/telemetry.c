@@ -464,7 +464,7 @@ SedsResult init_telemetry_router(void)
     return SEDS_ERR;
   }
 
-  g_can_side_id = seds_router_add_side_serialized(r, "can", 3U, tx_send, NULL, false);
+  g_can_side_id = seds_router_add_side_serialized(r, "can", 3U, tx_send, NULL, true);
   if (g_can_side_id < 0)
   {
     g_telemetry_init_error_code = TELEMETRY_INIT_ADD_CAN_SIDE_FAILED;
