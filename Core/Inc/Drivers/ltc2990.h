@@ -63,6 +63,7 @@ typedef struct {
     uint8_t i2c_address;           // LTC2990 I2C address 
     float voltages[4];             // single ended voltage measurements V1-V4
     float differential;            // differential voltage measurement (V1-V2)
+    float current;                 // calculated current from differential voltage
     uint32_t time_last_read;       // timestamp of last reading (ms)
 } LTC2990_Handle_t;
 
@@ -79,6 +80,7 @@ HAL_StatusTypeDef LTC2990_ReadADCData(LTC2990_Handle_t *handle, uint8_t msb_reg,
 // single ended
 void LTC2990_GetSingleEndedVoltage(LTC2990_Handle_t *dev, uint8_t channel, float *voltage);
 float LTC2990_SingleEndedCodeToData(LTC2990_Handle_t *dev, uint16_t adc_code, uint8_t channel); 
+float LTC2990_CodeToVoltage(uint16_t adc_code, float lsb_value);
 
 // differential
 float LTC2990_GetCurrent(LTC2990_Handle_t *dev);

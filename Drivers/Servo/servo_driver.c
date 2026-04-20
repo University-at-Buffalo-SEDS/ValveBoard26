@@ -1,11 +1,15 @@
 #include "servo_driver.h"
 
+static uint8_t g_no_servo_state = 0U;
+static uint8_t g_dump_servo_state = 0U;
+
 // Servo control using TIM2 PWM, 
 // pulse range is between 500us - 2500us
 // Netral position, 1500us, so open is 1000us and closed is 2000us 
 void servo_set_position(TIM_HandleTypeDef *htim, uint32_t channel, uint16_t pulse_width_us){ 
     uint32_t period_us = 20000; 
-    uint32_t duty_cycle = (pulse_width_us * htim->Init.Period) / period_us;
+    uint32_t timer_counts = __HAL_TIM_GET_AUTORELOAD(htim) + 1U;
+    uint32_t duty_cycle = ((uint32_t)pulse_width_us * timer_counts) / period_us;
     __HAL_TIM_SET_COMPARE(htim, channel, duty_cycle);
 }
 

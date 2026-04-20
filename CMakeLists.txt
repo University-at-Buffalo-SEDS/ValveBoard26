@@ -42,6 +42,14 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
 )
 
+# add driver headers to include path
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+    # Add user defined include paths
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/Servo
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/Solenoid
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Inc/Drivers
+)
+
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
@@ -50,12 +58,18 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/telemetry.c 
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/telemetry_hooks.c 
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/thread_comm.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/main_task.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/main_thread.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/Servo/servo_driver.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/Solenoid/solenoid_driver.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/Drivers/ltc2990.c
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/Servo
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/Solenoid
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Inc/Drivers
 )
 
 # Add project symbols (macros)

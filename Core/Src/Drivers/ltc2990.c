@@ -1,8 +1,6 @@
 #include <Drivers/ltc2990.h>
 #include <math.h>
 
-static HAL_StatusTypeDef LTC2990_ReadADCData(LTC2990_Handle_t *dev, uint8_t msb_reg, uint16_t *adc_code, uint8_t *data_valid);
-
 /**
   * @brief  Init LTC2990 
   * @param  dev Pointer to LTC2990 handle
@@ -336,7 +334,7 @@ HAL_StatusTypeDef LTC2990_ReadRegister(LTC2990_Handle_t *dev, uint8_t reg, uint8
   * @param  adc_code Pointer to store ADC code
   * @retval HAL status
   */
-static HAL_StatusTypeDef LTC2990_ReadADCData(LTC2990_Handle_t *dev, uint8_t msb_reg, uint16_t *adc_code, uint8_t *data_valid) {
+HAL_StatusTypeDef LTC2990_ReadADCData(LTC2990_Handle_t *dev, uint8_t msb_reg, uint16_t *adc_code, uint8_t *data_valid) {
     HAL_StatusTypeDef status;
     uint8_t msb, lsb;
     uint16_t code;

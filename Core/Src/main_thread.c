@@ -12,7 +12,10 @@
 
 LTC2990_Handle_t ltc2990_dev;
 TX_THREAD main_thread;
+extern I2C_HandleTypeDef hi2c2;
+
 #define MAIN_THREAD_STACK_SIZE (16U *1024U)
+#define UMBILICAL_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
 
 
 static uint8_t g_aborted = 0U; 
@@ -20,40 +23,68 @@ static uint8_t g_pilot_valve_state = 0U;
 static uint8_t g_no_servo_state = 0U;      // 0U = open, 1U = closed
 static uint8_t g_dump_servo_state = 0U;    // ^^^
 static uint8_t g_continuity_state = 1U;    // 0U = disconnected, 1U = connected 
-static uint8_t g_no_signal_state = 0U;     // umbilical
-static uint8_t g_dump_signal_state = 0U;   // ^^^
-static uint8_t g_pilot_signal_state = 0U;  // ^^^
 
 // Umbilical GPIO inputs 
 solenoid_t pilot_solenoid = {Solenoid_GPIO_Port, Solenoid_Pin, Solenoid_GPIO_Port, Solenoid_Pin, NULL, 0, 5};
 
 
 static void publish_all_umbilical_statuses(void){
-    (void)telemetry_publish_umbilical_status(CMD_PILOT_VALVE_OPEN, g_pilot_valve_state);
+    static uint8_t published_once = 0U;
+    static ULONG last_publish_ticks = 0U;
+    ULONG now = tx_time_get();
+
+    if ((published_once != 0U) &&
+        ((ULONG)(now - last_publish_ticks) < UMBILICAL_STATUS_PERIOD_TICKS))
+    {
+        return;
+    }
+
+    (void)telemetry_publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
     (void)telemetry_publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_state);
-    (void)telemetry_publish_umbilical_status(CMD_DUMP_SERVO_CLOSE, g_dump_servo_state);
+    (void)telemetry_publish_umbilical_status(CMD_DUMP_CLOSE, g_dump_servo_state);
     (void)telemetry_publish_umbilical_status(0x08, g_continuity_state);
+
+    published_once = 1U;
+    last_publish_ticks = now;
+}
+
+void pilot_valve_on(void){
+    if (solenoidOn(&pilot_solenoid) == 0) {
+        g_pilot_valve_state = 1U;
+        (void)telemetry_publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
+    }
+}
+
+void pilot_valve_off(void)
+{
+    solenoidOff(&pilot_solenoid);
+    g_pilot_valve_state = 0U;
+    (void)telemetry_publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
 }
 
 static void handle_command(thread_comm_msg_t cmd){
+    if (g_aborted)
+    {
+        return;
+    }
     switch (cmd) {
-    case CMD_PILOT_VALVE_OPEN:
-        if (!g_aborted){pilot_valve_on();}
+    case CMD_PILOT_OPEN:
+        pilot_valve_on();
         break;
-    case CMD_PILOT_VALVE_CLOSE:
-        if (!g_aborted){pilot_valve_off();}
+    case CMD_PILOT_CLOSE:
+        pilot_valve_off();
         break;
-    case CMD_DUMP_SERVO_CLOSE:
-        if (!g_aborted){dump_servo_close();}
+    case CMD_DUMP_CLOSE:
+       dump_servo_close();
         break;
-    case CMD_DUMP_SERVO_OPEN:
-        if (!g_aborted){dump_servo_open();}
+    case CMD_DUMP_OPEN:
+        dump_servo_open();
         break;
     case CMD_NORMALLY_OPEN_CLOSE:
-        if (!g_aborted){no_servo_close();}
+        no_servo_close();
         break;
     case CMD_NORMALLY_OPEN_OPEN:
-        if (!g_aborted){no_servo_open();}
+        no_servo_open();
         break;
     default:
         break;
@@ -91,11 +122,7 @@ void main_thread_entry(ULONG initial_input)
     LTC2990_Init(&ltc2990_dev, &hi2c2, LTC2990_I2C_ADDRESS);
     LTC2990_SetMode(&ltc2990_dev, V1_V2_V3_V4, CLEAR_ALL);
     
-    // Initialize router
-    (void)init_telemetry_router();
-
-    ULONG last_umbilical_status_ticks = tx_time_get();
-    thread_comm_msg_t cmd;
+    thread_comm_msg_t msg;
     
     publish_all_umbilical_statuses();
     for (;;) {
@@ -113,11 +140,9 @@ void main_thread_entry(ULONG initial_input)
         {
             handle_command(msg);
         }
-        
-        can_bus_process_rx();
-        (void)telemetry_poll_discovery();
-        (void)process_all_queues_timeout(50);
-        (void)telemetry_poll_timesync();
+
+        publish_all_umbilical_statuses();
+        tx_thread_sleep(1);
     }
 }    
 
@@ -146,4 +171,3 @@ UINT create_main_thread(TX_BYTE_POOL *byte_pool)
 
     return status;
 }
-
