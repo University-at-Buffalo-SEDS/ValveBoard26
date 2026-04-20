@@ -19,3 +19,5 @@ void solenoidInit(solenoid_t *hw);
 int solenoidOn(solenoid_t *hw);
 void solenoidOff(solenoid_t *hw);
 bool solenoidFault(solenoid_t *hw);
+void pilot_valve_on(void);
+void pilot_valve_off(void);
