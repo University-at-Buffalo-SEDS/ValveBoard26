@@ -113,9 +113,11 @@ void main_thread_entry(ULONG initial_input)
     // Initialize the PWM for servos
     HAL_TIM_PWM_Start(NO_SERVO_TIMER, NO_SERVO_CHANNEL);
     HAL_TIM_PWM_Start(DUMP_SERVO_TIMER, DUMP_SERVO_CHANNEL);
-    
+
+
     // Set initial servo positions
     no_servo_open();
+    tx_thread_sleep(2 * TX_TIMER_TICKS_PER_SECOND); // Give some time for the servo to move to the open position before sending next command
     dump_servo_open();
     
     // Initialize LTC2990 
