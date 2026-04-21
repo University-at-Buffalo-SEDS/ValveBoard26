@@ -117,7 +117,6 @@ void main_thread_entry(ULONG initial_input)
 
     // Set initial servo positions
     no_servo_open();
-    tx_thread_sleep(2 * TX_TIMER_TICKS_PER_SECOND); // Give some time for the servo to move to the open position before sending next command
     dump_servo_open();
     
     // Initialize LTC2990 
