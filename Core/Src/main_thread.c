@@ -6,6 +6,7 @@
 #include "main.h"
 #include "thread_comm.h"
 #include "ltc2990.h"
+#include "pressure_transducer_driver.h"
 #include "solenoid_driver.h"
 #include "servo_driver.h"
 #include <stdbool.h>
@@ -16,16 +17,32 @@ extern I2C_HandleTypeDef hi2c2;
 
 #define MAIN_THREAD_STACK_SIZE (16U *1024U)
 #define UMBILICAL_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
+#define PRESSURE_ACQ_PERIOD_TICKS \
+    ((TX_TIMER_TICKS_PER_SECOND >= 10U) ? (TX_TIMER_TICKS_PER_SECOND / 10U) : 1U)
 
 
 static uint8_t g_aborted = 0U; 
 static uint8_t g_pilot_valve_state = 0U;
-static uint8_t g_no_servo_state = 0U;      // 0U = open, 1U = closed
-static uint8_t g_dump_servo_state = 0U;    // ^^^
+static uint8_t g_no_servo_open_state = 0U;
+static uint8_t g_nitrous_servo_open_state = 0U;
 static uint8_t g_continuity_state = 1U;    // 0U = disconnected, 1U = connected 
 
 // Umbilical GPIO inputs 
 solenoid_t pilot_solenoid = {Solenoid_GPIO_Port, Solenoid_Pin, Solenoid_GPIO_Port, Solenoid_Pin, NULL, 0, 5};
+extern ADC_HandleTypeDef hadc3;
+extern TIM_HandleTypeDef htim3;
+
+static pressure_transducer_t fuel_tank_pressure = {
+    .hadc = &hadc3,
+    .trigger_timer = &htim3,
+    .channel = ADC_CHANNEL_5,
+    .vref = PRESSURE_TRANSDUCER_ADC_VREF,
+    .min_voltage = PRESSURE_TRANSDUCER_MIN_VOLTAGE,
+    .max_voltage = PRESSURE_TRANSDUCER_MAX_VOLTAGE,
+    .min_pressure = PRESSURE_TRANSDUCER_MIN_PRESSURE,
+    .max_pressure = PRESSURE_TRANSDUCER_MAX_PRESSURE,
+    .timeout_ms = PRESSURE_TRANSDUCER_ADC_TIMEOUT_MS,
+};
 
 
 static void publish_all_umbilical_statuses(void){
@@ -40,12 +57,34 @@ static void publish_all_umbilical_statuses(void){
     }
 
     (void)telemetry_publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
-    (void)telemetry_publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_state);
-    (void)telemetry_publish_umbilical_status(CMD_DUMP_CLOSE, g_dump_servo_state);
+    (void)telemetry_publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
+    (void)telemetry_publish_umbilical_status(CMD_DUMP_OPEN, g_nitrous_servo_open_state);
     (void)telemetry_publish_umbilical_status(0x08, g_continuity_state);
 
     published_once = 1U;
     last_publish_ticks = now;
+}
+
+static void publish_pressure_transducer(void)
+{
+    static uint8_t published_once = 0U;
+    static ULONG last_publish_ticks = 0U;
+    pressure_transducer_sample_t sample;
+    ULONG now = tx_time_get();
+
+    if ((published_once != 0U) &&
+        ((ULONG)(now - last_publish_ticks) < PRESSURE_ACQ_PERIOD_TICKS))
+    {
+        return;
+    }
+
+    if (pressureTransducerRead(&fuel_tank_pressure, &sample) == HAL_OK)
+    {
+        (void)log_telemetry_asynchronous(SEDS_DT_FUEL_TANK_PRESSURE, &sample.pressure, 1U,
+                                         sizeof(sample.pressure));
+        published_once = 1U;
+        last_publish_ticks = now;
+    }
 }
 
 void pilot_valve_on(void){
@@ -62,6 +101,34 @@ void pilot_valve_off(void)
     (void)telemetry_publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
 }
 
+static void nitrous_valve_open(void)
+{
+    dump_servo_open();
+    g_nitrous_servo_open_state = 1U;
+    (void)telemetry_publish_umbilical_status(CMD_DUMP_OPEN, g_nitrous_servo_open_state);
+}
+
+static void nitrous_valve_close(void)
+{
+    dump_servo_close();
+    g_nitrous_servo_open_state = 0U;
+    (void)telemetry_publish_umbilical_status(CMD_DUMP_OPEN, g_nitrous_servo_open_state);
+}
+
+static void normally_open_valve_open(void)
+{
+    no_servo_open();
+    g_no_servo_open_state = 1U;
+    (void)telemetry_publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
+}
+
+static void normally_open_valve_close(void)
+{
+    no_servo_close();
+    g_no_servo_open_state = 0U;
+    (void)telemetry_publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
+}
+
 static void handle_command(thread_comm_msg_t cmd){
     if (g_aborted)
     {
@@ -75,16 +142,16 @@ static void handle_command(thread_comm_msg_t cmd){
         pilot_valve_off();
         break;
     case CMD_DUMP_CLOSE:
-       dump_servo_close();
+        nitrous_valve_close();
         break;
     case CMD_DUMP_OPEN:
-        dump_servo_open();
+        nitrous_valve_open();
         break;
     case CMD_NORMALLY_OPEN_CLOSE:
-        no_servo_close();
+        normally_open_valve_close();
         break;
     case CMD_NORMALLY_OPEN_OPEN:
-        no_servo_open();
+        normally_open_valve_open();
         break;
     default:
         break;
@@ -92,8 +159,8 @@ static void handle_command(thread_comm_msg_t cmd){
 }
 
 static void abort_state(void){
-    no_servo_open();
-    dump_servo_open();
+    normally_open_valve_open();
+    nitrous_valve_open();
     pilot_valve_off();
     g_aborted = 1U;
     // Blink LEDs to indicate abort
@@ -109,6 +176,7 @@ void main_thread_entry(ULONG initial_input)
 
     // Initialize pilot valve solenoid
     solenoidInit(&pilot_solenoid);
+    (void)pressureTransducerInit(&fuel_tank_pressure);
     
     // Initialize the PWM for servos
     HAL_TIM_PWM_Start(NO_SERVO_TIMER, NO_SERVO_CHANNEL);
@@ -116,8 +184,8 @@ void main_thread_entry(ULONG initial_input)
 
 
     // Set initial servo positions
-    no_servo_open();
-    dump_servo_open();
+    normally_open_valve_open();
+    nitrous_valve_open();
     
     // Initialize LTC2990 
     LTC2990_Init(&ltc2990_dev, &hi2c2, LTC2990_I2C_ADDRESS);
@@ -143,6 +211,7 @@ void main_thread_entry(ULONG initial_input)
         }
 
         publish_all_umbilical_statuses();
+        publish_pressure_transducer();
         tx_thread_sleep(1);
     }
 }    

@@ -47,6 +47,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/Servo
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/Solenoid
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/Pressure
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Inc/Drivers
 )
 
@@ -61,6 +62,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/main_thread.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/Servo/servo_driver.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/Solenoid/solenoid_driver.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/Pressure/pressure_transducer_driver.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/Drivers/ltc2990.c
 )
 
@@ -69,6 +71,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/Servo
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/Solenoid
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/Pressure
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Inc/Drivers
 )
 

@@ -16,13 +16,13 @@ void servo_set_position(TIM_HandleTypeDef *htim, uint32_t channel, uint16_t puls
 void no_servo_open(void){
     servo_set_position(NO_SERVO_TIMER, NO_SERVO_CHANNEL, 1000);
     g_no_servo_state = 0U;
-    HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_SET);  // servo open
+    // HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_SET);  // servo open
 }
 
 void no_servo_close(void){
     servo_set_position(NO_SERVO_TIMER, NO_SERVO_CHANNEL, 2000);
     g_no_servo_state = 1U;
-    HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_RESET); // servo closed
+    // HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_RESET); // servo closed
 }
 
 void dump_servo_open(void){
