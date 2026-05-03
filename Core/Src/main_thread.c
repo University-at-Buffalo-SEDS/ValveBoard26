@@ -17,15 +17,18 @@ extern I2C_HandleTypeDef hi2c2;
 
 #define MAIN_THREAD_STACK_SIZE (16U *1024U)
 #define UMBILICAL_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
+#define FILL_LINE_STATUS_PERIOD_TICKS \
+    ((TX_TIMER_TICKS_PER_SECOND >= 10U) ? (TX_TIMER_TICKS_PER_SECOND / 10U) : 1U)
 #define PRESSURE_ACQ_PERIOD_TICKS \
     ((TX_TIMER_TICKS_PER_SECOND >= 4U) ? (TX_TIMER_TICKS_PER_SECOND / 4U) : 1U)
+#define UMBILICAL_STATUS_FILL_LINE_INSTALLED 0x08U
 
 
 static uint8_t g_aborted = 0U; 
 static uint8_t g_pilot_valve_state = 0U;
 static uint8_t g_no_servo_open_state = 0U;
 static uint8_t g_nitrous_servo_open_state = 0U;
-static uint8_t g_continuity_state = 1U;    // 0U = disconnected, 1U = connected 
+static uint8_t g_fill_line_installed_state = 1U;    // 0U = removed, 1U = installed
 
 // Umbilical GPIO inputs 
 solenoid_t pilot_solenoid = {Solenoid_GPIO_Port, Solenoid_Pin, Solenoid_GPIO_Port, Solenoid_Pin, NULL, 0, 5};
@@ -45,6 +48,41 @@ static pressure_transducer_t fuel_tank_pressure = {
 };
 
 
+static uint8_t publish_umbilical_status(uint8_t status_id, uint8_t state)
+{
+    return (telemetry_publish_umbilical_status(status_id,
+                                               (state != 0U) ? 1U : 0U) == SEDS_OK)
+               ? 1U
+               : 0U;
+}
+
+static void set_fill_line_installed(uint8_t installed)
+{
+    g_fill_line_installed_state = (installed != 0U) ? 1U : 0U;
+    (void)publish_umbilical_status(UMBILICAL_STATUS_FILL_LINE_INSTALLED,
+                                   g_fill_line_installed_state);
+}
+
+static void publish_fill_line_status(void)
+{
+    static uint8_t published_once = 0U;
+    static ULONG last_publish_ticks = 0U;
+    ULONG now = tx_time_get();
+
+    if ((published_once != 0U) &&
+        ((ULONG)(now - last_publish_ticks) < FILL_LINE_STATUS_PERIOD_TICKS))
+    {
+        return;
+    }
+
+    if (publish_umbilical_status(UMBILICAL_STATUS_FILL_LINE_INSTALLED,
+                                 g_fill_line_installed_state) != 0U)
+    {
+        published_once = 1U;
+        last_publish_ticks = now;
+    }
+}
+
 static void publish_all_umbilical_statuses(void){
     static uint8_t published_once = 0U;
     static ULONG last_publish_ticks = 0U;
@@ -56,10 +94,9 @@ static void publish_all_umbilical_statuses(void){
         return;
     }
 
-    (void)telemetry_publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
-    (void)telemetry_publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
-    (void)telemetry_publish_umbilical_status(CMD_DUMP_OPEN, g_nitrous_servo_open_state);
-    (void)telemetry_publish_umbilical_status(0x08, g_continuity_state);
+    (void)publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
+    (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
+    (void)publish_umbilical_status(CMD_DUMP_OPEN, g_nitrous_servo_open_state);
 
     published_once = 1U;
     last_publish_ticks = now;
@@ -90,7 +127,7 @@ static void publish_pressure_transducer(void)
 void pilot_valve_on(void){
     if (solenoidOn(&pilot_solenoid) == 0) {
         g_pilot_valve_state = 1U;
-        (void)telemetry_publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
+        (void)publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
     }
 }
 
@@ -98,35 +135,35 @@ void pilot_valve_off(void)
 {
     solenoidOff(&pilot_solenoid);
     g_pilot_valve_state = 0U;
-    (void)telemetry_publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
+    (void)publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
 }
 
 static void nitrous_valve_open(void)
 {
     dump_servo_open();
     g_nitrous_servo_open_state = 1U;
-    (void)telemetry_publish_umbilical_status(CMD_DUMP_OPEN, g_nitrous_servo_open_state);
+    (void)publish_umbilical_status(CMD_DUMP_OPEN, g_nitrous_servo_open_state);
 }
 
 static void nitrous_valve_close(void)
 {
     dump_servo_close();
     g_nitrous_servo_open_state = 0U;
-    (void)telemetry_publish_umbilical_status(CMD_DUMP_OPEN, g_nitrous_servo_open_state);
+    (void)publish_umbilical_status(CMD_DUMP_OPEN, g_nitrous_servo_open_state);
 }
 
 static void normally_open_valve_open(void)
 {
     no_servo_open();
     g_no_servo_open_state = 1U;
-    (void)telemetry_publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
+    (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
 }
 
 static void normally_open_valve_close(void)
 {
     no_servo_close();
     g_no_servo_open_state = 0U;
-    (void)telemetry_publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
+    (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
 }
 
 static void handle_command(thread_comm_msg_t cmd){
@@ -152,6 +189,9 @@ static void handle_command(thread_comm_msg_t cmd){
         break;
     case CMD_NORMALLY_OPEN_OPEN:
         normally_open_valve_open();
+        break;
+    case CMD_SEQUENCE:
+        set_fill_line_installed(0U);
         break;
     default:
         break;
@@ -193,6 +233,7 @@ void main_thread_entry(ULONG initial_input)
     
     thread_comm_msg_t msg;
     
+    set_fill_line_installed(1U);
     publish_all_umbilical_statuses();
     for (;;) {
         if (thread_comm_get_abort() != 0U)
@@ -210,6 +251,7 @@ void main_thread_entry(ULONG initial_input)
             handle_command(msg);
         }
 
+        publish_fill_line_status();
         publish_all_umbilical_statuses();
         publish_pressure_transducer();
         tx_thread_sleep(1);
