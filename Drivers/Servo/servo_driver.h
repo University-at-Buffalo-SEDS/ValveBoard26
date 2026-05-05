@@ -7,14 +7,14 @@ extern TIM_HandleTypeDef htim2;
 // PWM servo timer and channels
 #define NO_SERVO_TIMER         &htim2
 #define NO_SERVO_CHANNEL       TIM_CHANNEL_2
-#define NO_SERVO_ZERO_DEGREES  (0)
+#define NO_SERVO_ZERO_DEGREES  (4)
 // Angles are relative to zero: positive is clockwise, negative is counterclockwise.
 #define NO_SERVO_OPEN_DEGREES  0
 #define NO_SERVO_CLOSE_DEGREES 90
 
 #define DUMP_SERVO_TIMER       &htim2
 #define DUMP_SERVO_CHANNEL     TIM_CHANNEL_1
-#define DUMP_SERVO_ZERO_DEGREES 0
+#define DUMP_SERVO_ZERO_DEGREES (2)
 // Angles are relative to zero: positive is clockwise, negative is counterclockwise.
 #define DUMP_SERVO_OPEN_DEGREES 0
 #define DUMP_SERVO_CLOSE_DEGREES (90)
