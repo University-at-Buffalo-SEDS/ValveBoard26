@@ -284,6 +284,7 @@ SedsResult tx_send(const uint8_t *bytes, size_t len, void *user)
   {
     return SEDS_BAD_ARG;
   }
+  HAL_GPIO_TogglePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin);
   return (can_bus_send_large(bytes, len, 0x03) == HAL_OK) ? SEDS_OK : SEDS_IO;
 }
 

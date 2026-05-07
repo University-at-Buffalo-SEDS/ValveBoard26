@@ -16,7 +16,7 @@ extern TIM_HandleTypeDef htim2;
 #define DUMP_SERVO_CHANNEL     TIM_CHANNEL_1
 #define DUMP_SERVO_ZERO_DEGREES (2)
 // Angles are relative to zero: positive is clockwise, negative is counterclockwise.
-#define DUMP_SERVO_OPEN_DEGREES 0
+#define DUMP_SERVO_OPEN_DEGREES 3
 #define DUMP_SERVO_CLOSE_DEGREES (90)
 
 void servo_set_position(TIM_HandleTypeDef *htim, uint32_t channel, uint16_t pulse_width_us); 
