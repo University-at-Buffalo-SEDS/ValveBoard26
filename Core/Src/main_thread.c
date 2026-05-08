@@ -19,7 +19,6 @@ extern I2C_HandleTypeDef hi2c2;
 #define UMBILICAL_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
 #define PRESSURE_ACQ_PERIOD_TICKS \
     ((TX_TIMER_TICKS_PER_SECOND >= 4U) ? (TX_TIMER_TICKS_PER_SECOND / 4U) : 1U)
-#define LAUNCH_SEQUENCE_ACTUATOR_START_DELAY_MS 5000U
 #define LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS 10000U
 #define LAUNCH_SEQUENCE_PILOT_OPEN_DURATION_MS 1500U
 
@@ -81,6 +80,7 @@ static void publish_all_umbilical_statuses(void){
     (void)publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
     (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
     (void)publish_umbilical_status(CMD_DUMP_OPEN, g_nitrous_servo_open_state);
+    (void)publish_umbilical_status(CMD_SEQUENCE, g_launch_sequence_active);
 
     published_once = 1U;
     last_publish_ticks = now;
@@ -158,9 +158,15 @@ static void start_launch_sequence(void)
     }
 
     g_launch_sequence_active = 1U;
-    g_launch_sequence_actuator_started = 0U;
+    g_launch_sequence_actuator_started = 1U;
     g_launch_sequence_pilot_opened = 0U;
     g_launch_sequence_start_ticks = tx_time_get();
+    if (g_launch_sequence_actuator_command_sent == 0U)
+    {
+        const uint64_t sequence_timestamp_ms = telemetry_unix_ms();
+        (void)telemetry_send_actuator_command_at(CMD_IGNITER_SEQUENCE, sequence_timestamp_ms);
+        g_launch_sequence_actuator_command_sent = 1U;
+    }
     (void)publish_umbilical_status(CMD_SEQUENCE, 1U);
 }
 
@@ -173,20 +179,9 @@ static void service_launch_sequence(void)
 
     const ULONG now = tx_time_get();
     const ULONG elapsed = now - g_launch_sequence_start_ticks;
-    const ULONG actuator_start_ticks = ms_to_ticks(LAUNCH_SEQUENCE_ACTUATOR_START_DELAY_MS);
     const ULONG pilot_open_ticks = ms_to_ticks(LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS);
     const ULONG pilot_close_ticks =
         pilot_open_ticks + ms_to_ticks(LAUNCH_SEQUENCE_PILOT_OPEN_DURATION_MS);
-
-    if ((g_launch_sequence_actuator_started == 0U) && (elapsed >= actuator_start_ticks))
-    {
-        if (g_launch_sequence_actuator_command_sent == 0U)
-        {
-            (void)telemetry_send_actuator_command(CMD_IGNITER_SEQUENCE);
-            g_launch_sequence_actuator_command_sent = 1U;
-        }
-        g_launch_sequence_actuator_started = 1U;
-    }
 
     if ((g_launch_sequence_pilot_opened == 0U) && (elapsed >= pilot_open_ticks))
     {

@@ -60,6 +60,7 @@ SedsResult telemetry_announce_discovery(void);
 SedsResult telemetry_poll_discovery(void);
 SedsResult telemetry_publish_umbilical_status(uint8_t cmd_id, uint8_t on);
 SedsResult telemetry_send_actuator_command(uint8_t cmd_id);
+SedsResult telemetry_send_actuator_command_at(uint8_t cmd_id, uint64_t timestamp_ms);
 void telemetry_note_can_rx(void);
 void telemetry_toggle_led_on_can_rx(void);
 int32_t telemetry_get_init_error_code(void);

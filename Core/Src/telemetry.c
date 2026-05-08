@@ -421,6 +421,23 @@ SedsResult telemetry_send_actuator_command(uint8_t cmd_id)
 #endif
 }
 
+SedsResult telemetry_send_actuator_command_at(uint8_t cmd_id, uint64_t timestamp_ms)
+{
+#ifndef TELEMETRY_ENABLED
+  (void)cmd_id;
+  (void)timestamp_ms;
+  return SEDS_OK;
+#else
+  if (!g_router.r && init_telemetry_router() != SEDS_OK)
+  {
+    return SEDS_ERR;
+  }
+
+  return seds_router_log_typed_ex(g_router.r, SEDS_DT_ACTUATOR_COMMAND, &cmd_id, 1U,
+                                  sizeof(cmd_id), SEDS_EK_UNSIGNED, &timestamp_ms, 1);
+#endif
+}
+
 SedsResult init_telemetry_router(void)
 {
 #ifndef TELEMETRY_ENABLED
