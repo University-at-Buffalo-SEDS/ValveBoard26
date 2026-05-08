@@ -411,6 +411,16 @@ SedsResult telemetry_publish_umbilical_status(uint8_t cmd_id, uint8_t on)
 #endif
 }
 
+SedsResult telemetry_send_actuator_command(uint8_t cmd_id)
+{
+#ifndef TELEMETRY_ENABLED
+  (void)cmd_id;
+  return SEDS_OK;
+#else
+  return log_telemetry_asynchronous(SEDS_DT_ACTUATOR_COMMAND, &cmd_id, 1U, sizeof(cmd_id));
+#endif
+}
+
 SedsResult init_telemetry_router(void)
 {
 #ifndef TELEMETRY_ENABLED

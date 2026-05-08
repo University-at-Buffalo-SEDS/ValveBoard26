@@ -59,6 +59,7 @@ SedsResult telemetry_poll_timesync(void);
 SedsResult telemetry_announce_discovery(void);
 SedsResult telemetry_poll_discovery(void);
 SedsResult telemetry_publish_umbilical_status(uint8_t cmd_id, uint8_t on);
+SedsResult telemetry_send_actuator_command(uint8_t cmd_id);
 void telemetry_note_can_rx(void);
 void telemetry_toggle_led_on_can_rx(void);
 int32_t telemetry_get_init_error_code(void);
@@ -75,6 +76,9 @@ enum valve_commands {
     CMD_NORMALLY_OPEN_CLOSE = 4,
     CMD_DUMP_CLOSE = 5,
     CMD_SEQUENCE = 6,
+};
+enum actuator_commands {
+    CMD_IGNITER_SEQUENCE = 14,
 };
 void telemetry_set_unix_time_ms(uint64_t unix_ms);
 

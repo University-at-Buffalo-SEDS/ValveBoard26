@@ -19,12 +19,21 @@ extern I2C_HandleTypeDef hi2c2;
 #define UMBILICAL_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
 #define PRESSURE_ACQ_PERIOD_TICKS \
     ((TX_TIMER_TICKS_PER_SECOND >= 4U) ? (TX_TIMER_TICKS_PER_SECOND / 4U) : 1U)
+#define LAUNCH_SEQUENCE_ACTUATOR_START_DELAY_MS 5000U
+#define LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS 10000U
+#define LAUNCH_SEQUENCE_PILOT_OPEN_DURATION_MS 1500U
 
 
 static uint8_t g_aborted = 0U; 
 static uint8_t g_pilot_valve_state = 0U;
 static uint8_t g_no_servo_open_state = 0U;
 static uint8_t g_nitrous_servo_open_state = 0U;
+static uint8_t g_launch_sequence_active = 0U;
+static uint8_t g_launch_sequence_actuator_started = 0U;
+static uint8_t g_launch_sequence_pilot_opened = 0U;
+static uint8_t g_launch_sequence_completed = 0U;
+static uint8_t g_launch_sequence_actuator_command_sent = 0U;
+static ULONG g_launch_sequence_start_ticks = 0U;
 
 // Umbilical GPIO inputs 
 solenoid_t pilot_solenoid = {Solenoid_GPIO_Port, Solenoid_Pin, Solenoid_GPIO_Port, Solenoid_Pin, NULL, 0, 5};
@@ -50,6 +59,12 @@ static uint8_t publish_umbilical_status(uint8_t status_id, uint8_t state)
                                                (state != 0U) ? 1U : 0U) == SEDS_OK)
                ? 1U
                : 0U;
+}
+
+static ULONG ms_to_ticks(uint32_t ms)
+{
+    ULONG ticks = (ULONG)(((uint64_t)ms * (uint64_t)TX_TIMER_TICKS_PER_SECOND + 999ULL) / 1000ULL);
+    return (ticks == 0U) ? 1U : ticks;
 }
 
 static void publish_all_umbilical_statuses(void){
@@ -135,6 +150,60 @@ static void normally_open_valve_close(void)
     (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
 }
 
+static void start_launch_sequence(void)
+{
+    if ((g_launch_sequence_active != 0U) || (g_launch_sequence_completed != 0U))
+    {
+        return;
+    }
+
+    g_launch_sequence_active = 1U;
+    g_launch_sequence_actuator_started = 0U;
+    g_launch_sequence_pilot_opened = 0U;
+    g_launch_sequence_start_ticks = tx_time_get();
+    (void)publish_umbilical_status(CMD_SEQUENCE, 1U);
+}
+
+static void service_launch_sequence(void)
+{
+    if (g_launch_sequence_active == 0U)
+    {
+        return;
+    }
+
+    const ULONG now = tx_time_get();
+    const ULONG elapsed = now - g_launch_sequence_start_ticks;
+    const ULONG actuator_start_ticks = ms_to_ticks(LAUNCH_SEQUENCE_ACTUATOR_START_DELAY_MS);
+    const ULONG pilot_open_ticks = ms_to_ticks(LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS);
+    const ULONG pilot_close_ticks =
+        pilot_open_ticks + ms_to_ticks(LAUNCH_SEQUENCE_PILOT_OPEN_DURATION_MS);
+
+    if ((g_launch_sequence_actuator_started == 0U) && (elapsed >= actuator_start_ticks))
+    {
+        if (g_launch_sequence_actuator_command_sent == 0U)
+        {
+            (void)telemetry_send_actuator_command(CMD_IGNITER_SEQUENCE);
+            g_launch_sequence_actuator_command_sent = 1U;
+        }
+        g_launch_sequence_actuator_started = 1U;
+    }
+
+    if ((g_launch_sequence_pilot_opened == 0U) && (elapsed >= pilot_open_ticks))
+    {
+        pilot_valve_on();
+        g_launch_sequence_pilot_opened = 1U;
+    }
+
+    if ((g_launch_sequence_pilot_opened != 0U) && (elapsed >= pilot_close_ticks))
+    {
+        pilot_valve_off();
+        g_launch_sequence_active = 0U;
+        g_launch_sequence_pilot_opened = 0U;
+        g_launch_sequence_completed = 1U;
+        (void)publish_umbilical_status(CMD_SEQUENCE, 0U);
+    }
+}
+
 static void handle_command(thread_comm_msg_t cmd){
     if (g_aborted)
     {
@@ -159,12 +228,18 @@ static void handle_command(thread_comm_msg_t cmd){
     case CMD_NORMALLY_OPEN_OPEN:
         normally_open_valve_open();
         break;
+    case CMD_SEQUENCE:
+        start_launch_sequence();
+        break;
     default:
         break;
     }
 }
 
 static void abort_state(void){
+    g_launch_sequence_active = 0U;
+    g_launch_sequence_actuator_started = 0U;
+    g_launch_sequence_pilot_opened = 0U;
     normally_open_valve_open();
     nitrous_valve_open();
     pilot_valve_off();
@@ -218,6 +293,7 @@ void main_thread_entry(ULONG initial_input)
         }
 
         publish_all_umbilical_statuses();
+        service_launch_sequence();
         publish_pressure_transducer();
         tx_thread_sleep(1);
     }
