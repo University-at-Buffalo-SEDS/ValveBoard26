@@ -243,6 +243,7 @@ static void abort_state(void){
     for(int i = 0; i < 10; i++) {
         HAL_GPIO_TogglePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin);
         HAL_GPIO_TogglePin(BLUE_LED_GPIO_Port, BLUE_LED_Pin);
+        tx_thread_sleep(TX_TIMER_TICKS_PER_SECOND * 5U);
     }
 }
 
