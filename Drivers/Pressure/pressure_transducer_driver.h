@@ -3,24 +3,24 @@
 #include "stm32g4xx_hal.h"
 #include <stdint.h>
 
-#ifndef PRESSURE_TRANSDUCER_ADC_VREF
-#define PRESSURE_TRANSDUCER_ADC_VREF (3.3f)
+#ifndef PRESSURE_TRANSDUCER_MIN_ADC
+#define PRESSURE_TRANSDUCER_MIN_ADC (0.0f)
 #endif
 
-#ifndef PRESSURE_TRANSDUCER_MIN_VOLTAGE
-#define PRESSURE_TRANSDUCER_MIN_VOLTAGE (0.0f)
-#endif
-
-#ifndef PRESSURE_TRANSDUCER_MAX_VOLTAGE
-#define PRESSURE_TRANSDUCER_MAX_VOLTAGE (5.0f)
+#ifndef PRESSURE_TRANSDUCER_ZERO_ADC_DEADBAND
+#define PRESSURE_TRANSDUCER_ZERO_ADC_DEADBAND (8.0f)
 #endif
 
 #ifndef PRESSURE_TRANSDUCER_MIN_PRESSURE
 #define PRESSURE_TRANSDUCER_MIN_PRESSURE (0.0f)
 #endif
 
+#ifndef PRESSURE_TRANSDUCER_MAX_ADC
+#define PRESSURE_TRANSDUCER_MAX_ADC (3103.0f)
+#endif
+
 #ifndef PRESSURE_TRANSDUCER_MAX_PRESSURE
-#define PRESSURE_TRANSDUCER_MAX_PRESSURE (1000.0f)
+#define PRESSURE_TRANSDUCER_MAX_PRESSURE (2000.0f)
 #endif
 
 #ifndef PRESSURE_TRANSDUCER_ADC_TIMEOUT_MS
@@ -35,9 +35,8 @@ typedef struct {
     ADC_HandleTypeDef *hadc;
     TIM_HandleTypeDef *trigger_timer;
     uint32_t           channel;
-    float              vref;
-    float              min_voltage;
-    float              max_voltage;
+    float              min_adc;
+    float              max_adc;
     float              min_pressure;
     float              max_pressure;
     uint32_t           timeout_ms;
@@ -47,7 +46,6 @@ typedef struct {
 
 typedef struct {
     uint32_t raw_adc;
-    float    voltage;
     float    pressure;
 } pressure_transducer_sample_t;
 

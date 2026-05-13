@@ -5,7 +5,6 @@
 #include "can_bus.h"
 #include "main.h"
 #include "thread_comm.h"
-#include "pressure_transducer_driver.h"
 #include "solenoid_driver.h"
 #include "servo_driver.h"
 #include <stdbool.h>
@@ -14,10 +13,10 @@ TX_THREAD main_thread;
 
 #define MAIN_THREAD_STACK_SIZE (16U *1024U)
 #define UMBILICAL_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
-#define PRESSURE_ACQ_PERIOD_TICKS \
-    ((TX_TIMER_TICKS_PER_SECOND >= 4U) ? (TX_TIMER_TICKS_PER_SECOND / 4U) : 1U)
 #define LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS 10000U
 #define LAUNCH_SEQUENCE_PILOT_OPEN_DURATION_MS 1500U
+#define ABORT_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
+#define ABORT_LED_PERIOD_TICKS ((TX_TIMER_TICKS_PER_SECOND >= 2U) ? (TX_TIMER_TICKS_PER_SECOND / 2U) : 1U)
 
 
 static uint8_t g_aborted = 0U; 
@@ -31,23 +30,11 @@ static uint8_t g_launch_sequence_completed = 0U;
 static uint8_t g_launch_sequence_actuator_command_sent = 0U;
 static volatile uint8_t g_outputs_initialized = 0U;
 static ULONG g_launch_sequence_start_ticks = 0U;
+static ULONG g_abort_last_status_ticks = 0U;
+static ULONG g_abort_last_led_ticks = 0U;
 
 // Umbilical GPIO inputs 
 solenoid_t pilot_solenoid = {Solenoid_GPIO_Port, Solenoid_Pin, Solenoid_GPIO_Port, Solenoid_Pin, NULL, 0, 5};
-extern ADC_HandleTypeDef hadc3;
-extern TIM_HandleTypeDef htim3;
-
-static pressure_transducer_t fuel_tank_pressure = {
-    .hadc = &hadc3,
-    .trigger_timer = &htim3,
-    .channel = ADC_CHANNEL_5,
-    .vref = PRESSURE_TRANSDUCER_ADC_VREF,
-    .min_voltage = PRESSURE_TRANSDUCER_MIN_VOLTAGE,
-    .max_voltage = PRESSURE_TRANSDUCER_MAX_VOLTAGE,
-    .min_pressure = PRESSURE_TRANSDUCER_MIN_PRESSURE,
-    .max_pressure = PRESSURE_TRANSDUCER_MAX_PRESSURE,
-    .timeout_ms = PRESSURE_TRANSDUCER_ADC_TIMEOUT_MS,
-};
 
 
 static uint8_t publish_umbilical_status(uint8_t status_id, uint8_t state)
@@ -84,26 +71,13 @@ static void publish_all_umbilical_statuses(void){
     last_publish_ticks = now;
 }
 
-static void publish_pressure_transducer(void)
+static void publish_abort_umbilical_statuses(void)
 {
-    static uint8_t published_once = 0U;
-    static ULONG last_publish_ticks = 0U;
-    pressure_transducer_sample_t sample;
-    ULONG now = tx_time_get();
-
-    if ((published_once != 0U) &&
-        ((ULONG)(now - last_publish_ticks) < PRESSURE_ACQ_PERIOD_TICKS))
-    {
-        return;
-    }
-
-    if (pressureTransducerRead(&fuel_tank_pressure, &sample) == HAL_OK)
-    {
-        (void)log_telemetry_asynchronous(SEDS_DT_FUEL_TANK_PRESSURE, &sample.pressure, 1U,
-                                         sizeof(sample.pressure));
-        published_once = 1U;
-        last_publish_ticks = now;
-    }
+    (void)publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
+    (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
+    (void)publish_umbilical_status(CMD_DUMP_OPEN, g_nitrous_servo_open_state);
+    (void)publish_umbilical_status(CMD_SEQUENCE, g_launch_sequence_active);
+    g_abort_last_status_ticks = tx_time_get();
 }
 
 void pilot_valve_on(void){
@@ -255,15 +229,26 @@ static void handle_command(thread_comm_msg_t cmd){
 static void abort_state(void){
     main_thread_force_outputs_safe_off();
     g_aborted = 1U;
-    (void)publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
-    (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
-    (void)publish_umbilical_status(CMD_DUMP_OPEN, g_nitrous_servo_open_state);
-    (void)publish_umbilical_status(CMD_SEQUENCE, g_launch_sequence_active);
-    // Blink LEDs to indicate abort
-    for(int i = 0; i < 10; i++) {
+    publish_abort_umbilical_statuses();
+    g_abort_last_led_ticks = tx_time_get();
+    HAL_GPIO_TogglePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin);
+    HAL_GPIO_TogglePin(BLUE_LED_GPIO_Port, BLUE_LED_Pin);
+}
+
+static void service_abort_state(void)
+{
+    const ULONG now = tx_time_get();
+
+    if ((ULONG)(now - g_abort_last_status_ticks) >= ABORT_STATUS_PERIOD_TICKS)
+    {
+        publish_abort_umbilical_statuses();
+    }
+
+    if ((ULONG)(now - g_abort_last_led_ticks) >= ABORT_LED_PERIOD_TICKS)
+    {
         HAL_GPIO_TogglePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin);
         HAL_GPIO_TogglePin(BLUE_LED_GPIO_Port, BLUE_LED_Pin);
-        tx_thread_sleep(TX_TIMER_TICKS_PER_SECOND * 5U);
+        g_abort_last_led_ticks = now;
     }
 }
 
@@ -273,7 +258,6 @@ void main_thread_entry(ULONG initial_input)
 
     // Initialize pilot valve solenoid
     solenoidInit(&pilot_solenoid);
-    (void)pressureTransducerInit(&fuel_tank_pressure);
     
     // Initialize the PWM for servos
     HAL_TIM_PWM_Start(NO_SERVO_TIMER, NO_SERVO_CHANNEL);
@@ -295,8 +279,12 @@ void main_thread_entry(ULONG initial_input)
             {
                 abort_state();
             }
+            else
+            {
+                service_abort_state();
+            }
             while (thread_comm_receive(&msg, TX_NO_WAIT) == TX_SUCCESS){}
-            tx_thread_sleep(10);
+            tx_thread_sleep(1);
             continue;
         }
         while ((g_aborted != 1U) &&
@@ -313,7 +301,6 @@ void main_thread_entry(ULONG initial_input)
 
         publish_all_umbilical_statuses();
         service_launch_sequence();
-        publish_pressure_transducer();
         tx_thread_sleep(1);
     }
 }    

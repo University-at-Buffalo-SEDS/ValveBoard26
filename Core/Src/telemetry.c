@@ -44,6 +44,14 @@ static void print_data_no_telem(void *data, size_t len)
 #define TELEMETRY_TIMESYNC_REQUEST_INTERVAL_MS 2000U
 #endif
 
+#ifndef TELEMETRY_LINK_GRACE_MS
+#define TELEMETRY_LINK_GRACE_MS 10000ULL
+#endif
+
+#ifndef TELEMETRY_LINK_TIMEOUT_MS
+#define TELEMETRY_LINK_TIMEOUT_MS 5000ULL
+#endif
+
 #ifndef TX_TIMER_TICKS_PER_SECOND
 #error "TX_TIMER_TICKS_PER_SECOND must be defined by ThreadX."
 #endif
@@ -62,6 +70,7 @@ static volatile uint8_t g_last_flight_state_packet = 0U;
 static volatile uint32_t g_heartbeat_handler_count = 0U;
 static volatile uint32_t g_heartbeat_handler_error_count = 0U;
 static volatile uint8_t g_abort_broadcast_sent = 0U;
+static volatile uint32_t g_last_can_rx_ms = 0U;
 
 RouterState g_router = {.r = NULL, .created = 0U, .start_time = 0ULL};
 
@@ -304,6 +313,32 @@ static UNUSED_FUNCTION SedsResult telemetry_configure_timesync_locked(SedsRouter
 
 uint64_t telemetry_now_ms(void) { return tx_raw_now_ms_locked(); }
 
+void telemetry_note_can_rx(void)
+{
+  g_last_can_rx_ms = (uint32_t)tx_time_get();
+}
+
+uint8_t telemetry_link_recently_active(void)
+{
+  const uint64_t now_ms = tx_raw_now_ms_locked();
+  const uint32_t now_ticks = (uint32_t)tx_time_get();
+  const uint32_t last_rx_ticks = g_last_can_rx_ms;
+  const uint32_t timeout_ticks =
+      (uint32_t)((TELEMETRY_LINK_TIMEOUT_MS * (uint64_t)TX_TIMER_TICKS_PER_SECOND) / 1000ULL);
+
+  if ((g_router.created != 0U) && ((now_ms - g_router.start_time) < TELEMETRY_LINK_GRACE_MS))
+  {
+    return 1U;
+  }
+
+  if (last_rx_ticks == 0U)
+  {
+    return 0U;
+  }
+
+  return ((uint32_t)(now_ticks - last_rx_ticks) < timeout_ticks) ? 1U : 0U;
+}
+
 uint64_t telemetry_unix_ms(void)
 {
 #ifndef TELEMETRY_ENABLED
@@ -365,6 +400,7 @@ SedsResult tx_send(const uint8_t *bytes, size_t len, void *user)
 static UNUSED_FUNCTION void telemetry_can_rx(const uint8_t *data, size_t len, void *user)
 {
   (void)user;
+  telemetry_note_can_rx();
   rx_asynchronous(data, len);
 }
 
@@ -653,6 +689,11 @@ SedsResult log_telemetry_synchronous(SedsDataType data_type, const void *data,
     return SEDS_BAD_ARG;
   }
 
+  if (telemetry_link_recently_active() == 0U)
+  {
+    return SEDS_IO;
+  }
+
   if (!g_router.r && init_telemetry_router() != SEDS_OK)
   {
     return SEDS_ERR;
@@ -696,6 +737,11 @@ SedsResult log_telemetry_string_asynchronous(SedsDataType data_type, const char 
   if (!str)
   {
     return SEDS_BAD_ARG;
+  }
+
+  if (telemetry_link_recently_active() == 0U)
+  {
+    return SEDS_IO;
   }
 
   if (!g_router.r && init_telemetry_router() != SEDS_OK)

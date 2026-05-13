@@ -1,32 +1,31 @@
 #include "pressure_transducer_driver.h"
 
-static uint32_t pressure_adc_full_scale(const ADC_HandleTypeDef *hadc)
+static float pressure_from_adc(const pressure_transducer_t *sensor, uint32_t raw_adc)
 {
-    switch (hadc->Init.Resolution) {
-    case ADC_RESOLUTION_12B:
-        return 4095U;
-    case ADC_RESOLUTION_10B:
-        return 1023U;
-    case ADC_RESOLUTION_8B:
-        return 255U;
-    case ADC_RESOLUTION_6B:
-        return 63U;
-    default:
-        return 4095U;
-    }
-}
-
-static float pressure_from_voltage(const pressure_transducer_t *sensor, float voltage)
-{
-    const float voltage_span = sensor->max_voltage - sensor->min_voltage;
+    const float adc_span = sensor->max_adc - sensor->min_adc;
     const float pressure_span = sensor->max_pressure - sensor->min_pressure;
+    const float adc_value = (float)raw_adc;
+    float pressure;
 
-    if (voltage_span == 0.0f) {
+    if (adc_span == 0.0f) {
         return sensor->min_pressure;
     }
 
-    return sensor->min_pressure +
-           ((voltage - sensor->min_voltage) * pressure_span / voltage_span);
+    if (adc_value <= (sensor->min_adc + PRESSURE_TRANSDUCER_ZERO_ADC_DEADBAND)) {
+        return sensor->min_pressure;
+    }
+
+    pressure = sensor->min_pressure +
+               ((adc_value - sensor->min_adc) * pressure_span / adc_span);
+
+    if (pressure < sensor->min_pressure) {
+        return sensor->min_pressure;
+    }
+    if (pressure > sensor->max_pressure) {
+        return sensor->max_pressure;
+    }
+
+    return pressure;
 }
 
 static HAL_StatusTypeDef pressure_configure_channel(pressure_transducer_t *sensor)
@@ -63,16 +62,12 @@ HAL_StatusTypeDef pressureTransducerInit(pressure_transducer_t *sensor)
         return HAL_ERROR;
     }
 
-    if (sensor->vref == 0.0f) {
-        sensor->vref = PRESSURE_TRANSDUCER_ADC_VREF;
-    }
-    if (sensor->min_voltage == 0.0f) {
-        sensor->min_voltage = PRESSURE_TRANSDUCER_MIN_VOLTAGE;
-    }
-    if (sensor->max_voltage == 0.0f) {
-        sensor->max_voltage = PRESSURE_TRANSDUCER_MAX_VOLTAGE;
+    if (sensor->max_adc == 0.0f) {
+        sensor->min_adc = PRESSURE_TRANSDUCER_MIN_ADC;
+        sensor->max_adc = PRESSURE_TRANSDUCER_MAX_ADC;
     }
     if (sensor->max_pressure == 0.0f) {
+        sensor->min_pressure = PRESSURE_TRANSDUCER_MIN_PRESSURE;
         sensor->max_pressure = PRESSURE_TRANSDUCER_MAX_PRESSURE;
     }
     if (sensor->timeout_ms == 0U) {
@@ -120,8 +115,6 @@ HAL_StatusTypeDef pressureTransducerRead(pressure_transducer_t *sensor,
                                          pressure_transducer_sample_t *sample)
 {
     uint32_t raw_adc;
-    uint32_t full_scale;
-
     if ((sensor == NULL) || (sensor->hadc == NULL) || (sample == NULL)) {
         return HAL_ERROR;
     }
@@ -131,10 +124,8 @@ HAL_StatusTypeDef pressureTransducerRead(pressure_transducer_t *sensor,
     }
 
     raw_adc = pressure_latest_raw_adc(sensor);
-    full_scale = pressure_adc_full_scale(sensor->hadc);
     sample->raw_adc = raw_adc;
-    sample->voltage = ((float)raw_adc * sensor->vref) / (float)full_scale;
-    sample->pressure = pressure_from_voltage(sensor, sample->voltage);
+    sample->pressure = pressure_from_adc(sensor, raw_adc);
 
     return HAL_OK;
 }

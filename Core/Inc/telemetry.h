@@ -64,6 +64,7 @@ SedsResult telemetry_send_actuator_command_at(uint8_t cmd_id, uint64_t timestamp
 SedsResult telemetry_broadcast_abort(const char *reason);
 void telemetry_note_can_rx(void);
 void telemetry_toggle_led_on_can_rx(void);
+uint8_t telemetry_link_recently_active(void);
 int32_t telemetry_get_init_error_code(void);
 
 uint64_t telemetry_now_ms(void);
