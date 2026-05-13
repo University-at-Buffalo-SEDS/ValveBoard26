@@ -15,7 +15,7 @@
 #define SAFETY_SLEEP            5U // 5 ticks 
 
 TX_THREAD safety_thread;
-#define SAFETY_THREAD_STACK_SIZE (16U * 1024U)
+#define SAFETY_THREAD_STACK_SIZE (4U * 1024U)
 
 extern LTC2990_Handle_t       ltc2990_dev;
 extern ADC_HandleTypeDef      hadc3;
@@ -48,12 +48,10 @@ static flight_state_t g_flight_state = STATE_STARTUP;
 
 static void trigger_abort(void)
 {
-    (void)tx_event_flags_set(&event_flags, ABORT_FLAG, TX_OR);
-    g_flight_state = STATE_ABORT;
-}
-static void trigger_launch(void)
-{
-    g_flight_state = STATE_LAUNCH;
+    (void)thread_comm_set_abort(1U);
+    (void)thread_comm_send(CMD_ABORT, TX_NO_WAIT);
+    (void)telemetry_broadcast_abort("Valve board safety abort");
+
 }
 
 static bool voltages_normal(void)
@@ -120,13 +118,6 @@ static void handle_startup(void)
     const ULONG start = tx_time_get();
     const ULONG timeout_ticks = (ULONG)(((uint64_t)STARTUP_TIMEOUT_MS * (uint64_t)TX_TIMER_TICKS_PER_SECOND + 999ULL) / 1000ULL);
     for (;;) {
-        // Check if main_thread already set abort
-        ULONG flags = 0U;
-        if (tx_event_flags_get(&event_flags, ABORT_FLAG, TX_OR, &flags, TX_NO_WAIT) == TX_SUCCESS) {
-            g_flight_state = STATE_ABORT;
-            return;
-        }
-
         bool ltc_ready      = voltages_normal() && current_normal();
         bool pressure_ready = pressure_normal();
         bool servos_ready   = servos_normal();
@@ -149,19 +140,7 @@ static void handle_startup(void)
 static void handle_idle(void)
 {
     for (;;) {
-        // Check if main_thread already set abort
-        ULONG flags = 0U;
-        if (tx_event_flags_get(&event_flags, ABORT_FLAG, TX_OR, &flags, TX_NO_WAIT) == TX_SUCCESS) {
-            g_flight_state = STATE_ABORT;
-            return;
-        } 
-        
-        ULONG launch_flag = 0U;
-        if (tx_event_flags_get(&event_flags, LAUNCH_FLAG, TX_OR, &launch_flag, TX_NO_WAIT) == TX_SUCCESS)
-        {
-            trigger_launch();
-            return;
-        } 
+        // trigger switch from idle to launch somehow 
         
         if (!voltages_normal()){
             (void)log_error_asynchronous("SAFETY: voltage below threshold — aborting\r\n");
@@ -193,18 +172,10 @@ static void handle_idle(void)
     }
 }
 
-// In LAUNCH we only watch for an externally-triggered abort; the rocket is
-// on its own once the sequence fires.
 static void handle_launch(void)
 {
     for (;;) {
-        ULONG flags = 0U;
-        if (tx_event_flags_get(&event_flags, ABORT_FLAG, TX_OR, &flags, TX_NO_WAIT) == TX_SUCCESS)
-        {
-            g_flight_state = STATE_ABORT;
-            return;
-        }
-
+        // does nothing, rocket is launched, all we're doing is tracking it and reading it's data 
         tx_thread_sleep(SAFETY_SLEEP_TICKS);
     }
 }
