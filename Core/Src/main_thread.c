@@ -14,6 +14,7 @@
 LTC2990_Handle_t ltc2990_dev;
 TX_THREAD main_thread;
 extern I2C_HandleTypeDef hi2c2;
+extern TX_EVENT_FLAGS_GROUP   event_flags;
 
 #define MAIN_THREAD_STACK_SIZE (16U *1024U)
 #define UMBILICAL_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
@@ -161,6 +162,11 @@ static void start_launch_sequence(void)
     g_launch_sequence_actuator_started = 1U;
     g_launch_sequence_pilot_opened = 0U;
     g_launch_sequence_start_ticks = tx_time_get();
+
+    // added for safety thread but it's giving me issue T^T
+    // supposed to connect the launch sequence to the launch flag 
+    // (void)tx_event_flags_set(&event_flags, LAUNCH_FLAG, TX_OR);
+
     if (g_launch_sequence_actuator_command_sent == 0U)
     {
         const uint64_t sequence_timestamp_ms = telemetry_unix_ms();

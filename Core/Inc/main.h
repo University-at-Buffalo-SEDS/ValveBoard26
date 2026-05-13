@@ -67,8 +67,16 @@ void Error_Handler(void);
 #define NORMALLY_OPEN_GPIO_Port GPIOA
 #define Solenoid_Pin GPIO_PIN_11
 #define Solenoid_GPIO_Port GPIOB
+#define DUMP_SIGNAL_Pin GPIO_PIN_12
+#define DUMP_SIGNAL_GPIO_Port GPIOB
 #define PRESS_IN_Pin GPIO_PIN_13
 #define PRESS_IN_GPIO_Port GPIOB
+#define CONTINUITY_Pin GPIO_PIN_15
+#define CONTINUITY_GPIO_Port GPIOB
+#define NO_SIGNAL_Pin GPIO_PIN_6
+#define NO_SIGNAL_GPIO_Port GPIOC
+#define PILOT_Pin GPIO_PIN_7
+#define PILOT_GPIO_Port GPIOC
 #define BLUE_LED_Pin GPIO_PIN_8
 #define BLUE_LED_GPIO_Port GPIOC
 #define BUZZER_Pin GPIO_PIN_9

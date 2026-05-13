@@ -505,7 +505,7 @@ static void MX_TIM3_Init(void)
   {
     Error_Handler();
   }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
   {
@@ -595,7 +595,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(Solenoid_GPIO_Port, Solenoid_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, BLUE_LED_Pin|BUZZER_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, PILOT_Pin|BLUE_LED_Pin|BUZZER_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_RESET);
@@ -607,8 +607,20 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(Solenoid_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : BLUE_LED_Pin BUZZER_Pin */
-  GPIO_InitStruct.Pin = BLUE_LED_Pin|BUZZER_Pin;
+  /*Configure GPIO pins : DUMP_SIGNAL_Pin CONTINUITY_Pin */
+  GPIO_InitStruct.Pin = DUMP_SIGNAL_Pin|CONTINUITY_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : NO_SIGNAL_Pin */
+  GPIO_InitStruct.Pin = NO_SIGNAL_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(NO_SIGNAL_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PILOT_Pin BLUE_LED_Pin BUZZER_Pin */
+  GPIO_InitStruct.Pin = PILOT_Pin|BLUE_LED_Pin|BUZZER_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;

@@ -2,6 +2,9 @@
 #include "telemetry.h"
 #include "tx_api.h"
 
+#define ABORT_FLAG  (0x01U)
+#define LAUNCH_FLAG (0x02U)
+
 /* ------ Telemetry Thread ------ */
 extern TX_THREAD telemetry_thread;
 
