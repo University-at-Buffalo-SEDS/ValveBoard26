@@ -21,6 +21,25 @@ extern "C" {
  */
 typedef ULONG thread_comm_msg_t;
 
+typedef enum {
+    VALVE_FLIGHT_STATE_STARTUP = 0,
+    VALVE_FLIGHT_STATE_IDLE = 1,
+    VALVE_FLIGHT_STATE_PREFILL = 2,
+    VALVE_FLIGHT_STATE_FILL_TEST = 3,
+    VALVE_FLIGHT_STATE_NITROGEN_FILL = 4,
+    VALVE_FLIGHT_STATE_NITROUS_FILL = 5,
+    VALVE_FLIGHT_STATE_POSTINIT = 6,
+    VALVE_FLIGHT_STATE_ARMED = 7,
+    VALVE_FLIGHT_STATE_LAUNCH = 8,
+    VALVE_FLIGHT_STATE_ASCENT = 9,
+    VALVE_FLIGHT_STATE_COAST = 10,
+    VALVE_FLIGHT_STATE_APOGEE = 11,
+    VALVE_FLIGHT_STATE_DESCENT = 12,
+    VALVE_FLIGHT_STATE_REEFING = 13,
+    VALVE_FLIGHT_STATE_LANDED = 14,
+    VALVE_FLIGHT_STATE_RECOVERY = 15,
+} valve_flight_state_t;
+
 /**
  * @brief Create the shared queue and state protection mutex.
  *
@@ -93,6 +112,13 @@ UINT thread_comm_set_shared_value(int32_t value);
  * initialized.
  */
 int32_t thread_comm_get_shared_value(void);
+
+UINT thread_comm_set_flight_state(uint8_t flight_state);
+uint8_t thread_comm_get_flight_state(void);
+uint8_t thread_comm_abort_allowed(void);
+
+UINT thread_comm_note_groundstation_heartbeat(uint64_t timestamp_ms);
+uint64_t thread_comm_get_groundstation_heartbeat_ms(void);
 
 #ifdef __cplusplus
 }

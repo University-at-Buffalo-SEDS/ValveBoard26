@@ -2,91 +2,87 @@
 #define LTC2990_H
 
 #include "stm32g4xx_hal.h"
-#include "stm32g4xx_hal_def.h"
-#include <math.h>
+#include "tx_api.h"
+
 #include <stdint.h>
 
-#include "main.h"
+#define STATUS_REG          (0x00)
+#define CONTROL_REG         (0x01)
+#define TRIGGER_REG         (0x02)
 
-#define LTC2990_I2C_ADDRESS     0x4C
+#define V1_MSB_REG          (0x06)
+#define V2_MSB_REG          (0x08)
+#define V3_MSB_REG          (0x0A)
+#define V4_MSB_REG          (0x0C)
 
-// register addresses p.15
-#define STATUS_REG    0X00
-#define CONTROL_REG   0X01
-#define TRIGGER_REG   0X02
+#define MODE_DUAL_DIFF      (0x06)
+#define VOLTAGE_MODE_MASK   (0x07)
+#define TEMP_MEAS_MODE_MASK (0x18)
+#define V1_V2_V3_V4         (0x07)
+#define ENABLE_ALL          (0x18)
+#define CTRL_ALL            (3U << 3)
 
-#define V1_MSB_REG    0X06 // SE 12V, 
-#define V1_LSB_REG    0X07
-#define V2_MSB_REG    0X08 // SE VBatt, 
-#define V2_LSB_REG    0X09
-#define V3_MSB_REG    0X0A // SE 7V N.O.
-#define V3_LSB_REG    0X0B
-#define V4_MSB_REG    0X0C // SE 7V Dump
-#define V4_LSB_REG    0X0D
-#define VCC_MSB_REG   0X0E // Supply voltage, CCVS
-#define VCC_LSB_REG   0X0F
+#define SINGLE_ENDED_LSB    (5.0f / 16384.0f)
 
-// control modes 
-#define V1_V2_V3_V4			(0x1F) //00011111 - Repeat acquisition, all singled ended voltages enabled
-#define V1DV2       		(0x5E) //01011001 - Single acquisition, V1-V2 diff voltages enabled 
-                                   // V3-V4 diff voltages enabled, but not implemented 
-#define CLEAR_ALL			(0xFF) // used for changing modes 
+#define LTC2990_I2C_ADDRESS_CURRENT (0x4C)
+#define LTC2990_I2C_ADDRESS_VOLTAGE (0x4D)
 
-// conversion constants 
-#define VEND_LSB_VALUE         0.00030518 // 305.18µV per LSB for single-ended voltages
-#define CEND_LSB_VALUE         0.00030518 // 305.18µV per LSB for differential voltage
+#define VOLTAGE_DIVIDER_RATIO_12V       (4.0f)
+#define VOLTAGE_DIVIDER_RATIO_VBATT     (5.7f)
+#define VOLTAGE_DIVIDER_RATIO_7V        (2.5f)
+#define VOLTAGE_DIVIDER_RATIO_7V_DUMP   (2.5f)
 
+#define RSENSE_OHM                      (0.02f)
+#define CURRENT_DIVIDER_TOP_OHM         (71500.0f)
+#define CURRENT_DIVIDER_BOTTOM_OHM      (10000.0f)
+#define CURRENT_DIVIDER_RATIO           (CURRENT_DIVIDER_BOTTOM_OHM / \
+                                         (CURRENT_DIVIDER_TOP_OHM + CURRENT_DIVIDER_BOTTOM_OHM))
+#define CURRENT_TELEMETRY_CHANNEL_INDEX (0U)
+#define CURRENT_DRAW_POLARITY           (1.0f)
+#define CURRENT_DRAW_GAIN               (0.58047616f)
+#define CURRENT_DRAW_OFFSET_A           (-1.4267476f)
 
-// voltage divider ratios [(R1 + R2) / R2]
-#define VOLTAGE_DIVIDER_RATIO_V1     4.0  // (30k + 10k) / 10k = 4.0
-#define VOLTAGE_DIVIDER_RATIO_V2     5.7 // (47k + 10k) / 10k = 5.7
-#define VOLTAGE_DIVIDER_RATIO_V3     2.5 // (15k + 10k) / 10k = 2.5
-#define VOLTAGE_DIVIDER_RATIO_V4     2.5 // (15k + 10k) / 10k = 2.5
-
-// voltage thresholds for warnings (within a 10% tolerance)
-#define V1_THRESHOLD          10.8   // 12V supply warning below 10.8V
-#define V2_THRESHOLD          6.3    // 7V supply warning below 6.3V
-#define V3_THRESHOLD          6.3    // 7V N.O. warning below 6.3V
-#define V4_THRESHOLD          6.3    // 7V Dump warning below 6.3V
-#define V1DV2_THRESHOLD       3000.0 // mA high current value 
-
-// reference voltage 
-#define REFERENCE_VOLTAGE         3.3 // 3.3V
-
-// resistance for current calcultaion
-#define RSENSE            0.02    // Ohm 
-
-#define TIMEOUT           100     // ms 
-
-typedef struct {
-    I2C_HandleTypeDef *hi2c;       // I2C handle (using PA8/PA9)
-    uint8_t i2c_address;           // LTC2990 I2C address 
-    float voltages[4];             // single ended voltage measurements V1-V4
-    float differential;            // differential voltage measurement (V1-V2)
-    float current;                 // calculated current from differential voltage
-    uint32_t time_last_read;       // timestamp of last reading (ms)
-} LTC2990_Handle_t;
+#define LTC2990_I2C_READY_TRIALS        (2U)
+#define LTC2990_I2C_READY_TIMEOUT_MS    (10U)
+#define LTC2990_TIMEOUT_MS              (25U)
 
 typedef enum {
-    LTC2990_MODE_SINGLE_ENDED = 0,
-    LTC2990_MODE_DIFFERENTIAL = 1, 
-} LTC2990_Mode_t;
+    LTC2990_ROLE_VOLTAGE,
+    LTC2990_ROLE_CURRENT
+} LTC2990_Role_t;
 
-HAL_StatusTypeDef LTC2990_Init(LTC2990_Handle_t *handle, I2C_HandleTypeDef *hi2c, uint8_t address);
-HAL_StatusTypeDef LTC2990_SetMode(LTC2990_Handle_t *handle, uint8_t set_bits, uint8_t clear_bits);
-HAL_StatusTypeDef LTC2990_TriggerConversion(LTC2990_Handle_t *handle); 
+typedef struct {
+    I2C_HandleTypeDef *hi2c;
+    uint8_t i2c_address;
+    LTC2990_Role_t role;
+    float last_values[4];
+    TX_MUTEX *i2c_mutex;
+} LTC2990_Handle_t;
+
+int LTC2990_Init(LTC2990_Handle_t *handle,
+                 I2C_HandleTypeDef *hi2c,
+                 uint8_t address,
+                 LTC2990_Role_t role);
 void LTC2990_Step(LTC2990_Handle_t *handle);
-HAL_StatusTypeDef LTC2990_ReadADCData(LTC2990_Handle_t *handle, uint8_t msb_reg, uint16_t *adc_code, uint8_t *data_valid);
-// single ended
-void LTC2990_GetSingleEndedVoltage(LTC2990_Handle_t *dev, uint8_t channel, float *voltage);
-float LTC2990_SingleEndedCodeToData(LTC2990_Handle_t *dev, uint16_t adc_code, uint8_t channel); 
-float LTC2990_CodeToVoltage(uint16_t adc_code, float lsb_value);
+void LTC2990_Get_Values(LTC2990_Handle_t *handle, float *values);
 
-// differential
-float LTC2990_GetCurrent(LTC2990_Handle_t *dev);
+int8_t LTC2990_Enable_All_Voltages(LTC2990_Handle_t *handle);
+int8_t LTC2990_Set_Mode(LTC2990_Handle_t *handle, uint8_t bits_to_set, uint8_t bits_to_clear);
+int8_t LTC2990_Trigger_Conversion(LTC2990_Handle_t *handle);
+uint8_t LTC2990_ADC_Read_New_Data(LTC2990_Handle_t *handle,
+                                  uint8_t msb_register_address,
+                                  uint16_t *raw15,
+                                  int8_t *data_valid);
 
-// i2c communication helpers
-HAL_StatusTypeDef LTC2990_WriteRegister(LTC2990_Handle_t *dev, uint8_t reg, uint8_t value);
-HAL_StatusTypeDef LTC2990_ReadRegister(LTC2990_Handle_t *dev, uint8_t reg, uint8_t *data);
- 
-#endif 
+float LTC2990_Code_To_Single_Ended_Voltage(LTC2990_Handle_t *handle,
+                                           uint16_t code14,
+                                           uint8_t channel);
+float LTC2990_Code15_To_CurrentA(uint16_t raw15);
+
+int8_t LTC2990_Read_Register(LTC2990_Handle_t *handle, uint8_t reg_address, uint8_t *data);
+int8_t LTC2990_Write_Register(LTC2990_Handle_t *handle, uint8_t reg_address, uint8_t data);
+
+void telemetry_ltc2990_update_voltage(LTC2990_Handle_t *ltc2990_handle);
+void telemetry_ltc2990_update_current(LTC2990_Handle_t *ltc2990_handle);
+
+#endif

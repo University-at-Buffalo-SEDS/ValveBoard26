@@ -5,15 +5,12 @@
 #include "can_bus.h"
 #include "main.h"
 #include "thread_comm.h"
-#include "ltc2990.h"
 #include "pressure_transducer_driver.h"
 #include "solenoid_driver.h"
 #include "servo_driver.h"
 #include <stdbool.h>
 
-LTC2990_Handle_t ltc2990_dev;
 TX_THREAD main_thread;
-extern I2C_HandleTypeDef hi2c2;
 
 #define MAIN_THREAD_STACK_SIZE (16U *1024U)
 #define UMBILICAL_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
@@ -32,6 +29,7 @@ static uint8_t g_launch_sequence_actuator_started = 0U;
 static uint8_t g_launch_sequence_pilot_opened = 0U;
 static uint8_t g_launch_sequence_completed = 0U;
 static uint8_t g_launch_sequence_actuator_command_sent = 0U;
+static volatile uint8_t g_outputs_initialized = 0U;
 static ULONG g_launch_sequence_start_ticks = 0U;
 
 // Umbilical GPIO inputs 
@@ -150,6 +148,26 @@ static void normally_open_valve_close(void)
     (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
 }
 
+static void main_thread_force_outputs_safe_off(void)
+{
+    g_launch_sequence_active = 0U;
+    g_launch_sequence_actuator_started = 0U;
+    g_launch_sequence_pilot_opened = 0U;
+
+    if (g_outputs_initialized == 0U)
+    {
+        return;
+    }
+
+    no_servo_open();
+    dump_servo_open();
+    solenoidOff(&pilot_solenoid);
+
+    g_no_servo_open_state = 1U;
+    g_nitrous_servo_open_state = 1U;
+    g_pilot_valve_state = 0U;
+}
+
 static void start_launch_sequence(void)
 {
     if ((g_launch_sequence_active != 0U) || (g_launch_sequence_completed != 0U))
@@ -226,19 +244,21 @@ static void handle_command(thread_comm_msg_t cmd){
     case CMD_SEQUENCE:
         start_launch_sequence();
         break;
+    case CMD_ABORT:
+        (void)thread_comm_set_abort(1U);
+        break;
     default:
         break;
     }
 }
 
 static void abort_state(void){
-    g_launch_sequence_active = 0U;
-    g_launch_sequence_actuator_started = 0U;
-    g_launch_sequence_pilot_opened = 0U;
-    normally_open_valve_open();
-    nitrous_valve_open();
-    pilot_valve_off();
+    main_thread_force_outputs_safe_off();
     g_aborted = 1U;
+    (void)publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
+    (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
+    (void)publish_umbilical_status(CMD_DUMP_OPEN, g_nitrous_servo_open_state);
+    (void)publish_umbilical_status(CMD_SEQUENCE, g_launch_sequence_active);
     // Blink LEDs to indicate abort
     for(int i = 0; i < 10; i++) {
         HAL_GPIO_TogglePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin);
@@ -258,16 +278,12 @@ void main_thread_entry(ULONG initial_input)
     // Initialize the PWM for servos
     HAL_TIM_PWM_Start(NO_SERVO_TIMER, NO_SERVO_CHANNEL);
     HAL_TIM_PWM_Start(DUMP_SERVO_TIMER, DUMP_SERVO_CHANNEL);
-
+    g_outputs_initialized = 1U;
 
     // Set initial valve positions
     pilot_valve_off();
     normally_open_valve_open();
     nitrous_valve_open();
-    
-    // Initialize LTC2990 
-    LTC2990_Init(&ltc2990_dev, &hi2c2, LTC2990_I2C_ADDRESS);
-    LTC2990_SetMode(&ltc2990_dev, V1_V2_V3_V4, CLEAR_ALL);
     
     thread_comm_msg_t msg;
     
@@ -283,9 +299,16 @@ void main_thread_entry(ULONG initial_input)
             tx_thread_sleep(10);
             continue;
         }
-        while (g_aborted != 1U && thread_comm_receive(&msg, TX_NO_WAIT) == TX_SUCCESS)
+        while ((g_aborted != 1U) &&
+               (thread_comm_get_abort() == 0U) &&
+               (thread_comm_receive(&msg, TX_NO_WAIT) == TX_SUCCESS))
         {
             handle_command(msg);
+        }
+
+        if (thread_comm_get_abort() != 0U)
+        {
+            continue;
         }
 
         publish_all_umbilical_statuses();

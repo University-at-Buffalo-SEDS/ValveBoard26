@@ -505,7 +505,7 @@ static void MX_TIM3_Init(void)
   {
     Error_Handler();
   }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
   {
@@ -606,6 +606,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(Solenoid_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : Continuity_Pin */
+  GPIO_InitStruct.Pin = Continuity_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(Continuity_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : BLUE_LED_Pin BUZZER_Pin */
   GPIO_InitStruct.Pin = BLUE_LED_Pin|BUZZER_Pin;

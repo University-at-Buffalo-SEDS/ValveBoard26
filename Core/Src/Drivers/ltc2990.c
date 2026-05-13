@@ -1,361 +1,317 @@
-#include <Drivers/ltc2990.h>
+#include "ltc2990.h"
+
+#include "main.h"
+#include "sedsprintf.h"
+#include "telemetry.h"
+
 #include <math.h>
+#include <stdint.h>
 
-/**
-  * @brief  Init LTC2990 
-  * @param  dev Pointer to LTC2990 handle
-  * @param  hi2c Pointer to I2C handle
-  * @param  address I2C address
-  * @retval HAL status
-  */
-HAL_StatusTypeDef LTC2990_Init(LTC2990_Handle_t *dev, I2C_HandleTypeDef *hi2c, uint8_t address) {
-    HAL_StatusTypeDef status;
-    uint8_t reg_value;
-    
-    // device connected? 
-    if (dev == NULL || hi2c == NULL) {
-        return HAL_ERROR;
-    }
-    
-    dev->hi2c = hi2c;
-    dev->i2c_address = address;
-    
-    // initialize voltage array
-    for (int i = 0; i < 4; i++) {
-        dev->voltages[i] = NAN;
-    }
-    
-    // no differential voltage yet
-    dev->differential = NAN;
-    dev->time_last_read = 0;
-    
-    // single-ended mode initially
-    status = LTC2990_SetMode(dev, V1_V2_V3_V4, CLEAR_ALL);
-    if (status != HAL_OK) {
-        return status;
+static inline void ltc2990_sleep_ms(uint32_t ms)
+{
+    ULONG ticks = (ULONG)(((uint64_t)ms * TX_TIMER_TICKS_PER_SECOND + 999ULL) / 1000ULL);
+    if (ticks == 0U) {
+        ticks = 1U;
     }
 
-    HAL_Delay(100); // time for mode change
-    
-    // Verify config
-    status = LTC2990_ReadRegister(dev, CONTROL_REG, &reg_value);
-    if (status != HAL_OK) {
-        return status;
-    }
-    
-    // Check if correctly configured (0x1F for single-ended mode)
-    if (reg_value != V1_V2_V3_V4) {
-        return HAL_ERROR;
-    }
-    
-    return HAL_OK;
-}
-
-//--------------------------------------------------------------------------------------------
-
-/**
-  * @brief  Change mode by setting and clearing bits in control register
-  * @param  dev Pointer to LTC2990 handle
-  * @param  set_bits Mode bits to set
-  * @param  clear_bits Mode bits to clear
-  * @retval HAL status
-  */
-HAL_StatusTypeDef LTC2990_SetMode(LTC2990_Handle_t *dev, uint8_t set_bits, uint8_t clear_bits) {
-    HAL_StatusTypeDef status;
-    uint8_t reg_value;
-    
-    // device? 
-    if (dev == NULL) {
-        return HAL_ERROR;
-    }
-    
-    status = LTC2990_ReadRegister(dev, CONTROL_REG, &reg_value);
-    if (status != HAL_OK) {
-        return status;
-    }
-    
-    reg_value &= ~clear_bits; // clear previous mode (will always use CLEAR_ALL)
-    reg_value |= set_bits; // set to new mode (use either V1_V2_V3_V4 or V1DV2)
-    
-    // Write back
-    status = LTC2990_WriteRegister(dev, CONTROL_REG, reg_value);
-    
-    return status;
-}
-
-//--------------------------------------------------------------------------------------------
-
-/**
-  * @brief  Trigger a new ADC conversion
-  * @param  dev Pointer to LTC2990 handle
-  * @retval HAL status
-  */
-HAL_StatusTypeDef LTC2990_TriggerConversion(LTC2990_Handle_t *dev) {
-    if (dev == NULL) {
-        return HAL_ERROR;
-    }
-
-    return LTC2990_WriteRegister(dev, TRIGGER_REG, 0x01);
-}
-
-//--------------------------------------------------------------------------------------------
-
-/**
-  * @brief  Refresh voltage readings by reading all channels; Should be called periodically in main loop
-  * @param  dev Pointer to LTC2990 handle
-  */
-void LTC2990_Step(LTC2990_Handle_t *dev) {
-    HAL_StatusTypeDef status;
-    uint16_t adc_code;
-    uint8_t data_valid;
-    
-    if (dev == NULL) {
-        return;
-    }
-    
-    // Switch to single-ended mode (V1, V2, V3, V4 enabled)
-    status = LTC2990_SetMode(dev, V1_V2_V3_V4, CLEAR_ALL);
-    if (status != HAL_OK) {
-        return;
-    }
-    
-    HAL_Delay(100); // mode switch
-    
-    // Trigger conversion
-    status = LTC2990_TriggerConversion(dev);
-    if (status != HAL_OK) {
-        return;
-    }
-    
-    HAL_Delay(100); // conversion
-    
-    // Read V1
-    status = LTC2990_ReadADCData(dev, V1_MSB_REG, &adc_code, &data_valid);
-    if (status == HAL_OK && data_valid) {
-        dev->voltages[0] = LTC2990_SingleEndedCodeToData(dev, adc_code, 0);
+    if (tx_thread_identify() != TX_NULL) {
+        tx_thread_sleep(ticks);
     } else {
-        dev->voltages[0] = NAN;
+        HAL_Delay(ms);
     }
-    
-    // Read V2
-    status = LTC2990_ReadADCData(dev, V2_MSB_REG, &adc_code, &data_valid);
-    if (status == HAL_OK && data_valid) {
-        dev->voltages[1] = LTC2990_SingleEndedCodeToData(dev, adc_code, 1);
-    } else {
-        dev->voltages[1] = NAN;
+}
+
+static inline void i2c_lock(LTC2990_Handle_t *handle)
+{
+    if ((handle->i2c_mutex != TX_NULL) && (tx_thread_identify() != TX_NULL)) {
+        (void)tx_mutex_get(handle->i2c_mutex, TX_WAIT_FOREVER);
     }
-    
-    // Read V3
-    status = LTC2990_ReadADCData(dev, V3_MSB_REG, &adc_code, &data_valid);
-    if (status == HAL_OK && data_valid) {
-        dev->voltages[2] = LTC2990_SingleEndedCodeToData(dev, adc_code, 2);
-    } else {
-        dev->voltages[2] = NAN;
+}
+
+static inline void i2c_unlock(LTC2990_Handle_t *handle)
+{
+    if ((handle->i2c_mutex != TX_NULL) && (tx_thread_identify() != TX_NULL)) {
+        (void)tx_mutex_put(handle->i2c_mutex);
     }
-    
-    // Read V4
-    status = LTC2990_ReadADCData(dev, V4_MSB_REG, &adc_code, &data_valid);
-    if (status == HAL_OK && data_valid) {
-        dev->voltages[3] = LTC2990_SingleEndedCodeToData(dev, adc_code, 3);
-    } else {
-        dev->voltages[3] = NAN;
+}
+
+static uint8_t status_bit_from_msb(uint8_t msb_reg)
+{
+    switch (msb_reg) {
+    case V1_MSB_REG:
+        return 2U;
+    case V2_MSB_REG:
+        return 3U;
+    case V3_MSB_REG:
+        return 4U;
+    case V4_MSB_REG:
+        return 5U;
+    default:
+        return 0xFFU;
     }
-    
-    // Switch to differential mode (V1-V2 enabled)
-    status = LTC2990_SetMode(dev, V1DV2, CLEAR_ALL);
-    if (status != HAL_OK) {
+}
+
+int LTC2990_Init(LTC2990_Handle_t *handle,
+                 I2C_HandleTypeDef *hi2c,
+                 uint8_t address,
+                 LTC2990_Role_t role)
+{
+    if ((handle == TX_NULL) || (hi2c == TX_NULL)) {
+        return 1;
+    }
+
+    handle->hi2c = hi2c;
+    handle->i2c_address = address;
+    handle->role = role;
+    handle->i2c_mutex = TX_NULL;
+
+    for (uint8_t i = 0U; i < 4U; i++) {
+        handle->last_values[i] = NAN;
+    }
+
+    if (HAL_I2C_IsDeviceReady(hi2c,
+                              (uint16_t)(address << 1),
+                              LTC2990_I2C_READY_TRIALS,
+                              LTC2990_I2C_READY_TIMEOUT_MS) != HAL_OK) {
+        return 1;
+    }
+
+    const uint8_t control = (role == LTC2990_ROLE_VOLTAGE)
+                                ? (uint8_t)(CTRL_ALL | V1_V2_V3_V4)
+                                : (uint8_t)(CTRL_ALL | MODE_DUAL_DIFF);
+
+    if (LTC2990_Set_Mode(handle, control, (uint8_t)(TEMP_MEAS_MODE_MASK | VOLTAGE_MODE_MASK)) != 0) {
+        return 1;
+    }
+
+    if ((role == LTC2990_ROLE_VOLTAGE) && (LTC2990_Enable_All_Voltages(handle) != 0)) {
+        return 1;
+    }
+
+    return 0;
+}
+
+void LTC2990_Step(LTC2990_Handle_t *handle)
+{
+    if (handle == TX_NULL) {
         return;
     }
-    
-    HAL_Delay(10); // Allow mode to switch
-    
-    // Trigger conversion
-    status = LTC2990_TriggerConversion(dev);
-    if (status != HAL_OK) {
+
+    if (LTC2990_Trigger_Conversion(handle) != 0) {
         return;
     }
-    
-    HAL_Delay(100); // Wait for conversion
-    
-    // Read differential voltage and calculate current
-    status = LTC2990_ReadADCData(dev, V1_MSB_REG, &adc_code, &data_valid);
-    if (status == HAL_OK && data_valid) {
-        dev->differential = LTC2990_CodeToVoltage(adc_code, CEND_LSB_VALUE);
-        dev->current = dev->differential / RSENSE;
+    ltc2990_sleep_ms(10U);
+
+    if (handle->role == LTC2990_ROLE_VOLTAGE) {
+        const uint8_t regs[4] = {V1_MSB_REG, V2_MSB_REG, V3_MSB_REG, V4_MSB_REG};
+
+        for (uint8_t i = 0U; i < 4U; i++) {
+            uint16_t raw15 = 0U;
+            int8_t valid = 0;
+            if ((LTC2990_ADC_Read_New_Data(handle, regs[i], &raw15, &valid) == 0U) && (valid != 0)) {
+                handle->last_values[i] =
+                    LTC2990_Code_To_Single_Ended_Voltage(handle, (uint16_t)(raw15 & 0x3FFFU), i);
+            } else {
+                handle->last_values[i] = NAN;
+            }
+        }
     } else {
-        dev->differential = NAN;
-        dev->current = NAN;
+        uint16_t raw15_v1 = 0U;
+        uint16_t raw15_v3 = 0U;
+        int8_t valid_v1 = 0;
+        int8_t valid_v3 = 0;
+
+        handle->last_values[0] = NAN;
+        handle->last_values[1] = NAN;
+        handle->last_values[2] = NAN;
+        handle->last_values[3] = NAN;
+
+        if ((LTC2990_ADC_Read_New_Data(handle, V1_MSB_REG, &raw15_v1, &valid_v1) == 0U) &&
+            (valid_v1 != 0)) {
+            handle->last_values[0] = LTC2990_Code15_To_CurrentA(raw15_v1);
+        }
+
+        if ((LTC2990_ADC_Read_New_Data(handle, V3_MSB_REG, &raw15_v3, &valid_v3) == 0U) &&
+            (valid_v3 != 0)) {
+            handle->last_values[1] = LTC2990_Code15_To_CurrentA(raw15_v3);
+        }
     }
-    
-    // Update timestamp
-    dev->time_last_read = HAL_GetTick();
 }
 
-//--------------------------------------------------------------------------------------------
-
-/**
-  * @brief  Get single-ended voltage for a specific channel
-  * @param  dev Pointer to LTC2990 handle
-  * @param  channel Channel number (0-3 for V1-V4)
-  * @param  voltage Pointer to store the retrieved voltage  
-  */
-void LTC2990_GetSingleEndedVoltage(LTC2990_Handle_t *dev, uint8_t channel, float *voltage){
-    if (dev == NULL || channel > 3 || voltage == NULL) {
+void LTC2990_Get_Values(LTC2990_Handle_t *handle, float *values)
+{
+    if ((handle == TX_NULL) || (values == TX_NULL)) {
         return;
     }
-    *voltage = dev->voltages[channel];
+
+    for (uint8_t i = 0U; i < 4U; i++) {
+        values[i] = handle->last_values[i];
+    }
 }
 
-//--------------------------------------------------------------------------------------------
+int8_t LTC2990_Enable_All_Voltages(LTC2990_Handle_t *handle)
+{
+    return LTC2990_Set_Mode(handle, ENABLE_ALL, TEMP_MEAS_MODE_MASK);
+}
 
-/**
-  * @brief  Convert ADC code to single-ended voltage
-  * @param  dev Pointer to LTC2990 handle
-  * @param  channel Channel number
-  * @retval Voltage value in volts
-  */
-float LTC2990_SingleEndedCodeToData(LTC2990_Handle_t *dev, uint16_t adc_code, uint8_t channel) {
-     float voltage;
-    
-    if (dev == NULL || channel > 3) {
-        return 0.0f;
+int8_t LTC2990_Set_Mode(LTC2990_Handle_t *handle, uint8_t bits_to_set, uint8_t bits_to_clear)
+{
+    uint8_t reg = 0U;
+
+    if ((handle == TX_NULL) || (LTC2990_Read_Register(handle, CONTROL_REG, &reg) != 0)) {
+        return 1;
     }
-    
-    // Convert ADC code to voltage using LSB value
-    voltage = adc_code * VEND_LSB_VALUE;
-    
-    // voltage divider ratio based on channel
-    switch(channel) {
-        case 0: // V1 - 12V supply
-            voltage *= VOLTAGE_DIVIDER_RATIO_V1;
+
+    reg &= (uint8_t)~bits_to_clear;
+    reg |= bits_to_set;
+
+    return LTC2990_Write_Register(handle, CONTROL_REG, reg);
+}
+
+int8_t LTC2990_Trigger_Conversion(LTC2990_Handle_t *handle)
+{
+    return LTC2990_Write_Register(handle, TRIGGER_REG, 0x00U);
+}
+
+uint8_t LTC2990_ADC_Read_New_Data(LTC2990_Handle_t *handle,
+                                  uint8_t msb_register_address,
+                                  uint16_t *raw15,
+                                  int8_t *data_valid)
+{
+    uint32_t timeout = LTC2990_TIMEOUT_MS;
+    uint8_t status = 0U;
+    uint8_t bit = status_bit_from_msb(msb_register_address);
+    uint8_t ready = 0U;
+
+    if ((handle == TX_NULL) || (raw15 == TX_NULL) || (data_valid == TX_NULL) || (bit == 0xFFU)) {
+        return 1U;
+    }
+
+    while (timeout-- != 0U) {
+        if (LTC2990_Read_Register(handle, STATUS_REG, &status) != 0) {
+            return 1U;
+        }
+        if (((status >> bit) & 0x01U) != 0U) {
+            ready = 1U;
             break;
-        case 1: // V2 - VBatt
-            voltage *= VOLTAGE_DIVIDER_RATIO_V2;
-            break;
-        case 2: // V3 - 7V N.O.
-            voltage *= VOLTAGE_DIVIDER_RATIO_V3;
-            break;
-        case 3: // V4 - 7V Dump
-            voltage *= VOLTAGE_DIVIDER_RATIO_V4;
-            break;
-        default:
-            break;
+        }
+        ltc2990_sleep_ms(1U);
     }
-    
-    return voltage;
+
+    if (ready == 0U) {
+        return 1U;
+    }
+
+    uint8_t msb = 0U;
+    uint8_t lsb = 0U;
+    if (LTC2990_Read_Register(handle, msb_register_address, &msb) != 0) {
+        return 1U;
+    }
+    if (LTC2990_Read_Register(handle, (uint8_t)(msb_register_address + 1U), &lsb) != 0) {
+        return 1U;
+    }
+
+    const uint16_t code = (uint16_t)(((uint16_t)msb << 8) | lsb);
+    *data_valid = (int8_t)((code >> 15) & 0x01U);
+    *raw15 = (uint16_t)(code & 0x7FFFU);
+
+    return (*data_valid != 0) ? 0U : 1U;
 }
 
-//--------------------------------------------------------------------------------------------
-/**
-  * @brief  Convert ADC code to voltage
-  * @param  adc_code ADC code
-  * @param  lsb_value Least significant bit value
-  * @retval Voltage value in volts
-  */
-float LTC2990_CodeToVoltage(uint16_t adc_code, float lsb_value) {
-    return adc_code * lsb_value;
+float LTC2990_Code_To_Single_Ended_Voltage(LTC2990_Handle_t *handle,
+                                           uint16_t code14,
+                                           uint8_t channel)
+{
+    (void)handle;
+
+    float voltage = (float)(code14 & 0x3FFFU) * SINGLE_ENDED_LSB;
+
+    switch (channel) {
+    case 0U:
+        return voltage * VOLTAGE_DIVIDER_RATIO_12V;
+    case 1U:
+        return voltage * VOLTAGE_DIVIDER_RATIO_VBATT;
+    case 2U:
+        return voltage * VOLTAGE_DIVIDER_RATIO_7V;
+    case 3U:
+        return voltage * VOLTAGE_DIVIDER_RATIO_7V_DUMP;
+    default:
+        return NAN;
+    }
 }
 
-//--------------------------------------------------------------------------------------------
+float LTC2990_Code15_To_CurrentA(uint16_t raw15)
+{
+    const float a_per_count = 19.42e-6f / (RSENSE_OHM * CURRENT_DIVIDER_RATIO);
+    const uint16_t magnitude = (uint16_t)(raw15 & 0x3FFFU);
 
-/**
-  * @brief  Get current from differential measurement
-  * @param  dev Pointer to LTC2990 handle
-  * @retval Current in microAmperes
-  */
-float LTC2990_GetCurrent(LTC2990_Handle_t *dev) {
-    HAL_StatusTypeDef status;
-    uint16_t adc_code;
-    uint8_t data_valid;
-    float voltage;
-    
-    if (dev == NULL) {
-        return 0.0f;
+    if ((raw15 & 0x4000U) != 0U) {
+        return -((float)magnitude + 1.0f) * a_per_count;
     }
-    
-    // Switch to differential mode
-    status = LTC2990_SetMode(dev, V1DV2, CLEAR_ALL);
-    if (status != HAL_OK) return 0.0f;
-    
-    // Trigger conversion
-    status = LTC2990_TriggerConversion(dev);
-    if (status != HAL_OK) return 0.0f;
-    
-    HAL_Delay(100);
-    
-    // Read differential voltage
-    status = LTC2990_ReadADCData(dev, V1_MSB_REG, &adc_code, &data_valid);
-    if (status != HAL_OK || !data_valid) return 0.0f;
-    
-    // Convert to current 
-    voltage = LTC2990_CodeToVoltage(adc_code, CEND_LSB_VALUE);
-    return voltage / RSENSE;
+
+    return (float)magnitude * a_per_count;
 }
 
-//--------------------------------------------------------------------------------------------
-
-/**
-  * @brief  Write a value to an LTC2990 register
-  * @param  dev Pointer to LTC2990 handle
-  * @param  reg Register address
-  * @param  value Value to write
-  * @retval HAL status
-  */
-HAL_StatusTypeDef LTC2990_WriteRegister(LTC2990_Handle_t *dev, uint8_t reg, uint8_t value) {
-    // device does not exist or 
-    if (dev == NULL || dev->hi2c == NULL) {
-        return HAL_ERROR;
+int8_t LTC2990_Read_Register(LTC2990_Handle_t *handle, uint8_t reg_address, uint8_t *data)
+{
+    if ((handle == TX_NULL) || (handle->hi2c == TX_NULL) || (data == TX_NULL)) {
+        return 1;
     }
-    
-    return HAL_I2C_Mem_Write(dev->hi2c, dev->i2c_address << 1, reg, 
-                             I2C_MEMADD_SIZE_8BIT, &value, 1, 100);
+
+    i2c_lock(handle);
+    const HAL_StatusTypeDef status = HAL_I2C_Mem_Read(handle->hi2c,
+                                                       (uint16_t)(handle->i2c_address << 1),
+                                                       reg_address,
+                                                       I2C_MEMADD_SIZE_8BIT,
+                                                       data,
+                                                       1U,
+                                                       LTC2990_TIMEOUT_MS);
+    i2c_unlock(handle);
+
+    return (status == HAL_OK) ? 0 : 1;
 }
 
-/**
-  * @brief  Read a value from an LTC2990 register
-  * @param  dev Pointer to LTC2990 handle
-  * @param  reg Register address
-  * @param  data Pointer to store read value
-  * @retval HAL status
-  */
-HAL_StatusTypeDef LTC2990_ReadRegister(LTC2990_Handle_t *dev, uint8_t reg, uint8_t *data) {
-    if (dev == NULL || dev->hi2c == NULL || data == NULL) {
-        return HAL_ERROR;
+int8_t LTC2990_Write_Register(LTC2990_Handle_t *handle, uint8_t reg_address, uint8_t data)
+{
+    if ((handle == TX_NULL) || (handle->hi2c == TX_NULL)) {
+        return 1;
     }
-    
-    return HAL_I2C_Mem_Read(dev->hi2c, dev->i2c_address << 1, reg, 
-                            I2C_MEMADD_SIZE_8BIT, data, 1, 100);
+
+    i2c_lock(handle);
+    const HAL_StatusTypeDef status = HAL_I2C_Mem_Write(handle->hi2c,
+                                                        (uint16_t)(handle->i2c_address << 1),
+                                                        reg_address,
+                                                        I2C_MEMADD_SIZE_8BIT,
+                                                        &data,
+                                                        1U,
+                                                        LTC2990_TIMEOUT_MS);
+    i2c_unlock(handle);
+
+    return (status == HAL_OK) ? 0 : 1;
 }
 
-/**
-  * @brief  Read ADC data
-  * @param  dev Pointer to LTC2990 handle
-  * @param  msb_reg MSB register address
-  * @param  adc_code Pointer to store ADC code
-  * @retval HAL status
-  */
-HAL_StatusTypeDef LTC2990_ReadADCData(LTC2990_Handle_t *dev, uint8_t msb_reg, uint16_t *adc_code, uint8_t *data_valid) {
-    HAL_StatusTypeDef status;
-    uint8_t msb, lsb;
-    uint16_t code;
-    
-    if (dev == NULL || adc_code == NULL || data_valid == NULL) {
-        return HAL_ERROR;
+void telemetry_ltc2990_update_voltage(LTC2990_Handle_t *ltc2990_handle)
+{
+    float voltages[4] = {NAN, NAN, NAN, NAN};
+
+    LTC2990_Step(ltc2990_handle);
+    LTC2990_Get_Values(ltc2990_handle, voltages);
+
+    if (!isnan(voltages[1])) {
+        (void)log_telemetry_asynchronous(SEDS_DT_BATTERY_VOLTAGE, &voltages[1], 1U, sizeof(float));
     }
-    
-    // Read MSB and LSB
-    status = LTC2990_ReadRegister(dev, msb_reg, &msb);
-    if (status != HAL_OK) return status;
-    
-    status = LTC2990_ReadRegister(dev, msb_reg + 1, &lsb);
-    if (status != HAL_OK) return status;
-    
-    // Check data valid bit (MSB bit 7)
-    *data_valid = (msb & 0x80) ? 1 : 0;
-    
-    // Combine and mask out data valid bit
-    code = ((uint16_t)msb << 8) | lsb;
-    *adc_code = code & 0x7FFF;
-    
-    return HAL_OK;
+}
+
+void telemetry_ltc2990_update_current(LTC2990_Handle_t *ltc2990_handle)
+{
+    float currents[4] = {NAN, NAN, NAN, NAN};
+
+    LTC2990_Step(ltc2990_handle);
+    LTC2990_Get_Values(ltc2990_handle, currents);
+
+    float current = (currents[CURRENT_TELEMETRY_CHANNEL_INDEX] * CURRENT_DRAW_GAIN) +
+                    CURRENT_DRAW_OFFSET_A;
+    if (!isnan(current)) {
+        (void)log_telemetry_asynchronous(SEDS_DT_BATTERY_CURRENT, &current, 1U, sizeof(float));
+    }
 }

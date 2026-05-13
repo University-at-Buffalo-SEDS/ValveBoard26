@@ -69,6 +69,8 @@ void Error_Handler(void);
 #define Solenoid_GPIO_Port GPIOB
 #define PRESS_IN_Pin GPIO_PIN_13
 #define PRESS_IN_GPIO_Port GPIOB
+#define Continuity_Pin GPIO_PIN_15
+#define Continuity_GPIO_Port GPIOB
 #define BLUE_LED_Pin GPIO_PIN_8
 #define BLUE_LED_GPIO_Port GPIOC
 #define BUZZER_Pin GPIO_PIN_9
