@@ -10,7 +10,7 @@ TX_THREAD safety_thread;
 
 #define SAFETY_THREAD_STACK_SIZE (4U * 1024U)
 #define SAFETY_HEARTBEAT_TIMEOUT_MS (5000ULL)
-#define SAFETY_LAUNCH_CONTINUITY_TIMEOUT_MS (1ULL * 60ULL * 1000ULL)
+#define SAFETY_LAUNCH_CONTINUITY_TIMEOUT_MS (5ULL * 60ULL * 1000ULL)
 #define SAFETY_CHECK_PERIOD_TICKS ((TX_TIMER_TICKS_PER_SECOND + 99U) / 100U)
 #ifndef CONTINUITY_PRESENT_STATE
 #define CONTINUITY_PRESENT_STATE GPIO_PIN_SET
@@ -23,6 +23,7 @@ static volatile uint32_t safety_continuity_loss_latched_count;
 static volatile uint32_t safety_launch_continuity_timeout_count;
 static volatile GPIO_PinState safety_last_continuity_state;
 static uint64_t safety_launch_continuity_loss_since_ms;
+static ULONG safety_thread_stack[SAFETY_THREAD_STACK_SIZE / sizeof(ULONG)];
 
 static uint64_t safety_now_ms(void)
 {
@@ -134,19 +135,13 @@ void safety_thread_entry(ULONG initial_input)
 
 UINT create_safety_thread(TX_BYTE_POOL *byte_pool)
 {
-    CHAR *pointer;
-
-    if (tx_byte_allocate(byte_pool, (VOID **)&pointer,
-                         SAFETY_THREAD_STACK_SIZE, TX_NO_WAIT) != TX_SUCCESS)
-    {
-        return TX_POOL_ERROR;
-    }
+    (void)byte_pool;
 
     return tx_thread_create(&safety_thread,
                             "Safety Thread",
                             safety_thread_entry,
                             0,
-                            pointer,
+                            safety_thread_stack,
                             SAFETY_THREAD_STACK_SIZE,
                             5,
                             5,

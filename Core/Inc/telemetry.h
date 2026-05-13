@@ -62,6 +62,8 @@ SedsResult telemetry_publish_umbilical_status(uint8_t cmd_id, uint8_t on);
 SedsResult telemetry_send_actuator_command(uint8_t cmd_id);
 SedsResult telemetry_send_actuator_command_at(uint8_t cmd_id, uint64_t timestamp_ms);
 SedsResult telemetry_broadcast_abort(const char *reason);
+SedsResult telemetry_publish_flight_state(uint8_t flight_state);
+SedsResult telemetry_publish_flight_state_at(uint8_t flight_state, uint64_t timestamp_ms);
 void telemetry_note_can_rx(void);
 void telemetry_toggle_led_on_can_rx(void);
 uint8_t telemetry_link_recently_active(void);

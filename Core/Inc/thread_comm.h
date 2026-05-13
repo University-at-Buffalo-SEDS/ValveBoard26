@@ -28,16 +28,16 @@ typedef enum {
     VALVE_FLIGHT_STATE_FILL_TEST = 3,
     VALVE_FLIGHT_STATE_NITROGEN_FILL = 4,
     VALVE_FLIGHT_STATE_NITROUS_FILL = 5,
-    VALVE_FLIGHT_STATE_POSTINIT = 6,
-    VALVE_FLIGHT_STATE_ARMED = 7,
-    VALVE_FLIGHT_STATE_LAUNCH = 8,
-    VALVE_FLIGHT_STATE_ASCENT = 9,
-    VALVE_FLIGHT_STATE_COAST = 10,
-    VALVE_FLIGHT_STATE_APOGEE = 11,
+    VALVE_FLIGHT_STATE_ARMED = 6,
+    VALVE_FLIGHT_STATE_LAUNCH = 7,
+    VALVE_FLIGHT_STATE_ASCENT = 8,
+    VALVE_FLIGHT_STATE_COAST = 9,
+    VALVE_FLIGHT_STATE_APOGEE = 10,
+    VALVE_FLIGHT_STATE_PARACHUTE_DEPLOY = 11,
     VALVE_FLIGHT_STATE_DESCENT = 12,
-    VALVE_FLIGHT_STATE_REEFING = 13,
-    VALVE_FLIGHT_STATE_LANDED = 14,
-    VALVE_FLIGHT_STATE_RECOVERY = 15,
+    VALVE_FLIGHT_STATE_LANDED = 13,
+    VALVE_FLIGHT_STATE_RECOVERY = 14,
+    VALVE_FLIGHT_STATE_ABORTED = 15,
 } valve_flight_state_t;
 
 /**
@@ -63,6 +63,7 @@ UINT thread_comm_init(TX_BYTE_POOL *byte_pool);
  * @retval ThreadX error code Queue was not ready, full, or send failed.
  */
 UINT thread_comm_send(thread_comm_msg_t msg, ULONG wait_option);
+UINT thread_comm_send_urgent(thread_comm_msg_t msg);
 
 /**
  * @brief Pop one message from the shared queue.
@@ -116,6 +117,10 @@ int32_t thread_comm_get_shared_value(void);
 UINT thread_comm_set_flight_state(uint8_t flight_state);
 uint8_t thread_comm_get_flight_state(void);
 uint8_t thread_comm_abort_allowed(void);
+UINT thread_comm_set_launch_command_timestamp_ms(uint64_t timestamp_ms);
+uint64_t thread_comm_get_launch_command_timestamp_ms(void);
+UINT thread_comm_request_launch_sequence(uint64_t timestamp_ms);
+uint8_t thread_comm_take_launch_sequence_request(uint64_t *timestamp_ms);
 
 UINT thread_comm_note_groundstation_heartbeat(uint64_t timestamp_ms);
 uint64_t thread_comm_get_groundstation_heartbeat_ms(void);

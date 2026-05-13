@@ -11,6 +11,8 @@ static uint8_t g_thread_comm_initialized = 0U;
 static uint8_t g_thread_comm_abort = 0U;
 static uint8_t g_thread_comm_flight_state = VALVE_FLIGHT_STATE_STARTUP;
 static uint64_t g_thread_comm_groundstation_heartbeat_ms = 0ULL;
+static uint64_t g_thread_comm_launch_command_timestamp_ms = 0ULL;
+static uint8_t g_thread_comm_launch_sequence_pending = 0U;
 static int32_t g_thread_comm_shared_value = 0;
 
 static uint32_t thread_comm_ring_next(uint32_t index)
@@ -71,6 +73,8 @@ UINT thread_comm_init(TX_BYTE_POOL *byte_pool)
     g_thread_comm_abort = 0U;
     g_thread_comm_flight_state = VALVE_FLIGHT_STATE_STARTUP;
     g_thread_comm_groundstation_heartbeat_ms = 0ULL;
+    g_thread_comm_launch_command_timestamp_ms = 0ULL;
+    g_thread_comm_launch_sequence_pending = 0U;
     g_thread_comm_shared_value = 0;
     g_thread_comm_initialized = 1U;
 
@@ -93,6 +97,67 @@ UINT thread_comm_send(thread_comm_msg_t msg, ULONG wait_option)
     }
 
     status = tx_mutex_get(&g_thread_comm_ring_mutex, wait_option);
+    if (status != TX_SUCCESS)
+    {
+        (void)tx_semaphore_put(&g_thread_comm_spaces_sem);
+        return status;
+    }
+
+    g_thread_comm_ring[g_thread_comm_head] = msg;
+    g_thread_comm_head = thread_comm_ring_next(g_thread_comm_head);
+
+    status = tx_mutex_put(&g_thread_comm_ring_mutex);
+    if (status != TX_SUCCESS)
+    {
+        return status;
+    }
+
+    return tx_semaphore_put(&g_thread_comm_items_sem);
+}
+
+UINT thread_comm_send_urgent(thread_comm_msg_t msg)
+{
+    UINT status;
+
+    if (g_thread_comm_initialized == 0U)
+    {
+        return TX_QUEUE_ERROR;
+    }
+
+    status = tx_semaphore_get(&g_thread_comm_spaces_sem, TX_NO_WAIT);
+    if (status != TX_SUCCESS)
+    {
+        status = tx_semaphore_get(&g_thread_comm_items_sem, TX_NO_WAIT);
+        if (status != TX_SUCCESS)
+        {
+            return status;
+        }
+
+        status = tx_mutex_get(&g_thread_comm_ring_mutex, TX_NO_WAIT);
+        if (status != TX_SUCCESS)
+        {
+            (void)tx_semaphore_put(&g_thread_comm_items_sem);
+            return status;
+        }
+
+        g_thread_comm_tail = thread_comm_ring_next(g_thread_comm_tail);
+
+        status = tx_mutex_put(&g_thread_comm_ring_mutex);
+        if (status != TX_SUCCESS)
+        {
+            return status;
+        }
+
+        (void)tx_semaphore_put(&g_thread_comm_spaces_sem);
+
+        status = tx_semaphore_get(&g_thread_comm_spaces_sem, TX_NO_WAIT);
+        if (status != TX_SUCCESS)
+        {
+            return status;
+        }
+    }
+
+    status = tx_mutex_get(&g_thread_comm_ring_mutex, TX_NO_WAIT);
     if (status != TX_SUCCESS)
     {
         (void)tx_semaphore_put(&g_thread_comm_spaces_sem);
@@ -274,6 +339,100 @@ uint8_t thread_comm_abort_allowed(void)
             (flight_state < VALVE_FLIGHT_STATE_LAUNCH))
                ? 1U
                : 0U;
+}
+
+UINT thread_comm_set_launch_command_timestamp_ms(uint64_t timestamp_ms)
+{
+    UINT status;
+
+    if (g_thread_comm_initialized == 0U)
+    {
+        return TX_MUTEX_ERROR;
+    }
+
+    status = tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER);
+    if (status != TX_SUCCESS)
+    {
+        return status;
+    }
+
+    g_thread_comm_launch_command_timestamp_ms = timestamp_ms;
+
+    return tx_mutex_put(&g_thread_comm_state_mutex);
+}
+
+uint64_t thread_comm_get_launch_command_timestamp_ms(void)
+{
+    UINT status;
+    uint64_t timestamp_ms = 0ULL;
+
+    if (g_thread_comm_initialized == 0U)
+    {
+        return 0ULL;
+    }
+
+    status = tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER);
+    if (status == TX_SUCCESS)
+    {
+        timestamp_ms = g_thread_comm_launch_command_timestamp_ms;
+        (void)tx_mutex_put(&g_thread_comm_state_mutex);
+    }
+
+    return timestamp_ms;
+}
+
+UINT thread_comm_request_launch_sequence(uint64_t timestamp_ms)
+{
+    UINT status;
+
+    if (g_thread_comm_initialized == 0U)
+    {
+        return TX_MUTEX_ERROR;
+    }
+
+    status = tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER);
+    if (status != TX_SUCCESS)
+    {
+        return status;
+    }
+
+    g_thread_comm_launch_command_timestamp_ms = timestamp_ms;
+    g_thread_comm_launch_sequence_pending = 1U;
+
+    return tx_mutex_put(&g_thread_comm_state_mutex);
+}
+
+uint8_t thread_comm_take_launch_sequence_request(uint64_t *timestamp_ms)
+{
+    UINT status;
+    uint8_t pending = 0U;
+
+    if (timestamp_ms != TX_NULL)
+    {
+        *timestamp_ms = 0ULL;
+    }
+
+    if (g_thread_comm_initialized == 0U)
+    {
+        return 0U;
+    }
+
+    status = tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER);
+    if (status == TX_SUCCESS)
+    {
+        pending = g_thread_comm_launch_sequence_pending;
+        if (pending != 0U)
+        {
+            if (timestamp_ms != TX_NULL)
+            {
+                *timestamp_ms = g_thread_comm_launch_command_timestamp_ms;
+            }
+            g_thread_comm_launch_sequence_pending = 0U;
+        }
+        (void)tx_mutex_put(&g_thread_comm_state_mutex);
+    }
+
+    return pending;
 }
 
 UINT thread_comm_note_groundstation_heartbeat(uint64_t timestamp_ms)

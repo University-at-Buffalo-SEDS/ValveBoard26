@@ -6,8 +6,9 @@
 #include "main.h"
 
 TX_THREAD telemetry_thread;
-#define TELEMETRY_THREAD_STACK_SIZE (16U *1024U)
+#define TELEMETRY_THREAD_STACK_SIZE (12U * 1024U)
 extern FDCAN_HandleTypeDef hfdcan2;
+static ULONG telemetry_thread_stack[TELEMETRY_THREAD_STACK_SIZE / sizeof(ULONG)];
 
 void telemetry_thread_entry(ULONG initial_input)
 {
@@ -30,21 +31,13 @@ void telemetry_thread_entry(ULONG initial_input)
 
 UINT create_telemetry_thread(TX_BYTE_POOL *byte_pool)
 {
-
-        CHAR *pointer;
-
-  /* Allocate the stack for test  */
-  if (tx_byte_allocate(byte_pool, (VOID**) &pointer,
-                       TELEMETRY_THREAD_STACK_SIZE, TX_NO_WAIT) != TX_SUCCESS)
-  {
-    return TX_POOL_ERROR;
-  }
+    (void)byte_pool;
 
     UINT status = tx_thread_create(&telemetry_thread,
                                    "Telemetry Thread",
                                    telemetry_thread_entry,
                                    0,
-                                   pointer,
+                                   telemetry_thread_stack,
                                    TELEMETRY_THREAD_STACK_SIZE,
                                    5,
                                    5,

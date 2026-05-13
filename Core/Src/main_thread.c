@@ -11,10 +11,13 @@
 
 TX_THREAD main_thread;
 
-#define MAIN_THREAD_STACK_SIZE (16U *1024U)
+#define MAIN_THREAD_STACK_SIZE (12U * 1024U)
 #define UMBILICAL_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
 #define LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS 10000U
 #define LAUNCH_SEQUENCE_PILOT_OPEN_DURATION_MS 1500U
+#define LAUNCH_SEQUENCE_PILOT_STATUS_PERIOD_TICKS \
+    ((TX_TIMER_TICKS_PER_SECOND >= 10U) ? (TX_TIMER_TICKS_PER_SECOND / 10U) : 1U)
+#define MAIN_THREAD_MAX_COMMANDS_PER_TICK 4U
 #define ABORT_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
 #define ABORT_LED_PERIOD_TICKS ((TX_TIMER_TICKS_PER_SECOND >= 2U) ? (TX_TIMER_TICKS_PER_SECOND / 2U) : 1U)
 
@@ -27,11 +30,19 @@ static uint8_t g_launch_sequence_active = 0U;
 static uint8_t g_launch_sequence_actuator_started = 0U;
 static uint8_t g_launch_sequence_pilot_opened = 0U;
 static uint8_t g_launch_sequence_completed = 0U;
-static uint8_t g_launch_sequence_actuator_command_sent = 0U;
 static volatile uint8_t g_outputs_initialized = 0U;
+static volatile uint32_t g_launch_sequence_start_count = 0U;
+static volatile uint32_t g_launch_sequence_service_count = 0U;
+static volatile uint32_t g_launch_sequence_pilot_attempt_count = 0U;
+static volatile uint32_t g_launch_sequence_finish_count = 0U;
+static volatile uint32_t g_launch_sequence_abort_seen_count = 0U;
+static volatile ULONG g_launch_sequence_last_elapsed_ticks = 0U;
 static ULONG g_launch_sequence_start_ticks = 0U;
+static ULONG g_launch_sequence_pilot_open_ticks = 0U;
+static ULONG g_launch_sequence_last_pilot_status_ticks = 0U;
 static ULONG g_abort_last_status_ticks = 0U;
 static ULONG g_abort_last_led_ticks = 0U;
+static ULONG main_thread_stack[MAIN_THREAD_STACK_SIZE / sizeof(ULONG)];
 
 // Umbilical GPIO inputs 
 solenoid_t pilot_solenoid = {Solenoid_GPIO_Port, Solenoid_Pin, Solenoid_GPIO_Port, Solenoid_Pin, NULL, 0, 5};
@@ -127,6 +138,7 @@ static void main_thread_force_outputs_safe_off(void)
     g_launch_sequence_active = 0U;
     g_launch_sequence_actuator_started = 0U;
     g_launch_sequence_pilot_opened = 0U;
+    g_launch_sequence_pilot_open_ticks = 0U;
 
     if (g_outputs_initialized == 0U)
     {
@@ -144,7 +156,7 @@ static void main_thread_force_outputs_safe_off(void)
 
 static void start_launch_sequence(void)
 {
-    if ((g_launch_sequence_active != 0U) || (g_launch_sequence_completed != 0U))
+    if (g_launch_sequence_active != 0U)
     {
         return;
     }
@@ -152,14 +164,51 @@ static void start_launch_sequence(void)
     g_launch_sequence_active = 1U;
     g_launch_sequence_actuator_started = 1U;
     g_launch_sequence_pilot_opened = 0U;
+    g_launch_sequence_completed = 0U;
     g_launch_sequence_start_ticks = tx_time_get();
-    if (g_launch_sequence_actuator_command_sent == 0U)
+    g_launch_sequence_pilot_open_ticks = 0U;
+    g_launch_sequence_last_pilot_status_ticks = 0U;
+    g_launch_sequence_start_count++;
+    uint64_t launch_timestamp_ms = thread_comm_get_launch_command_timestamp_ms();
+    if (launch_timestamp_ms == 0ULL)
     {
-        const uint64_t sequence_timestamp_ms = telemetry_unix_ms();
-        (void)telemetry_send_actuator_command_at(CMD_IGNITER_SEQUENCE, sequence_timestamp_ms);
-        g_launch_sequence_actuator_command_sent = 1U;
+        launch_timestamp_ms = telemetry_unix_ms();
+    }
+    if (thread_comm_get_flight_state() != VALVE_FLIGHT_STATE_LAUNCH)
+    {
+        (void)thread_comm_set_flight_state(VALVE_FLIGHT_STATE_LAUNCH);
+    }
+    if (launch_timestamp_ms != 0ULL)
+    {
+        (void)telemetry_publish_flight_state_at(VALVE_FLIGHT_STATE_LAUNCH,
+                                                launch_timestamp_ms);
+    }
+    if (launch_timestamp_ms != 0ULL)
+    {
+        (void)telemetry_send_actuator_command_at(CMD_IGNITER_SEQUENCE,
+                                                 launch_timestamp_ms);
+    }
+    else
+    {
+        (void)telemetry_send_actuator_command(CMD_IGNITER_SEQUENCE);
     }
     (void)publish_umbilical_status(CMD_SEQUENCE, 1U);
+}
+
+static void service_launch_sequence_request(void)
+{
+    uint64_t launch_timestamp_ms = 0ULL;
+
+    if (thread_comm_take_launch_sequence_request(&launch_timestamp_ms) == 0U)
+    {
+        return;
+    }
+
+    (void)thread_comm_set_abort(0U);
+    (void)thread_comm_set_flight_state(VALVE_FLIGHT_STATE_LAUNCH);
+    g_aborted = 0U;
+    (void)thread_comm_set_launch_command_timestamp_ms(launch_timestamp_ms);
+    start_launch_sequence();
 }
 
 static void service_launch_sequence(void)
@@ -171,22 +220,39 @@ static void service_launch_sequence(void)
 
     const ULONG now = tx_time_get();
     const ULONG elapsed = now - g_launch_sequence_start_ticks;
+    g_launch_sequence_service_count++;
+    g_launch_sequence_last_elapsed_ticks = elapsed;
     const ULONG pilot_open_ticks = ms_to_ticks(LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS);
-    const ULONG pilot_close_ticks =
-        pilot_open_ticks + ms_to_ticks(LAUNCH_SEQUENCE_PILOT_OPEN_DURATION_MS);
+    const ULONG pilot_open_duration_ticks =
+        ms_to_ticks(LAUNCH_SEQUENCE_PILOT_OPEN_DURATION_MS);
 
     if ((g_launch_sequence_pilot_opened == 0U) && (elapsed >= pilot_open_ticks))
     {
+        g_launch_sequence_pilot_attempt_count++;
         pilot_valve_on();
         g_launch_sequence_pilot_opened = 1U;
+        g_launch_sequence_pilot_open_ticks = now;
+        g_launch_sequence_last_pilot_status_ticks = now;
     }
 
-    if ((g_launch_sequence_pilot_opened != 0U) && (elapsed >= pilot_close_ticks))
+    if ((g_launch_sequence_pilot_opened != 0U) &&
+        ((ULONG)(now - g_launch_sequence_last_pilot_status_ticks) >=
+         LAUNCH_SEQUENCE_PILOT_STATUS_PERIOD_TICKS))
+    {
+        (void)publish_umbilical_status(CMD_PILOT_OPEN, 1U);
+        g_launch_sequence_last_pilot_status_ticks = now;
+    }
+
+    if ((g_launch_sequence_pilot_opened != 0U) &&
+        ((ULONG)(now - g_launch_sequence_pilot_open_ticks) >=
+         pilot_open_duration_ticks))
     {
         pilot_valve_off();
         g_launch_sequence_active = 0U;
         g_launch_sequence_pilot_opened = 0U;
+        g_launch_sequence_pilot_open_ticks = 0U;
         g_launch_sequence_completed = 1U;
+        g_launch_sequence_finish_count++;
         (void)publish_umbilical_status(CMD_SEQUENCE, 0U);
     }
 }
@@ -273,8 +339,14 @@ void main_thread_entry(ULONG initial_input)
     
     publish_all_umbilical_statuses();
     for (;;) {
+        service_launch_sequence_request();
+
         if (thread_comm_get_abort() != 0U)
         {
+            if (g_launch_sequence_active != 0U)
+            {
+                g_launch_sequence_abort_seen_count++;
+            }
             if (g_aborted == 0U)
             {
                 abort_state();
@@ -287,11 +359,18 @@ void main_thread_entry(ULONG initial_input)
             tx_thread_sleep(1);
             continue;
         }
+
+        service_launch_sequence();
+        service_launch_sequence_request();
+
+        uint32_t commands_drained = 0U;
         while ((g_aborted != 1U) &&
                (thread_comm_get_abort() == 0U) &&
+               (commands_drained < MAIN_THREAD_MAX_COMMANDS_PER_TICK) &&
                (thread_comm_receive(&msg, TX_NO_WAIT) == TX_SUCCESS))
         {
             handle_command(msg);
+            commands_drained++;
         }
 
         if (thread_comm_get_abort() != 0U)
@@ -299,29 +378,22 @@ void main_thread_entry(ULONG initial_input)
             continue;
         }
 
-        publish_all_umbilical_statuses();
         service_launch_sequence();
+        service_launch_sequence_request();
+        publish_all_umbilical_statuses();
         tx_thread_sleep(1);
     }
 }    
 
 UINT create_main_thread(TX_BYTE_POOL *byte_pool)
 {
-
-        CHAR *pointer;
-
-  /* Allocate the stack for test  */
-  if (tx_byte_allocate(byte_pool, (VOID**) &pointer,
-                       MAIN_THREAD_STACK_SIZE, TX_NO_WAIT) != TX_SUCCESS)
-  {
-    return TX_POOL_ERROR;
-  }
+    (void)byte_pool;
 
     UINT status = tx_thread_create(&main_thread,
                                    "Main Thread",
                                    main_thread_entry,
                                    0,
-                                   pointer,
+                                   main_thread_stack,
                                    MAIN_THREAD_STACK_SIZE,
                                    6,
                                    6,

@@ -188,11 +188,14 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
     return SEDS_OK;
   }
 
-  if (thread_comm_send(cmd_u8, TX_NO_WAIT) != TX_SUCCESS)
+  if (cmd_u8 == CMD_SEQUENCE)
   {
-    return SEDS_ERR;
+    (void)thread_comm_request_launch_sequence(pkt->timestamp);
+    (void)thread_comm_set_flight_state(VALVE_FLIGHT_STATE_LAUNCH);
+    return SEDS_OK;
   }
 
+  (void)thread_comm_send(cmd_u8, TX_NO_WAIT);
   return SEDS_OK;
 }
 
@@ -231,6 +234,13 @@ SedsResult Flight_State_handler(const SedsPacketView *pkt, void *user)
 
   g_flight_state_handler_count++;
   g_last_flight_state_packet = flight_state;
+
+  const uint8_t current_flight_state = thread_comm_get_flight_state();
+  if ((current_flight_state >= VALVE_FLIGHT_STATE_LAUNCH) &&
+      (flight_state < current_flight_state))
+  {
+    return SEDS_OK;
+  }
 
   if (thread_comm_set_flight_state(flight_state) != TX_SUCCESS)
   {
@@ -527,7 +537,13 @@ SedsResult telemetry_send_actuator_command(uint8_t cmd_id)
   (void)cmd_id;
   return SEDS_OK;
 #else
-  return log_telemetry_asynchronous(SEDS_DT_ACTUATOR_COMMAND, &cmd_id, 1U, sizeof(cmd_id));
+  if (!g_router.r && init_telemetry_router() != SEDS_OK)
+  {
+    return SEDS_ERR;
+  }
+
+  return seds_router_log_typed_ex(g_router.r, SEDS_DT_ACTUATOR_COMMAND, &cmd_id, 1U,
+                                  sizeof(cmd_id), SEDS_EK_UNSIGNED, NULL, 1);
 #endif
 }
 
@@ -560,6 +576,35 @@ SedsResult telemetry_broadcast_abort(const char *reason)
   g_abort_broadcast_sent = 1U;
   return log_telemetry_string_asynchronous(SEDS_DT_ABORT,
                                            (reason != NULL) ? reason : default_reason);
+}
+
+SedsResult telemetry_publish_flight_state_at(uint8_t flight_state, uint64_t timestamp_ms)
+{
+#ifndef TELEMETRY_ENABLED
+  (void)flight_state;
+  (void)timestamp_ms;
+  return SEDS_OK;
+#else
+  if (!g_router.r && init_telemetry_router() != SEDS_OK)
+  {
+    return SEDS_ERR;
+  }
+
+  return seds_router_log_typed_ex(g_router.r, SEDS_DT_FLIGHT_STATE, &flight_state, 1U,
+                                  sizeof(flight_state), SEDS_EK_UNSIGNED, &timestamp_ms, 1);
+#endif
+}
+
+SedsResult telemetry_publish_flight_state(uint8_t flight_state)
+{
+  const uint64_t timestamp_ms = telemetry_unix_ms();
+
+  if (timestamp_ms == 0ULL)
+  {
+    return SEDS_ERR;
+  }
+
+  return telemetry_publish_flight_state_at(flight_state, timestamp_ms);
 }
 
 SedsResult init_telemetry_router(void)
