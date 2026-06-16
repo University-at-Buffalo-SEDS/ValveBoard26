@@ -98,7 +98,7 @@ static void safety_check_continuity(void)
         return;
     }
 
-    if (flight_state == VALVE_FLIGHT_STATE_LAUNCH)
+    if (flight_state >= VALVE_FLIGHT_STATE_LAUNCH)
     {
         const uint64_t now_ms = safety_now_ms();
 
