@@ -136,9 +136,11 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-  // HAL_GPIO_WritePin(Solenoid_GPIO_Port, Solenoid_Pin, GPIO_PIN_SET);
-  // HAL_GPIO_TogglePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin);
-  // for(;;){}
+  
+  //buzzer for 1 second
+  HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);  
+  HAL_Delay(500);
+  HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
 
   /* USER CODE END 2 */
 
