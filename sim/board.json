@@ -4,7 +4,7 @@
   "memory": {
     "flash_base": 134217728,
     "flash_size": 524288,
-    "ram_size": 114688,
+    "ram_regions": [{"name": "sram", "base": 536870912, "size": 114688}],
     "bootloader_size": 16384,
     "slot_a_base": 134234112,
     "slot_a_size": 475136,
@@ -41,9 +41,22 @@
     {
       "type": "adc",
       "name": "pressure_adc",
+      "model": "stm32_adc",
+      "bus": "adc2",
       "bits": 12,
-      "channels": 8,
+      "channels": 1,
       "disconnect_after": 950
+    },
+    {
+      "type": "adc",
+      "name": "valve_adc3",
+      "model": "stm32_adc",
+      "bus": "adc3",
+      "bits": 12,
+      "channels": 1
     }
-  ]
+  ],
+  "execution": {
+    "virtual_time_ms": 750
+  }
 }
