@@ -75,6 +75,13 @@ static volatile uint32_t g_last_can_rx_ms = 0U;
 
 RouterState g_router = {.r = NULL, .created = 0U, .start_time = 0ULL};
 
+/* Exported simulator/HIL health signals. A linked-bay test requires both a
+ * remote discovery topology change and a valid SEDSNet network clock. */
+volatile uint32_t g_telemetry_discovery_seen = 0U;
+volatile uint32_t g_telemetry_timesync_valid = 0U;
+volatile uint32_t g_telemetry_network_ready = 0U;
+static int32_t g_telemetry_discovery_baseline_len = -1;
+
 int32_t telemetry_get_init_error_code(void) { return g_telemetry_init_error_code; }
 
 static uint64_t tx_raw_now_ms_locked(void)
@@ -436,12 +443,12 @@ void rx_asynchronous(const uint8_t *bytes, size_t len)
 
   if (g_can_side_id >= 0)
   {
-    result = seds_router_rx_packed_packet_to_queue_from_side(
+    result = seds_router_receive_packed_from_side(
         g_router.r, (uint32_t)g_can_side_id, bytes, len);
   }
   else
   {
-    result = seds_router_rx_packed_packet_to_queue(g_router.r, bytes, len);
+    result = seds_router_receive_packed(g_router.r, bytes, len);
   }
 
   (void)result;
@@ -477,6 +484,27 @@ static UNUSED_FUNCTION void rx_synchronous(const uint8_t *bytes, size_t len)
 #endif
 }
 
+static void telemetry_update_network_health(SedsRouter *router)
+{
+  uint64_t network_time_ms = 0ULL;
+  const int32_t topology_len = seds_router_export_topology_len(router);
+
+  if (g_telemetry_discovery_baseline_len > 0 &&
+      topology_len > g_telemetry_discovery_baseline_len)
+  {
+    g_telemetry_discovery_seen = 1U;
+  }
+  if (seds_router_get_network_time_ms(router, &network_time_ms) == SEDS_OK)
+  {
+    g_telemetry_timesync_valid = 1U;
+  }
+  if (g_telemetry_discovery_seen != 0U &&
+      g_telemetry_timesync_valid != 0U)
+  {
+    g_telemetry_network_ready = 1U;
+  }
+}
+
 SedsResult telemetry_poll_timesync(void)
 {
 #ifndef TELEMETRY_ENABLED
@@ -487,7 +515,9 @@ SedsResult telemetry_poll_timesync(void)
     return SEDS_ERR;
   }
 
-  return seds_router_poll_timesync(g_router.r, NULL);
+  const SedsResult result = seds_router_poll_timesync(g_router.r, NULL);
+  telemetry_update_network_health(g_router.r);
+  return result;
 #endif
 }
 
@@ -515,7 +545,9 @@ SedsResult telemetry_poll_discovery(void)
     return SEDS_ERR;
   }
 
-  return seds_router_poll_discovery(g_router.r, NULL);
+  const SedsResult result = seds_router_poll_discovery(g_router.r, NULL);
+  telemetry_update_network_health(g_router.r);
+  return result;
 #endif
 }
 
@@ -674,7 +706,7 @@ SedsResult init_telemetry_router(void)
     return SEDS_ERR;
   }
 
-  g_can_side_id = seds_router_add_side_packed(r, "can", 3U, tx_send, NULL, true);
+  g_can_side_id = seds_router_add_side_packed(r, "can", 3U, tx_send, NULL, false);
   if (g_can_side_id < 0)
   {
     g_telemetry_init_error_code = TELEMETRY_INIT_ADD_CAN_SIDE_FAILED;
@@ -705,18 +737,8 @@ SedsResult init_telemetry_router(void)
     return result;
   }
 
-  result = seds_router_announce_discovery(r);
-  if (result != SEDS_OK)
-  {
-    g_telemetry_init_error_code = TELEMETRY_INIT_ANNOUNCE_DISCOVERY_FAILED;
-    printf("Error %ld: failed to announce discovery: %d\r\n",
-           (long)g_telemetry_init_error_code, (int)result);
-    seds_router_free(r);
-    g_router.r = NULL;
-    g_router.created = 0U;
-    g_can_side_id = -1;
-    return result;
-  }
+  g_telemetry_discovery_baseline_len = seds_router_export_topology_len(r);
+  /* Discovery begins from the normal poll loop after CAN startup. */
 
   g_telemetry_init_error_code = TELEMETRY_INIT_OK;
   g_router.r = r;

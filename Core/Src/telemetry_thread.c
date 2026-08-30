@@ -25,7 +25,7 @@ void telemetry_thread_entry(ULONG initial_input)
         (void)telemetry_poll_discovery();
         (void)telemetry_poll_timesync();
         ota_stream_poll();
-        (void)dispatch_tx_queue_timeout(0);
+        (void)dispatch_tx_queue_timeout(50);
 
         tx_thread_sleep(1);
     }
