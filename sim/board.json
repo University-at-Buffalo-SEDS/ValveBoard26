@@ -1,6 +1,7 @@
 {
   "name": "Valve_Board26",
   "architecture": "stm32g4",
+  "mcu": "stm32g491",
   "memory": {
     "flash_base": 134217728,
     "flash_size": 524288,
@@ -21,6 +22,13 @@
     "bootloader": "build/Release_Script/Valve_Board26Bootloader.bin",
     "factory": "build/Release_Script/Valve_Board26.factory.bin",
     "ota": "build/Release_Script/Valve_Board26.seds"
+  },
+  "board": {
+    "strict_mmio": false,
+    "clocks": [],
+    "connections": [],
+    "pins": [],
+    "dma_routes": []
   },
   "traffic": {
     "iterations": 100000,
@@ -45,6 +53,8 @@
       "bus": "adc2",
       "bits": 12,
       "channels": 1,
+      "channel_samples": [1638],
+      "noise_lsb": 2,
       "disconnect_after": 950
     },
     {
@@ -53,7 +63,9 @@
       "model": "stm32_adc",
       "bus": "adc3",
       "bits": 12,
-      "channels": 1
+      "channels": 1,
+      "channel_samples": [2048],
+      "noise_lsb": 2
     }
   ],
   "execution": {
