@@ -30,6 +30,10 @@ message("Build type: " ${CMAKE_BUILD_TYPE})
 
 # Enable CMake support for ASM and C languages
 enable_language(C ASM)
+option(SEDS_FIRMWARE_SIM_TEST "Enable simulator-only network observability" OFF)
+if(SEDS_FIRMWARE_SIM_TEST)
+    add_compile_definitions(SEDS_FIRMWARE_SIM_TEST=1)
+endif()
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
@@ -82,8 +86,9 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
-    CAN_BUS_RX_RING_DEPTH=32
-    CAN_BUS_REASM_SLOTS=2
+    CAN_BUS_RX_RING_DEPTH=48
+    CAN_BUS_REASM_SLOTS=3
+    CAN_BUS_REASM_MAX_BYTES=1024
 )
 
 # Remove wrong libob.a library dependency when using cpp files
@@ -100,9 +105,10 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 # SEDSNet v4
 set(SEDSNET_DEVICE_IDENTIFIER "VB" CACHE STRING "" FORCE)
 set(SEDSNET_MAX_STACK_PAYLOAD "128" CACHE STRING "" FORCE)
-set(SEDSNET_MAX_QUEUE_BUDGET "12288" CACHE STRING "" FORCE)
+set(SEDSNET_MAX_QUEUE_BUDGET "8192" CACHE STRING
+    "Bound transient reliable-packet storage to fit the Valve board pool" FORCE)
 set(SEDSNET_MAX_RECENT_RX_IDS "16" CACHE STRING "" FORCE)
-set(SEDSNET_ENV_STARTING_QUEUE_SIZE "1024" CACHE STRING "" FORCE)
+set(SEDSNET_ENV_STARTING_QUEUE_SIZE "512" CACHE STRING "" FORCE)
 set(SEDSNET_ENV_QUEUE_GROW_STEP "1.25" CACHE STRING "" FORCE)
 set(SEDSNET_ENV_PAYLOAD_COMPRESS_THRESHOLD "30" CACHE STRING "" FORCE)
 set(SEDSNET_TARGET "thumbv7em-none-eabihf" CACHE STRING "" FORCE)
