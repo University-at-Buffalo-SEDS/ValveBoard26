@@ -86,6 +86,12 @@ volatile uint32_t g_sim_heartbeat_attempts = 0U;
 volatile uint32_t g_sim_heartbeat_ok = 0U;
 volatile uint32_t g_sim_heartbeat_fail = 0U;
 volatile uint32_t g_sim_heartbeat_wire_tx = 0U;
+volatile uint32_t g_sim_valve_commands_received = 0U;
+volatile uint32_t g_sim_groundstation_confirmation_received = 0U;
+volatile uint32_t g_sim_umbilical_status_ok = 0U;
+volatile uint32_t g_sim_umbilical_status_fail = 0U;
+volatile uint32_t g_sim_pilot_open_status_wire_tx = 0U;
+static uint8_t g_sim_valve_open_seen = 0U;
 
 int32_t telemetry_get_init_error_code(void) { return g_telemetry_init_error_code; }
 
@@ -191,6 +197,16 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
   if (got != 1)
   {
     return (got < 0) ? (SedsResult)got : SEDS_BAD_ARG;
+  }
+
+  g_sim_valve_commands_received++;
+  if (cmd_u8 == CMD_PILOT_OPEN)
+  {
+    g_sim_valve_open_seen = 1U;
+  }
+  else if (cmd_u8 == CMD_PILOT_CLOSE && g_sim_valve_open_seen != 0U)
+  {
+    g_sim_groundstation_confirmation_received++;
   }
 
   if (cmd_u8 == CMD_ABORT)
@@ -417,6 +433,22 @@ SedsResult tx_send(const uint8_t *bytes, size_t len, void *user)
   {
     return SEDS_BAD_ARG;
   }
+#ifdef SEDS_FIRMWARE_SIM_TEST
+  if (sim_probe_packed_data_type(bytes, len) == (uint32_t)SEDS_DT_UMBILICAL_STATUS)
+  {
+    SedsOwnedPacket *owned = seds_pkt_unpack_owned(bytes, len);
+    SedsPacketView view;
+    if (owned != NULL && seds_owned_pkt_view(owned, &view) == SEDS_OK &&
+        view.payload_len == 2U && view.payload[0] == 0U && view.payload[1] != 0U)
+    {
+      g_sim_pilot_open_status_wire_tx++;
+    }
+    if (owned != NULL)
+    {
+      seds_owned_pkt_free(owned);
+    }
+  }
+#endif
   HAL_GPIO_TogglePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin);
   const uint32_t can_id =
       sim_probe_packed_data_type(bytes, len) == (uint32_t)SEDS_DT_HEARTBEAT
@@ -573,8 +605,47 @@ SedsResult telemetry_publish_umbilical_status(uint8_t cmd_id, uint8_t on)
   (void)payload;
   return SEDS_OK;
 #else
-  return log_telemetry_asynchronous(SEDS_DT_UMBILICAL_STATUS, payload, 2U,
-                                    sizeof(payload[0]));
+  SedsResult result;
+  if (on != 0U)
+  {
+    if (!g_router.r && init_telemetry_router() != SEDS_OK)
+    {
+      result = SEDS_ERR;
+    }
+    else
+    {
+      /* Command acknowledgements must reach the wire immediately.  Do not
+       * place an asserted valve state behind the periodic telemetry queue.
+       * A full CAN mailbox or a momentarily fragmented allocator can clear on
+       * the following scheduler tick, so retry this safety-relevant ACK for a
+       * small bounded interval instead of silently losing it. */
+      result = SEDS_ERR;
+      for (uint32_t attempt = 0U; attempt < 3U; ++attempt)
+      {
+        result = seds_router_log_typed(g_router.r, SEDS_DT_UMBILICAL_STATUS,
+                                       payload, 2U, sizeof(payload[0]),
+                                       SEDS_EK_UNSIGNED);
+        if (result == SEDS_OK)
+        {
+          break;
+        }
+        tx_thread_sleep(1U);
+      }
+    }
+  }
+  else
+  {
+    result = log_telemetry_asynchronous(SEDS_DT_UMBILICAL_STATUS, payload, 2U,
+                                        sizeof(payload[0]));
+  }
+#ifdef SEDS_FIRMWARE_SIM_TEST
+  if (result == SEDS_OK) {
+    g_sim_umbilical_status_ok++;
+  } else {
+    g_sim_umbilical_status_fail++;
+  }
+#endif
+  return result;
 #endif
 }
 

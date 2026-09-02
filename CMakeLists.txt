@@ -37,11 +37,15 @@ endif()
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+    USER_VECT_TAB_ADDRESS VECT_TAB_OFFSET=0x00004200U)
 target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
     -T "${CMAKE_SOURCE_DIR}/STM32G491XX_FLASH.ld")
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
+target_compile_definitions(STM32_Drivers PRIVATE
+    USER_VECT_TAB_ADDRESS VECT_TAB_OFFSET=0x00004200U)
 
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
@@ -106,10 +110,10 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 set(SEDSNET_DEVICE_IDENTIFIER "VB" CACHE STRING "" FORCE)
 set(SEDSNET_MAX_STACK_PAYLOAD "128" CACHE STRING "" FORCE)
 set(SEDSNET_MAX_QUEUE_BUDGET "8192" CACHE STRING
-    "Bound transient reliable-packet storage to fit the Valve board pool" FORCE)
+    "Bound transient packet storage to fit the Valve board pool" FORCE)
 set(SEDSNET_MAX_RECENT_RX_IDS "16" CACHE STRING "" FORCE)
 set(SEDSNET_ENV_STARTING_QUEUE_SIZE "512" CACHE STRING "" FORCE)
-set(SEDSNET_ENV_QUEUE_GROW_STEP "1.25" CACHE STRING "" FORCE)
+set(SEDSNET_ENV_QUEUE_GROW_STEP "1.0" CACHE STRING "" FORCE)
 set(SEDSNET_ENV_PAYLOAD_COMPRESS_THRESHOLD "30" CACHE STRING "" FORCE)
 set(SEDSNET_TARGET "thumbv7em-none-eabihf" CACHE STRING "" FORCE)
 include(cmake/sedsnet_fetch.cmake)

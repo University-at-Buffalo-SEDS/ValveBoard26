@@ -11,8 +11,8 @@
 
 TX_THREAD main_thread;
 
-#define MAIN_THREAD_STACK_SIZE (12U * 1024U)
-#define UMBILICAL_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
+#define MAIN_THREAD_STACK_SIZE (11U * 1024U)
+#define UMBILICAL_STATUS_PERIOD_TICKS (10U * TX_TIMER_TICKS_PER_SECOND)
 #define LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS 10000U
 #define LAUNCH_SEQUENCE_PILOT_OPEN_DURATION_MS 1500U
 #define LAUNCH_SEQUENCE_PILOT_STATUS_PERIOD_TICKS \
@@ -36,6 +36,11 @@ static volatile uint32_t g_launch_sequence_service_count = 0U;
 static volatile uint32_t g_launch_sequence_pilot_attempt_count = 0U;
 static volatile uint32_t g_launch_sequence_finish_count = 0U;
 static volatile uint32_t g_launch_sequence_abort_seen_count = 0U;
+volatile uint32_t g_sim_valve_commands_executed = 0U;
+volatile uint32_t g_sim_last_valve_command = UINT32_MAX;
+volatile uint32_t g_sim_pilot_valve_state = 0U;
+volatile uint32_t g_sim_valve_aborted = 0U;
+volatile int32_t g_sim_pilot_solenoid_result = 0;
 static volatile ULONG g_launch_sequence_last_elapsed_ticks = 0U;
 static ULONG g_launch_sequence_start_ticks = 0U;
 static ULONG g_launch_sequence_pilot_open_ticks = 0U;
@@ -92,8 +97,11 @@ static void publish_abort_umbilical_statuses(void)
 }
 
 void pilot_valve_on(void){
-    if (solenoidOn(&pilot_solenoid) == 0) {
+    const int result = solenoidOn(&pilot_solenoid);
+    g_sim_pilot_solenoid_result = (int32_t)result;
+    if (result == 0) {
         g_pilot_valve_state = 1U;
+        g_sim_pilot_valve_state = 1U;
         (void)publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
     }
 }
@@ -102,6 +110,7 @@ void pilot_valve_off(void)
 {
     solenoidOff(&pilot_solenoid);
     g_pilot_valve_state = 0U;
+    g_sim_pilot_valve_state = 0U;
     (void)publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
 }
 
@@ -262,6 +271,8 @@ static void handle_command(thread_comm_msg_t cmd){
     {
         return;
     }
+    g_sim_valve_commands_executed++;
+    g_sim_last_valve_command = (uint32_t)cmd;
     switch (cmd) {
     case CMD_PILOT_OPEN:
         pilot_valve_on();
@@ -295,6 +306,7 @@ static void handle_command(thread_comm_msg_t cmd){
 static void abort_state(void){
     main_thread_force_outputs_safe_off();
     g_aborted = 1U;
+    g_sim_valve_aborted = 1U;
     publish_abort_umbilical_statuses();
     g_abort_last_led_ticks = tx_time_get();
     HAL_GPIO_TogglePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin);
