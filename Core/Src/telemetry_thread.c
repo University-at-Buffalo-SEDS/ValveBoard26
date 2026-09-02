@@ -12,6 +12,7 @@ extern TX_THREAD main_thread;
 extern TX_THREAD data_acq_thread;
 extern TX_THREAD safety_thread;
 #define TELEMETRY_THREAD_STACK_SIZE (10U * 1024U)
+#define TELEMETRY_QUEUE_SERVICE_BUDGET_MS 1U
 extern FDCAN_HandleTypeDef hfdcan2;
 static ULONG telemetry_thread_stack[TELEMETRY_THREAD_STACK_SIZE / sizeof(ULONG)];
 
@@ -35,17 +36,21 @@ void telemetry_thread_entry(ULONG initial_input)
 {
     (void)initial_input;
 
+    g_sim_main_stack_remaining = stack_remaining(&main_thread);
+    g_sim_telemetry_stack_remaining = stack_remaining(&telemetry_thread);
+    g_sim_data_acq_stack_remaining = stack_remaining(&data_acq_thread);
+    g_sim_safety_stack_remaining = stack_remaining(&safety_thread);
+
     (void)can_bus_init(&hfdcan2);
     // Ensure router exists early (so we can send requests immediately)
     (void)init_telemetry_router();
 
     for (;;) {
         can_bus_process_rx();
-        (void)process_rx_queue_timeout(0);
         (void)telemetry_poll_discovery();
         (void)telemetry_poll_timesync();
         ota_stream_poll();
-        (void)dispatch_tx_queue_timeout(50);
+        (void)process_all_queues_timeout(TELEMETRY_QUEUE_SERVICE_BUDGET_MS);
 
         g_sim_main_stack_remaining = stack_remaining(&main_thread);
         g_sim_telemetry_stack_remaining = stack_remaining(&telemetry_thread);

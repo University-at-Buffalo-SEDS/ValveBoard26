@@ -28,6 +28,7 @@
 #include "ux_device_class_cdc_acm.h"
 #include <stdint.h>
 #include <stdio.h>
+#include "flight_state_cache.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -144,6 +145,7 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  flight_state_cache_restore();
   MX_ThreadX_Init();
 
   /* We should never get here as control is now taken by the scheduler */
