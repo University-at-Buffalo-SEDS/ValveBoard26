@@ -27,7 +27,9 @@
     "strict_mmio": false,
     "clocks": [],
     "connections": [],
-    "pins": [],
+    "pins": [
+      {"gpio": "gpio", "pin": 31, "initial": "high"}
+    ],
     "dma_routes": []
   },
   "traffic": {
