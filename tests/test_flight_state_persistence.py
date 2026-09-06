@@ -6,6 +6,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FlightStatePersistenceContract(unittest.TestCase):
+    def test_pre_rtos_startup_does_not_wait_for_timer_interrupts(self):
+        main = (ROOT / "Core/Src/main.c").read_text()
+        startup = main[main.index("int main(void)") : main.index("MX_ThreadX_Init();")]
+        self.assertNotIn("HAL_Delay(", startup)
+
     def test_flight_state_cache_is_wired_before_network_start(self):
         source = (ROOT / "Core/Src/flight_state_cache.c").read_text()
         main = (ROOT / "Core/Src/main.c").read_text()

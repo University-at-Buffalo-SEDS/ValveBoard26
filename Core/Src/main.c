@@ -138,9 +138,9 @@ int main(void)
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
   
-  //buzzer for 1 second
-  HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);  
-  HAL_Delay(500);
+  /* Do not block before ThreadX starts. A bootloader handoff intentionally
+   * resets interrupt state, so a HAL_Delay here can make application boot
+   * depend on the timer interrupt becoming live before the scheduler. */
   HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
 
   /* USER CODE END 2 */
