@@ -24,7 +24,7 @@ class QualificationContractTests(unittest.TestCase):
         self.assertIn('"GS_SIM_VALIDATE_VALVE_ROUNDTRIP": "1"', runner)
         self.assertIn('"probe": "valve_commands_received", "minimum": 1', runner)
         self.assertIn('"probe": "pilot_valve_state", "minimum": 1', runner)
-        self.assertIn("forwarded status ACK to GroundStation", runner)
+        self.assertIn("routed status ACK toward GroundStation", runner)
         self.assertIn('simulation_env["SEDS_FIRMWARE_SIM_TEST"] = "1"', runner)
         self.assertIn('run_live(command, "firmware simulation")', runner)
         self.assertIn('running ({int(now - started)}s elapsed)', runner)
@@ -69,14 +69,18 @@ class QualificationContractTests(unittest.TestCase):
             for probe in layout["execution"]["memory_probes"]
         }
 
-        self.assertIn("TX_APP_MEM_POOL_SIZE                     46336", app_config)
-        self.assertIn("TELEMETRY_THREAD_STACK_SIZE (10U * 1024U)", telemetry_thread)
+        self.assertIn("TX_APP_MEM_POOL_SIZE                     36864", app_config)
+        self.assertIn("TELEMETRY_THREAD_STACK_SIZE (13U * 1024U)", telemetry_thread)
         self.assertIn(
-            "MAIN_THREAD_STACK_SIZE (11U * 1024U)",
+            "MAIN_THREAD_STACK_SIZE (12U * 1024U)",
             (root / "Core/Src/main_thread.c").read_text(),
         )
         self.assertIn(
-            "SAFETY_THREAD_STACK_SIZE (3U * 1024U)",
+            "DATA_ACQ_THREAD_STACK_SIZE (4U * 1024U)",
+            (root / "Core/Src/data_acq_thread.c").read_text(),
+        )
+        self.assertIn(
+            "SAFETY_THREAD_STACK_SIZE (4U * 1024U)",
             (root / "Core/Src/safety_thread.c").read_text(),
         )
         self.assertIn("TX_ENABLE_STACK_CHECKING", tx_config)
@@ -92,6 +96,14 @@ class QualificationContractTests(unittest.TestCase):
         self.assertIn("attempt < 3U", status)
         self.assertIn("tx_thread_sleep(1U)", status)
         self.assertIn("seds_router_log_typed", status)
+
+    def test_heartbeat_fail_safe_arms_only_after_a_link_is_established(self):
+        root = Path(build.__file__).resolve().parent
+        safety = (root / "Core/Src/safety_thread.c").read_text()
+        no_link = safety.split("if (last_heartbeat_ms == 0ULL)", 1)[1]
+        no_link = no_link.split("if ((now_ms - last_heartbeat_ms)", 1)[0]
+        self.assertIn("return;", no_link)
+        self.assertNotIn("safety_request_abort", no_link)
 
 
     def test_periodic_health_check_does_not_serialize_topology(self):

@@ -8,7 +8,7 @@
 
 TX_THREAD safety_thread;
 
-#define SAFETY_THREAD_STACK_SIZE (3U * 1024U)
+#define SAFETY_THREAD_STACK_SIZE (4U * 1024U)
 #define SAFETY_HEARTBEAT_TIMEOUT_MS (5000ULL)
 #define SAFETY_LAUNCH_CONTINUITY_TIMEOUT_MS (5ULL * 60ULL * 1000ULL)
 #define SAFETY_CHECK_PERIOD_TICKS ((TX_TIMER_TICKS_PER_SECOND + 99U) / 100U)
@@ -53,24 +53,17 @@ static void safety_check_heartbeat(void)
         return;
     }
 
-    if (last_heartbeat_ms != 0ULL)
+    /* A board that boots before the GroundStation must remain safely idle.
+     * Arm link-loss supervision only after the first GroundStation heartbeat;
+     * from then on, loss of that established link still enters fail-safe. */
+    if (last_heartbeat_ms == 0ULL)
     {
         safety_heartbeat_missing_since_ms = 0ULL;
-        if ((now_ms - last_heartbeat_ms) >= SAFETY_HEARTBEAT_TIMEOUT_MS)
-        {
-            safety_heartbeat_timeout_count++;
-            safety_request_abort();
-        }
         return;
     }
 
-    if (safety_heartbeat_missing_since_ms == 0ULL)
-    {
-        safety_heartbeat_missing_since_ms = now_ms;
-        return;
-    }
-
-    if ((now_ms - safety_heartbeat_missing_since_ms) >= SAFETY_HEARTBEAT_TIMEOUT_MS)
+    safety_heartbeat_missing_since_ms = 0ULL;
+    if ((now_ms - last_heartbeat_ms) >= SAFETY_HEARTBEAT_TIMEOUT_MS)
     {
         safety_heartbeat_timeout_count++;
         safety_request_abort();

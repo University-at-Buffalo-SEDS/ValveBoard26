@@ -83,6 +83,7 @@
       {"name": "heartbeat_ok", "symbol": "g_sim_heartbeat_ok"},
       {"name": "heartbeat_wire_tx", "symbol": "g_sim_heartbeat_wire_tx"},
       {"name": "heartbeat_fail", "symbol": "g_sim_heartbeat_fail"},
+      {"name": "heartbeat_handler_count", "symbol": "g_heartbeat_handler_count"},
       {"name": "valve_commands_received", "symbol": "g_sim_valve_commands_received"},
       {"name": "valve_commands_executed", "symbol": "g_sim_valve_commands_executed"},
       {"name": "last_valve_command", "symbol": "g_sim_last_valve_command"},

@@ -11,7 +11,7 @@ TX_THREAD telemetry_thread;
 extern TX_THREAD main_thread;
 extern TX_THREAD data_acq_thread;
 extern TX_THREAD safety_thread;
-#define TELEMETRY_THREAD_STACK_SIZE (10U * 1024U)
+#define TELEMETRY_THREAD_STACK_SIZE (13U * 1024U)
 #define TELEMETRY_QUEUE_SERVICE_BUDGET_MS 1U
 extern FDCAN_HandleTypeDef hfdcan2;
 static ULONG telemetry_thread_stack[TELEMETRY_THREAD_STACK_SIZE / sizeof(ULONG)];
@@ -24,12 +24,19 @@ volatile uint32_t g_sim_safety_stack_remaining = 0U;
 static uint32_t stack_remaining(const TX_THREAD *thread)
 {
     if (thread == TX_NULL || thread->tx_thread_stack_start == TX_NULL ||
+        thread->tx_thread_stack_end == TX_NULL ||
         thread->tx_thread_stack_highest_ptr == TX_NULL)
     {
         return 0U;
     }
-    return (uint32_t)((uintptr_t)thread->tx_thread_stack_highest_ptr -
-                      (uintptr_t)thread->tx_thread_stack_start);
+    const uintptr_t start = (uintptr_t)thread->tx_thread_stack_start;
+    const uintptr_t end = (uintptr_t)thread->tx_thread_stack_end;
+    const uintptr_t high_water = (uintptr_t)thread->tx_thread_stack_highest_ptr;
+    if (high_water < start || high_water > end)
+    {
+        return 0U;
+    }
+    return (uint32_t)(high_water - start);
 }
 
 void telemetry_thread_entry(ULONG initial_input)

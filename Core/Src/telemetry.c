@@ -70,7 +70,8 @@ static int32_t g_telemetry_init_error_code = TELEMETRY_INIT_OK;
 static volatile uint32_t g_flight_state_handler_count = 0U;
 static volatile uint32_t g_flight_state_handler_error_count = 0U;
 static volatile uint8_t g_last_flight_state_packet = 0U;
-static volatile uint32_t g_heartbeat_handler_count = 0U;
+volatile uint32_t g_heartbeat_handler_count
+    __attribute__((used, externally_visible)) = 0U;
 static volatile uint32_t g_heartbeat_handler_error_count = 0U;
 static volatile uint8_t g_abort_broadcast_sent = 0U;
 static volatile uint32_t g_last_can_rx_ms = 0U;
@@ -225,8 +226,13 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
     return SEDS_OK;
   }
 
-  (void)thread_comm_send(cmd_u8, TX_NO_WAIT);
-  return SEDS_OK;
+  /* Do not acknowledge a reliable network command until the control thread
+   * actually owns it. A transient mutex/queue collision must be visible to
+   * SEDSNet so its handler retry can deliver the command instead of silently
+   * losing it. */
+  return (thread_comm_send((thread_comm_msg_t)cmd_u8, 1U) == TX_SUCCESS)
+             ? SEDS_OK
+             : SEDS_HANDLER_ERROR;
 }
 
 SedsResult Abort_handler(const SedsPacketView *pkt, void *user)
