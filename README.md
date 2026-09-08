@@ -4,7 +4,7 @@ ValveBoard26 targets the STM32G491 and controls fill-system valves while
 sampling the board's ADC inputs. It exchanges commands, acknowledgements, and
 telemetry over SEDSNet CAN-FD.
 
-CMake fetches stable SEDSNet v4.0.19 and SEDS LaunchCore v1.0.0 releases; no
+CMake fetches stable SEDSNet v4.0.20 and SEDS LaunchCore v1.0.0 releases; no
 dependency submodules are required. LaunchCore creates the linker scripts from
 `Bootloader/board_config.h` and packages factory, application, and `.seds` OTA
 images according to that BSP layout.
