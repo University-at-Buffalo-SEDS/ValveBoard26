@@ -4,7 +4,7 @@ ValveBoard26 targets the STM32G491 and controls fill-system valves while
 sampling the board's ADC inputs. It exchanges commands, acknowledgements, and
 telemetry over SEDSNet CAN-FD.
 
-CMake fetches stable SEDSNet v4.0.20 and SEDS LaunchCore v1.0.0 releases; no
+CMake fetches stable SEDSNet v4.0.27 and SEDS LaunchCore v1.0.0 releases; no
 dependency submodules are required. LaunchCore creates the linker scripts from
 `Bootloader/board_config.h` and packages factory, application, and `.seds` OTA
 images according to that BSP layout.
@@ -15,7 +15,19 @@ images according to that BSP layout.
 ./build.py clean
 ./build.py test
 ./build.py test --all --release
+./build.py test --all --release --ultra-soak
 ```
+
+On Docker hosts that cannot create bridge interfaces (including the Jupiter
+validation host), prefix the command with
+`SEDS_FIRMWARE_SIM_DOCKER_NETWORK=host`. The linked test requires GroundStation
+to label all seven graph nodes, attribute real payload traffic to each board,
+and correlate a routed valve command with its returned state ACK.
+
+`--ultra-soak` keeps the normal 16-second full-network test first, then adds a
+separate 600,000 ms firmware-time fault/rejoin, command/ACK, and memory-leak
+qualification. Commands must execute and return an ACK throughout the soak,
+including its final interval.
 
 The default flash workflow uses the combined factory image at `0x08000000`.
 See `./build.py flash --help` for alternate programmers. The full tests add

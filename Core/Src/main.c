@@ -24,8 +24,10 @@
 /* USER CODE BEGIN Includes */
 #include "stm32g4xx_hal.h"
 #include "stm32g4xx_hal_gpio.h"
+#if FIRMWARE_USB_DEBUG_ENABLED
 #include "ux_api.h"
 #include "ux_device_class_cdc_acm.h"
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include "flight_state_cache.h"
@@ -39,7 +41,9 @@ typedef struct{
   uint32_t pressure; // ADC 
 } valveBoardPayload_t; 
 
+#if FIRMWARE_USB_DEBUG_ENABLED
 extern UX_SLAVE_CLASS_CDC_ACM *cdc_acm;
+#endif
 
 #ifndef MIN
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
@@ -86,7 +90,9 @@ static void MX_DMA_Init(void);
 static void MX_ADC3_Init(void);
 static void MX_I2C2_Init(void);
 static void MX_FDCAN2_Init(void);
+#if FIRMWARE_USB_DEBUG_ENABLED
 static void MX_USB_PCD_Init(void);
+#endif
 static void MX_ADC2_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
@@ -132,7 +138,9 @@ int main(void)
   MX_ADC3_Init();
   MX_I2C2_Init();
   MX_FDCAN2_Init();
+#if FIRMWARE_USB_DEBUG_ENABLED
   MX_USB_PCD_Init();
+#endif
   MX_ADC2_Init();
   MX_TIM2_Init();
   MX_TIM3_Init();
@@ -345,6 +353,8 @@ static void MX_FDCAN2_Init(void)
   hfdcan2.Init.ClockDivider = FDCAN_CLOCK_DIV1;
   hfdcan2.Init.FrameFormat = FDCAN_FRAME_FD_NO_BRS;
   hfdcan2.Init.Mode = FDCAN_MODE_NORMAL;
+  /* FDCAN retries physical arbitration/ACK failures; SEDSNet supplies
+   * end-to-end reliability without blocking this non-blocking TX path. */
   hfdcan2.Init.AutoRetransmission = ENABLE;
   hfdcan2.Init.TransmitPause = DISABLE;
   hfdcan2.Init.ProtocolException = DISABLE;
@@ -532,6 +542,7 @@ static void MX_TIM3_Init(void)
   * @param None
   * @retval None
   */
+#if FIRMWARE_USB_DEBUG_ENABLED
 static void MX_USB_PCD_Init(void)
 {
 
@@ -559,6 +570,7 @@ static void MX_USB_PCD_Init(void)
   /* USER CODE END USB_Init 2 */
 
 }
+#endif /* FIRMWARE_USB_DEBUG_ENABLED */
 
 /**
   * Enable DMA controller clock
@@ -640,6 +652,8 @@ static void MX_GPIO_Init(void)
 void startInstrumentation(){
   
 }
+
+#if FIRMWARE_USB_DEBUG_ENABLED
 
 static inline int cdc_in_isr(void)
 {
@@ -802,6 +816,23 @@ int fputc(int ch, FILE *f)
   return ch;
 }
 #endif
+
+#else
+
+void cdc_printf_init(void)
+{
+}
+
+#ifdef __GNUC__
+int _write(int file, char *ptr, int len)
+{
+  (void)file;
+  (void)ptr;
+  return len;
+}
+#endif
+
+#endif /* FIRMWARE_USB_DEBUG_ENABLED */
 
 /* USER CODE END 4 */
 

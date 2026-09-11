@@ -64,6 +64,8 @@ static void print_data_no_telem(void *data, size_t len)
 
 static UNUSED_FUNCTION uint8_t g_can_rx_subscribed = 0U;
 static UNUSED_FUNCTION int32_t g_can_side_id = -1;
+#define BOARD_CAN_MAX_FRAME_BYTES 128U
+#define BOARD_SIDE_TRANSPORT_TEMPLATES 4U
 static uint8_t g_local_unix_valid = 0U;
 static uint64_t g_local_unix_ms = 0ULL;
 static int32_t g_telemetry_init_error_code = TELEMETRY_INIT_OK;
@@ -619,37 +621,27 @@ SedsResult telemetry_publish_umbilical_status(uint8_t cmd_id, uint8_t on)
   return SEDS_OK;
 #else
   SedsResult result;
-  if (on != 0U)
+  if (!g_router.r && init_telemetry_router() != SEDS_OK)
   {
-    if (!g_router.r && init_telemetry_router() != SEDS_OK)
-    {
-      result = SEDS_ERR;
-    }
-    else
-    {
-      /* Command acknowledgements must reach the wire immediately.  Do not
-       * place an asserted valve state behind the periodic telemetry queue.
-       * A full CAN mailbox or a momentarily fragmented allocator can clear on
-       * the following scheduler tick, so retry this safety-relevant ACK for a
-       * small bounded interval instead of silently losing it. */
-      result = SEDS_ERR;
-      for (uint32_t attempt = 0U; attempt < 3U; ++attempt)
-      {
-        result = seds_router_log_typed(g_router.r, SEDS_DT_UMBILICAL_STATUS,
-                                       payload, 2U, sizeof(payload[0]),
-                                       SEDS_EK_UNSIGNED);
-        if (result == SEDS_OK)
-        {
-          break;
-        }
-        tx_thread_sleep(1U);
-      }
-    }
+    result = SEDS_ERR;
   }
   else
   {
-    result = log_telemetry_asynchronous(SEDS_DT_UMBILICAL_STATUS, payload, 2U,
-                                        sizeof(payload[0]));
+    /* Both asserted and deasserted command acknowledgements are equally
+     * safety-relevant. Put either state directly on the router and retry for
+     * a bounded interval instead of letting Close trail periodic telemetry. */
+    result = SEDS_ERR;
+    for (uint32_t attempt = 0U; attempt < 3U; ++attempt)
+    {
+      result = seds_router_log_typed(g_router.r, SEDS_DT_UMBILICAL_STATUS,
+                                     payload, 2U, sizeof(payload[0]),
+                                     SEDS_EK_UNSIGNED);
+      if (result == SEDS_OK)
+      {
+        break;
+      }
+      tx_thread_sleep(1U);
+    }
   }
 #ifdef SEDS_FIRMWARE_SIM_TEST
   if (result == SEDS_OK) {
@@ -791,7 +783,7 @@ SedsResult init_telemetry_router(void)
           .user = NULL,
       }};
 
-  r = seds_router_new(Seds_RM_Relay, node_now_since_ms, NULL, locals,
+  r = seds_router_new(node_now_since_ms, NULL, locals,
                       sizeof(locals) / sizeof(locals[0]));
   if (!r)
   {
@@ -804,7 +796,17 @@ SedsResult init_telemetry_router(void)
     return SEDS_ERR;
   }
 
-  g_can_side_id = seds_router_add_side_packed(r, "can", 3U, tx_send, NULL, false);
+  if (seds_router_set_preferred_discovery_master(r, "GS", 2U) != SEDS_OK)
+  {
+    printf("Error: failed to prefer GroundStation discovery master\r\n");
+    seds_router_free(r);
+    return SEDS_ERR;
+  }
+
+  g_can_side_id = seds_router_add_side_packed_profile(
+      r, "can", 3U, tx_send, NULL, false,
+      SEDS_SIDE_TRANSPORT_PROFILE_IPV6_LIKE, BOARD_CAN_MAX_FRAME_BYTES, 0U,
+      BOARD_SIDE_TRANSPORT_TEMPLATES);
   if (g_can_side_id < 0)
   {
     g_telemetry_init_error_code = TELEMETRY_INIT_ADD_CAN_SIDE_FAILED;
