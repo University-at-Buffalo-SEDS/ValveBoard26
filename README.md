@@ -5,14 +5,14 @@ the matching schema on GroundStation and gateway/router firmware as well; older
 schemas used unordered delivery. Pilot confirmations report the actual driver
 state even when an open request is rejected. Ordering does not guarantee a
 latency bound when packets are lost or a route is unavailable.
-SEDSNet 4.0.28 uses final-destination ACKs to gate ordered streams across
+SEDSNet 4.0.29 uses final-destination ACKs to gate ordered streams across
 shared CAN and Gateway; retries preserve order without hop-level CAN sequencing.
 
 ValveBoard26 targets the STM32G491 and controls fill-system valves while
 sampling the board's ADC inputs. It exchanges commands, acknowledgements, and
 telemetry over SEDSNet CAN-FD.
 
-CMake fetches stable SEDSNet v4.0.28 and SEDS LaunchCore v1.0.0 releases; no
+CMake fetches stable SEDSNet v4.0.29 and SEDS LaunchCore v1.0.0 releases; no
 dependency submodules are required. LaunchCore creates the linker scripts from
 `Bootloader/board_config.h` and packages factory, application, and `.seds` OTA
 images according to that BSP layout.
