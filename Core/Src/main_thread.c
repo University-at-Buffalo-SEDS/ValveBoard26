@@ -102,8 +102,9 @@ void pilot_valve_on(void){
     if (result == 0) {
         g_pilot_valve_state = 1U;
         g_sim_pilot_valve_state = 1U;
-        (void)publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
     }
+    /* A rejected open still needs an immediate actual-state confirmation. */
+    (void)publish_umbilical_status(CMD_PILOT_OPEN, g_pilot_valve_state);
 }
 
 void pilot_valve_off(void)
