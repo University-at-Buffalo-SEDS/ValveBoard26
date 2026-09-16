@@ -2,6 +2,7 @@
 #include "telemetry.h"
 #include "flight_state_cache.h"
 #include "sim_network_probe.h"
+#include "status_frame_probe.h"
 #include "ota_stream.h"
 
 #include "app_threadx.h"
@@ -16,6 +17,20 @@
 #include <stdio.h>
 #include <string.h>
 #include "thread_comm.h"
+
+/* Passive debugger evidence: success is API acceptance, not a remote ACK. */
+typedef struct {
+  uint32_t calls, accepted, failed, last_state, last_tick;
+  int32_t last_result;
+} ValveStatusDiagnostic;
+volatile ValveStatusDiagnostic g_valve_status_publish[7];
+volatile uint32_t g_valve_status_can_attempts;
+volatile uint32_t g_valve_status_can_ok;
+volatile uint32_t g_valve_status_can_fail;
+volatile uint32_t g_valve_status_can_last_tick;
+volatile uint32_t g_valve_can_unclassified;
+volatile uint32_t g_valve_queue_service_errors;
+volatile int32_t g_valve_queue_last_error;
 
 #ifndef TELEMETRY_ENABLED
 static void print_data_no_telem(void *data, size_t len)
@@ -464,15 +479,25 @@ SedsResult tx_send(const uint8_t *bytes, size_t len, void *user)
   }
 #endif
   HAL_GPIO_TogglePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin);
+  const uint32_t diagnostic_type = status_frame_type(bytes, len);
+  const uint8_t diagnostic_status =
+      diagnostic_type == (uint32_t)SEDS_DT_UMBILICAL_STATUS;
+  if (diagnostic_type == UINT32_MAX) g_valve_can_unclassified++;
+  if (diagnostic_status) {
+    g_valve_status_can_attempts++;
+    g_valve_status_can_last_tick = tx_time_get();
+  }
   const uint32_t can_id =
       sim_probe_packed_data_type(bytes, len) == (uint32_t)SEDS_DT_HEARTBEAT
           ? 0x006U
           : 0x106U;
   if (can_bus_send_large(bytes, len, can_id) == HAL_OK)
   {
+    if (diagnostic_status) g_valve_status_can_ok++;
     sim_probe_observe_can_tx(bytes, len);
     return SEDS_OK;
   }
+  if (diagnostic_status) g_valve_status_can_fail++;
   return SEDS_IO;
 }
 
@@ -627,9 +652,10 @@ SedsResult telemetry_publish_umbilical_status(uint8_t cmd_id, uint8_t on)
   }
   else
   {
-    /* Both asserted and deasserted command acknowledgements are equally
-     * safety-relevant. Put either state directly on the router and retry for
-     * a bounded interval instead of letting Close trail periodic telemetry. */
+    /* This is application output state, not the protocol ACK. Submit both
+     * open and closed states immediately after the action. SEDSNet owns
+     * routing, ordering and protocol ACKs; do not wait for those ACKs here.
+     * Retry local submission only for a bounded interval. */
     result = SEDS_ERR;
     for (uint32_t attempt = 0U; attempt < 3U; ++attempt)
     {
@@ -642,6 +668,15 @@ SedsResult telemetry_publish_umbilical_status(uint8_t cmd_id, uint8_t on)
       }
       tx_thread_sleep(1U);
     }
+  }
+  if (cmd_id < 7U) {
+    volatile ValveStatusDiagnostic *diagnostic = &g_valve_status_publish[cmd_id];
+    diagnostic->calls++;
+    diagnostic->last_state = payload[1];
+    diagnostic->last_tick = tx_time_get();
+    diagnostic->last_result = result;
+    if (result == SEDS_OK) diagnostic->accepted++;
+    else diagnostic->failed++;
   }
 #ifdef SEDS_FIRMWARE_SIM_TEST
   if (result == SEDS_OK) {
@@ -1003,7 +1038,13 @@ SedsResult process_all_queues_timeout(uint32_t timeout_ms)
     return SEDS_ERR;
   }
 
-  return seds_router_process_all_queues_with_timeout(g_router.r, timeout_ms);
+  const SedsResult result =
+      seds_router_process_all_queues_with_timeout(g_router.r, timeout_ms);
+  if (result != SEDS_OK) {
+    g_valve_queue_service_errors++;
+    g_valve_queue_last_error = result;
+  }
+  return result;
 #endif
 }
 

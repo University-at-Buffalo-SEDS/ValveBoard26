@@ -2,6 +2,7 @@
 #include "VB-Threads.h"
 #include "tx_api.h"
 #include "telemetry.h"
+#include "status_report_retry.h"
 #include "can_bus.h"
 #include "main.h"
 #include "thread_comm.h"
@@ -38,6 +39,7 @@ static volatile uint32_t g_launch_sequence_finish_count = 0U;
 static volatile uint32_t g_launch_sequence_abort_seen_count = 0U;
 volatile uint32_t g_sim_valve_commands_executed = 0U;
 volatile uint32_t g_sim_last_valve_command = UINT32_MAX;
+volatile uint64_t g_sim_last_valve_command_ms = 0;
 volatile uint32_t g_sim_pilot_valve_state = 0U;
 volatile uint32_t g_sim_valve_aborted = 0U;
 volatile int32_t g_sim_pilot_solenoid_result = 0;
@@ -53,13 +55,6 @@ static ULONG main_thread_stack[MAIN_THREAD_STACK_SIZE / sizeof(ULONG)];
 solenoid_t pilot_solenoid = {Solenoid_GPIO_Port, Solenoid_Pin, Solenoid_GPIO_Port, Solenoid_Pin, NULL, 0, 5};
 
 
-static uint8_t publish_umbilical_status(uint8_t status_id, uint8_t state)
-{
-    return (telemetry_publish_umbilical_status(status_id,
-                                               (state != 0U) ? 1U : 0U) == SEDS_OK)
-               ? 1U
-               : 0U;
-}
 
 static ULONG ms_to_ticks(uint32_t ms)
 {
@@ -274,6 +269,8 @@ static void handle_command(thread_comm_msg_t cmd){
     }
     g_sim_valve_commands_executed++;
     g_sim_last_valve_command = (uint32_t)cmd;
+    g_sim_last_valve_command_ms = ((uint64_t)tx_time_get() * 1000ULL) /
+                                  TX_TIMER_TICKS_PER_SECOND;
     switch (cmd) {
     case CMD_PILOT_OPEN:
         pilot_valve_on();
@@ -368,6 +365,7 @@ void main_thread_entry(ULONG initial_input)
             {
                 service_abort_state();
             }
+            retry_pending_status_reports();
             while (thread_comm_receive(&msg, TX_NO_WAIT) == TX_SUCCESS){}
             tx_thread_sleep(1);
             continue;
@@ -394,6 +392,7 @@ void main_thread_entry(ULONG initial_input)
         service_launch_sequence();
         service_launch_sequence_request();
         publish_all_umbilical_statuses();
+        retry_pending_status_reports();
         tx_thread_sleep(1);
     }
 }    
