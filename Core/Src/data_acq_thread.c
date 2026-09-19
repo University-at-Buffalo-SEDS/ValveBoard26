@@ -4,6 +4,7 @@
 #include "pressure_transducer_driver.h"
 #include "telemetry.h"
 #include "tx_api.h"
+#include "telemetry_rates.h"
 
 extern I2C_HandleTypeDef hi2c2;
 extern ADC_HandleTypeDef hadc3;
@@ -14,9 +15,7 @@ TX_THREAD data_acq_thread;
 #define DATA_ACQ_THREAD_STACK_SIZE ((4U * 1024U) + 512U)
 #define DATA_ACQ_REPORT_PERIOD_TICKS ((ULONG)TX_TIMER_TICKS_PER_SECOND)
 #define DATA_ACQ_STARTUP_DELAY_TICKS (1U * TX_TIMER_TICKS_PER_SECOND)
-#define DATA_ACQ_PRESSURE_PERIOD_TICKS \
-    ((TX_TIMER_TICKS_PER_SECOND >= 4U) ? (TX_TIMER_TICKS_PER_SECOND / 4U) : 1U)
-#define DATA_ACQ_LOOP_PERIOD_TICKS DATA_ACQ_PRESSURE_PERIOD_TICKS
+#define DATA_ACQ_PRESSURE_PERIOD_TICKS VALVE_PRESSURE_REPORT_TICKS
 
 static LTC2990_Handle_t ltc2990_voltage_handle;
 static LTC2990_Handle_t ltc2990_current_handle;
@@ -135,11 +134,12 @@ void data_acq_thread_entry(ULONG initial_input)
     data_acq_pressure_init();
 
     for (;;) {
+        const ULONG cycle_started = tx_time_get();
+        data_acq_report_pressure();
         if ((ltc2990_voltage_ready != 0U) || (ltc2990_current_ready != 0U)) {
             data_acq_report_power();
         }
-        data_acq_report_pressure();
-        tx_thread_sleep(DATA_ACQ_LOOP_PERIOD_TICKS);
+        tx_thread_sleep(valve_pressure_sleep_ticks((ULONG)(tx_time_get() - cycle_started)));
     }
 }
 
