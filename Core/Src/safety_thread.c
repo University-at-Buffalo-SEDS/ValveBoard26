@@ -35,6 +35,7 @@ static uint64_t safety_now_ms(void)
 
 static void safety_request_abort(uint32_t reason, const char *message)
 {
+    (void)message; /* Network thread reports the recorded first cause. */
     if (thread_comm_get_abort() != 0U)
     {
         return;
@@ -47,13 +48,13 @@ static void safety_request_abort(uint32_t reason, const char *message)
                               thread_comm_get_abort());
     (void)thread_comm_set_abort(1U);
     (void)thread_comm_send(CMD_ABORT, TX_NO_WAIT);
-    (void)telemetry_broadcast_abort(message);
 }
 
 static void safety_check_heartbeat(void)
 {
-    const uint64_t now_ms = safety_now_ms();
     const uint64_t last_heartbeat_ms = thread_comm_get_groundstation_heartbeat_ms();
+    /* Read reception before local uptime to avoid a concurrent-update underflow. */
+    const uint64_t now_ms = safety_now_ms();
 
     if (thread_comm_abort_allowed() == 0U)
     {
@@ -71,7 +72,8 @@ static void safety_check_heartbeat(void)
     }
 
     safety_heartbeat_missing_since_ms = 0ULL;
-    if ((now_ms - last_heartbeat_ms) >= SAFETY_HEARTBEAT_TIMEOUT_MS)
+    if ((now_ms >= last_heartbeat_ms) &&
+        ((now_ms - last_heartbeat_ms) >= SAFETY_HEARTBEAT_TIMEOUT_MS))
     {
         safety_heartbeat_timeout_count++;
         safety_request_abort(SAFETY_ABORT_HEARTBEAT, "Valve safety abort: heartbeat timeout");

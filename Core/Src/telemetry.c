@@ -258,7 +258,7 @@ SedsResult Abort_handler(const SedsPacketView *pkt, void *user)
   (void)user;
   (void)thread_comm_set_abort(true);
   (void)thread_comm_send(CMD_ABORT, TX_NO_WAIT);
-  (void)telemetry_broadcast_abort("Valve board abort command");
+  /* SEDSNet forwards this system-wide abort; do not originate an echo. */
   return SEDS_OK;
 }
 

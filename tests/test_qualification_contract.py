@@ -122,7 +122,7 @@ class QualificationContractTests(unittest.TestCase):
         root = Path(build.__file__).resolve().parent
         safety = (root / "Core/Src/safety_thread.c").read_text()
         no_link = safety.split("if (last_heartbeat_ms == 0ULL)", 1)[1]
-        no_link = no_link.split("if ((now_ms - last_heartbeat_ms)", 1)[0]
+        no_link = no_link.split("}", 1)[0]
         self.assertIn("return;", no_link)
         self.assertNotIn("safety_request_abort", no_link)
 
