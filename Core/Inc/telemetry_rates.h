@@ -1,18 +1,18 @@
 #ifndef VALVE_TELEMETRY_RATES_H
 #define VALVE_TELEMETRY_RATES_H
 
-/* Override per build; ADC3/TIM3 currently samples pressure at 100 Hz. */
+/* Override per build; ADC3/TIM3 samples pressure at 500 Hz. */
 #ifndef VALVE_PRESSURE_REPORT_HZ
-#define VALVE_PRESSURE_REPORT_HZ 30U
+#define VALVE_PRESSURE_REPORT_HZ 500U
 #endif
-#if VALVE_PRESSURE_REPORT_HZ < 1 || VALVE_PRESSURE_REPORT_HZ > 100
-#error "VALVE_PRESSURE_REPORT_HZ must be between 1 and the 100 Hz ADC sample rate"
+#if VALVE_PRESSURE_REPORT_HZ < 1 || VALVE_PRESSURE_REPORT_HZ > 500
+#error "VALVE_PRESSURE_REPORT_HZ must be between 1 and the 500 Hz ADC sample rate"
 #endif
 #if TX_TIMER_TICKS_PER_SECOND < VALVE_PRESSURE_REPORT_HZ
 #error "ThreadX tick rate cannot support VALVE_PRESSURE_REPORT_HZ"
 #endif
 
-/* Nearest whole tick: 33 ticks at 1 kHz is approximately 30.3 Hz. */
+/* Nearest whole tick: 2 ticks at 1 kHz gives 500 Hz. */
 #define VALVE_PRESSURE_REPORT_TICKS \
     ((TX_TIMER_TICKS_PER_SECOND + VALVE_PRESSURE_REPORT_HZ / 2U) / VALVE_PRESSURE_REPORT_HZ)
 

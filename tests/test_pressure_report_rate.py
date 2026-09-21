@@ -16,13 +16,15 @@ class PressureReportRate(unittest.TestCase):
 #include <assert.h>
 int main(void) {
     assert(valve_pressure_sleep_ticks(0) == VALVE_PRESSURE_REPORT_TICKS);
-    assert(valve_pressure_sleep_ticks(2) + 2 == VALVE_PRESSURE_REPORT_TICKS);
+    assert(valve_pressure_sleep_ticks(1) + 1 == VALVE_PRESSURE_REPORT_TICKS);
     assert(valve_pressure_sleep_ticks(VALVE_PRESSURE_REPORT_TICKS) == 1);
     assert(valve_pressure_sleep_ticks(1000) == 1);
 #if VALVE_PRESSURE_REPORT_HZ == 30
     assert(VALVE_PRESSURE_REPORT_TICKS == 33);
 #elif VALVE_PRESSURE_REPORT_HZ == 50
     assert(VALVE_PRESSURE_REPORT_TICKS == 20);
+#elif VALVE_PRESSURE_REPORT_HZ == 500
+    assert(VALVE_PRESSURE_REPORT_TICKS == 2);
 #endif
     return 0;
 }
@@ -35,9 +37,9 @@ int main(void) {
                 command.append(f"-DVALVE_PRESSURE_REPORT_HZ={rate}")
             result = subprocess.run(command + ["-x", "c", "-", "-o", str(binary)],
                                     input=source, text=True, capture_output=True)
-            if rate in (0, 101):
+            if rate in (0, 501):
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("100 Hz ADC sample rate", result.stderr)
+                self.assertIn("500 Hz ADC sample rate", result.stderr)
             else:
                 self.assertEqual(result.returncode, 0, result.stderr)
                 subprocess.run([str(binary)], check=True)
@@ -48,9 +50,18 @@ int main(void) {
                 self.compile_rate(rate)
 
     def test_invalid_sample_rates_are_rejected(self):
-        for rate in (0, 101):
+        for rate in (0, 501):
             with self.subTest(rate=rate):
                 self.compile_rate(rate)
+
+    def test_cubemx_and_generated_adc_trigger_agree_at_500_hz(self):
+        main = (ROOT / "Core/Src/main.c").read_text()
+        ioc = (ROOT / "Valve_Board26.ioc").read_text()
+        self.assertIn("htim3.Init.Prescaler = 1699;", main)
+        self.assertIn("htim3.Init.Period = 199;", main)
+        self.assertIn("TIM3.Prescaler=1699", ioc)
+        self.assertIn("TIM3.Period=199", ioc)
+        self.assertEqual(170_000_000 // 1700 // 200, 500)
 
     def test_pressure_rate_is_independent_of_one_hz_power_reports(self):
         source = (ROOT / "Core/Src/data_acq_thread.c").read_text()
