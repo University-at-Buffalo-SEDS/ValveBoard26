@@ -6,10 +6,14 @@
 #include "main.h"
 
 static TX_BYTE_POOL *rust_byte_pool_external = NULL;
+static TX_BYTE_POOL *rust_emergency_byte_pool_external = NULL;
 static TX_MUTEX g_telemetry_mutex;
 static UINT g_telemetry_mutex_ready = 0U;
 volatile uint32_t g_telemetry_lock_get_fail = 0U;
 volatile uint32_t g_telemetry_lock_put_fail = 0U;
+volatile uint32_t g_telemetry_last_alloc_request = 0U;
+volatile ULONG g_telemetry_emergency_pool_available = 0U;
+volatile uint32_t g_telemetry_alloc_emergency_recoveries = 0U;
 volatile uint32_t g_telemetry_alloc_fail = 0U;
 volatile uint32_t g_telemetry_panic_count = 0U;
 volatile uint32_t g_telemetry_alloc_count = 0U;
@@ -106,12 +110,20 @@ static void telemetry_memory_profile_sample(void)
 {
     ULONG available = 0U;
     ULONG fragments = 0U;
+    ULONG emergency_available = 0U;
     if (rust_byte_pool_external != NULL &&
         tx_byte_pool_info_get(rust_byte_pool_external, TX_NULL,
                               &available, &fragments,
                               TX_NULL, TX_NULL, TX_NULL) == TX_SUCCESS)
     {
-        g_telemetry_pool_available = available;
+        if (rust_emergency_byte_pool_external != NULL)
+        {
+            (void)tx_byte_pool_info_get(rust_emergency_byte_pool_external, TX_NULL,
+                                        &emergency_available, TX_NULL,
+                                        TX_NULL, TX_NULL, TX_NULL);
+        }
+        g_telemetry_emergency_pool_available = emergency_available;
+        g_telemetry_pool_available = available + emergency_available;
         g_telemetry_pool_fragments = fragments;
         if (available < g_telemetry_pool_low_water)
         {
@@ -123,6 +135,12 @@ static void telemetry_memory_profile_sample(void)
 void telemetry_set_byte_pool(TX_BYTE_POOL *pool)
 {
     rust_byte_pool_external = pool;
+    telemetry_memory_profile_sample();
+}
+
+void telemetry_set_emergency_byte_pool(TX_BYTE_POOL *pool)
+{
+    rust_emergency_byte_pool_external = pool;
     telemetry_memory_profile_sample();
 }
 
@@ -181,6 +199,7 @@ void telemetry_unlock(void)
 void *telemetryMalloc(size_t xSize)
 {
     void *ptr = NULL;
+    UINT allocation_status = TX_NO_MEMORY;
 
     /* Defensive: if byte pool isn't registered yet, return NULL */
     if (rust_byte_pool_external == NULL)
@@ -193,21 +212,52 @@ void *telemetryMalloc(size_t xSize)
         /* Rust allocator contract expects non-NULL for successful alloc. */
         xSize = 1U;
     }
+    g_telemetry_last_alloc_request = (uint32_t)xSize;
     if (xSize > g_telemetry_max_alloc_request)
     {
         g_telemetry_max_alloc_request = (uint32_t)xSize;
     }
 
-    /*
-     * Allow a brief wait so telemetry bursts don't immediately fail allocator
-     * requests and trigger panic paths in Rust.
-     */
-    if (tx_byte_allocate(rust_byte_pool_external, &ptr, xSize, 5) != TX_SUCCESS)
+    /* Reserve the contiguous pool for schema-sized allocations. The valve-board
+     * crash capture showed a failed 3104-byte request with 9332 bytes free
+     * across 181 fragments. Keep discovery serialization away from small
+     * retained network allocations.
+     * Put medium-lived queues/catalogs in the ordinary pool first; keep the
+     * large pool for >=3 KiB serialization scratch. Both directions retain
+     * nonblocking fallback; never wait while holding the router lock. */
+    if (xSize >= 3072U && rust_emergency_byte_pool_external != NULL)
     {
-        telemetry_memory_profile_sample();
-        g_telemetry_alloc_failure_available = g_telemetry_pool_available;
-        g_telemetry_alloc_failure_fragments = g_telemetry_pool_fragments;
+        allocation_status = tx_byte_allocate(
+            rust_emergency_byte_pool_external, &ptr, xSize, TX_NO_WAIT);
+        if (allocation_status == TX_SUCCESS)
+        {
+            g_telemetry_alloc_emergency_recoveries++;
+        }
+    }
+    if (allocation_status != TX_SUCCESS)
+    {
+        allocation_status = tx_byte_allocate(rust_byte_pool_external, &ptr, xSize, TX_NO_WAIT);
+    }
+    if (allocation_status != TX_SUCCESS && xSize < 3072U &&
+        rust_emergency_byte_pool_external != NULL)
+    {
+        allocation_status = tx_byte_allocate(
+            rust_emergency_byte_pool_external, &ptr, xSize, TX_NO_WAIT);
+        if (allocation_status == TX_SUCCESS)
+        {
+            g_telemetry_alloc_emergency_recoveries++;
+        }
+    }
+    if (allocation_status != TX_SUCCESS)
+    {
+        ULONG available = 0U;
+        ULONG fragments = 0U;
+        (void)tx_byte_pool_info_get(rust_byte_pool_external, TX_NULL,
+                                    &available, &fragments,
+                                    TX_NULL, TX_NULL, TX_NULL);
         g_telemetry_alloc_failure_request = (uint32_t)xSize;
+        g_telemetry_alloc_failure_available = available;
+        g_telemetry_alloc_failure_fragments = fragments;
         g_telemetry_alloc_fail++;
         return NULL;
     }
