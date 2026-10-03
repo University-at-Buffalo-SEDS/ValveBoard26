@@ -1,3 +1,4 @@
+#include "board_watchdog.h"
 // safety_thread.c
 #include "VB-Threads.h"
 
@@ -131,6 +132,7 @@ void safety_thread_entry(ULONG initial_input)
 
     for (;;)
     {
+        board_watchdog_progress(BOARD_WATCHDOG_SAFETY);
         safety_check_heartbeat();
         safety_check_continuity();
         tx_thread_sleep(SAFETY_CHECK_PERIOD_TICKS);

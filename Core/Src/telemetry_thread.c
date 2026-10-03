@@ -1,3 +1,4 @@
+#include "board_watchdog.h"
 // telemetry_thread.c
 #include "VB-Threads.h"
 #include "tx_api.h"
@@ -77,6 +78,7 @@ void telemetry_thread_entry(ULONG initial_input)
     (void)init_telemetry_router();
 
     for (;;) {
+        board_watchdog_progress(BOARD_WATCHDOG_NETWORK);
         can_bus_process_rx();
         (void)telemetry_poll_discovery();
         (void)telemetry_poll_timesync();

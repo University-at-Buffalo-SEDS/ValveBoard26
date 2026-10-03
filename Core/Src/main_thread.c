@@ -1,3 +1,4 @@
+#include "board_watchdog.h"
 // main_thread.c
 #include "VB-Threads.h"
 #include "tx_api.h"
@@ -349,6 +350,7 @@ void main_thread_entry(ULONG initial_input)
     
     publish_all_umbilical_statuses();
     for (;;) {
+        board_watchdog_progress(BOARD_WATCHDOG_CONTROL);
         service_launch_sequence_request();
 
         if (thread_comm_get_abort() != 0U)
