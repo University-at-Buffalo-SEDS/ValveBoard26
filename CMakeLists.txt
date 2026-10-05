@@ -37,6 +37,7 @@ endif()
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
+include(cmake/packet_store.cmake)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     USER_VECT_TAB_ADDRESS VECT_TAB_OFFSET=0x00004200U)
 target_link_options(${CMAKE_PROJECT_NAME} PRIVATE

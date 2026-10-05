@@ -9,6 +9,7 @@
 #include "can_bus.h"
 #include "main.h"
 #include "sedsnet_config.h"
+#include "board_packet_store.h"
 #include "stm32g4xx_hal.h"
 
 #include <stdarg.h>
@@ -842,6 +843,9 @@ SedsResult init_telemetry_router(void)
           .packed_handler = NULL,
           .user = NULL,
       }};
+
+  result = board_packet_store_init();
+  if (result != SEDS_OK) return result;
 
   r = seds_router_new(node_now_since_ms, NULL, locals,
                       sizeof(locals) / sizeof(locals[0]));
