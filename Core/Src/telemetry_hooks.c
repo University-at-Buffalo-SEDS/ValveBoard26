@@ -4,6 +4,11 @@
 #include <stdio.h>
 #include <string.h>
 #include "main.h"
+#ifdef TELEMETRY_USE_TLSF
+#include "telemetry_tlsf.h"
+extern volatile uint32_t g_telemetry_tlsf_free_bytes, g_telemetry_tlsf_free_blocks;
+extern volatile uint32_t g_telemetry_tlsf_live_bytes, g_telemetry_tlsf_region_bytes;
+#endif
 
 static TX_BYTE_POOL *rust_byte_pool_external = NULL;
 static TX_BYTE_POOL *rust_emergency_byte_pool_external = NULL;
@@ -108,6 +113,15 @@ static int str_contains_ci_n(const char *s, size_t n, const char *needle)
 
 static void telemetry_memory_profile_sample(void)
 {
+#ifdef TELEMETRY_USE_TLSF
+    /* No heap walk in allocation hot paths. Exact snapshots are captured on failure. */
+    ULONG available = g_telemetry_tlsf_region_bytes > g_telemetry_tlsf_live_bytes ?
+        g_telemetry_tlsf_region_bytes - g_telemetry_tlsf_live_bytes : 0U;
+    g_telemetry_pool_available = available;
+    g_telemetry_pool_fragments = g_telemetry_tlsf_free_blocks;
+    if (available < g_telemetry_pool_low_water) g_telemetry_pool_low_water = available;
+#else
+
     ULONG available = 0U;
     ULONG fragments = 0U;
     ULONG emergency_available = 0U;
@@ -130,18 +144,27 @@ static void telemetry_memory_profile_sample(void)
             g_telemetry_pool_low_water = available;
         }
     }
+#endif
 }
 
 void telemetry_set_byte_pool(TX_BYTE_POOL *pool)
 {
+#ifdef TELEMETRY_USE_TLSF
+    telemetry_tlsf_register_pool(pool);
+#else
     rust_byte_pool_external = pool;
     telemetry_memory_profile_sample();
+#endif
 }
 
 void telemetry_set_emergency_byte_pool(TX_BYTE_POOL *pool)
 {
+#ifdef TELEMETRY_USE_TLSF
+    telemetry_tlsf_register_pool(pool);
+#else
     rust_emergency_byte_pool_external = pool;
     telemetry_memory_profile_sample();
+#endif
 }
 
 void telemetry_init_lock(void)
@@ -198,6 +221,13 @@ void telemetry_unlock(void)
 
 void *telemetryMalloc(size_t xSize)
 {
+#ifdef TELEMETRY_USE_TLSF
+    void *ptr = telemetry_tlsf_malloc(xSize);
+    if (ptr) ++g_telemetry_alloc_count;
+    else ++g_telemetry_alloc_fail;
+    telemetry_memory_profile_sample();
+    return ptr;
+#else
     void *ptr = NULL;
     UINT allocation_status = TX_NO_MEMORY;
 
@@ -264,16 +294,25 @@ void *telemetryMalloc(size_t xSize)
     g_telemetry_alloc_count++;
     telemetry_memory_profile_sample();
     return ptr;
+#endif
 }
 
 void telemetryFree(void *pv)
 {
+#ifdef TELEMETRY_USE_TLSF
+    if (pv) {
+        telemetry_tlsf_free(pv);
+        ++g_telemetry_free_count;
+        telemetry_memory_profile_sample();
+    }
+#else
     if (pv != NULL)
     {
         (void)tx_byte_release(pv);
         g_telemetry_free_count++;
         telemetry_memory_profile_sample();
     }
+#endif
 }
 
 void seds_error_msg(const char *str, size_t len)
