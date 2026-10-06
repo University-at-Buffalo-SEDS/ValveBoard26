@@ -14,6 +14,7 @@ TX_THREAD data_acq_thread;
 
 #define DATA_ACQ_THREAD_STACK_SIZE ((4U * 1024U) + 512U)
 #define DATA_ACQ_REPORT_PERIOD_TICKS ((ULONG)TX_TIMER_TICKS_PER_SECOND)
+#define DATA_ACQ_POWER_RETRY_TICKS (5U * TX_TIMER_TICKS_PER_SECOND)
 #define DATA_ACQ_STARTUP_DELAY_TICKS (1U * TX_TIMER_TICKS_PER_SECOND)
 #define DATA_ACQ_PRESSURE_PERIOD_TICKS VALVE_PRESSURE_REPORT_TICKS
 
@@ -28,6 +29,7 @@ static volatile uint32_t data_acq_pressure_init_fail_count;
 static volatile uint32_t data_acq_pressure_read_fail_count;
 static volatile uint32_t data_acq_cycle_count;
 static ULONG data_acq_last_power_ticks;
+static ULONG data_acq_last_power_retry_ticks;
 static ULONG data_acq_last_pressure_ticks;
 static ULONG data_acq_thread_stack[DATA_ACQ_THREAD_STACK_SIZE / sizeof(ULONG)];
 
@@ -55,26 +57,42 @@ void data_acq_get_latest_voltages(float voltages[4])
 
 static void data_acq_ltc2990_init(void)
 {
-    ltc2990_voltage_ready =
-        (LTC2990_Init(&ltc2990_voltage_handle,
-                      &hi2c2,
-                      LTC2990_I2C_ADDRESS_VOLTAGE,
-                      LTC2990_ROLE_VOLTAGE) == 0)
-            ? 1U
-            : 0U;
     if (ltc2990_voltage_ready == 0U) {
-        data_acq_voltage_init_fail_count++;
+        ltc2990_voltage_ready =
+            (LTC2990_Init(&ltc2990_voltage_handle,
+                          &hi2c2,
+                          LTC2990_I2C_ADDRESS_VOLTAGE,
+                          LTC2990_ROLE_VOLTAGE) == 0)
+                ? 1U
+                : 0U;
+        if (ltc2990_voltage_ready == 0U) {
+            data_acq_voltage_init_fail_count++;
+        }
     }
 
-    ltc2990_current_ready =
-        (LTC2990_Init(&ltc2990_current_handle,
-                      &hi2c2,
-                      LTC2990_I2C_ADDRESS_CURRENT,
-                      LTC2990_ROLE_CURRENT) == 0)
-            ? 1U
-            : 0U;
     if (ltc2990_current_ready == 0U) {
-        data_acq_current_init_fail_count++;
+        ltc2990_current_ready =
+            (LTC2990_Init(&ltc2990_current_handle,
+                          &hi2c2,
+                          LTC2990_I2C_ADDRESS_CURRENT,
+                          LTC2990_ROLE_CURRENT) == 0)
+                ? 1U
+                : 0U;
+        if (ltc2990_current_ready == 0U) {
+            data_acq_current_init_fail_count++;
+        }
+    }
+    data_acq_last_power_retry_ticks = tx_time_get();
+}
+
+/* A sensor missing during startup must not remain disabled for the whole
+ * run. Retry only failed devices; retain the working current/voltage channel. */
+static void data_acq_retry_power_init(void)
+{
+    const ULONG now = tx_time_get();
+    if ((ltc2990_voltage_ready == 0U || ltc2990_current_ready == 0U) &&
+        (ULONG)(now - data_acq_last_power_retry_ticks) >= DATA_ACQ_POWER_RETRY_TICKS) {
+        data_acq_ltc2990_init();
     }
 }
 
@@ -136,6 +154,7 @@ void data_acq_thread_entry(ULONG initial_input)
     for (;;) {
         const ULONG cycle_started = tx_time_get();
         data_acq_report_pressure();
+        data_acq_retry_power_init();
         if ((ltc2990_voltage_ready != 0U) || (ltc2990_current_ready != 0U)) {
             data_acq_report_power();
         }
