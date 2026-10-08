@@ -45,6 +45,8 @@
 #define LTC2990_I2C_READY_TRIALS        (2U)
 #define LTC2990_I2C_READY_TIMEOUT_MS    (10U)
 #define LTC2990_TIMEOUT_MS              (25U)
+/* TINT precedes voltage/current and can take 55 ms; include bus margin. */
+#define LTC2990_DATA_READY_TIMEOUT_MS   (100U)
 
 typedef enum {
     LTC2990_ROLE_VOLTAGE,

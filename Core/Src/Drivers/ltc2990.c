@@ -178,7 +178,7 @@ uint8_t LTC2990_ADC_Read_New_Data(LTC2990_Handle_t *handle,
                                   uint16_t *raw15,
                                   int8_t *data_valid)
 {
-    uint32_t timeout = LTC2990_TIMEOUT_MS;
+    const uint32_t started = HAL_GetTick();
     uint8_t status = 0U;
     uint8_t bit = status_bit_from_msb(msb_register_address);
     uint8_t ready = 0U;
@@ -187,12 +187,15 @@ uint8_t LTC2990_ADC_Read_New_Data(LTC2990_Handle_t *handle,
         return 1U;
     }
 
-    while (timeout-- != 0U) {
+    for (;;) {
         if (LTC2990_Read_Register(handle, STATUS_REG, &status) != 0) {
             return 1U;
         }
         if (((status >> bit) & 0x01U) != 0U) {
             ready = 1U;
+            break;
+        }
+        if ((uint32_t)(HAL_GetTick() - started) >= LTC2990_DATA_READY_TIMEOUT_MS) {
             break;
         }
         ltc2990_sleep_ms(1U);
