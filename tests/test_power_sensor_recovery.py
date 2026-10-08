@@ -26,7 +26,11 @@ static uint8_t ltc2990_voltage_ready,ltc2990_current_ready;
 static uint32_t data_acq_voltage_init_fail_count,data_acq_current_init_fail_count;
 static ULONG now,data_acq_last_power_retry_ticks;
 static unsigned voltage_calls,current_calls;
-static int voltage_failed=1,current_failed;
+static int voltage_failed=1,current_failed,bus_stuck;
+#define HAL_OK 0
+static unsigned recovery_calls;
+static int power_i2c_needs_recovery(int *h){assert(h==&hi2c2);return bus_stuck;}
+static int power_i2c_recover(int *h){assert(h==&hi2c2);recovery_calls++;bus_stuck=0;return HAL_OK;}
 static ULONG tx_time_get(void){return now;}
 static int LTC2990_Init(int *h,int *i,unsigned a,int role){
  (void)h;assert(i==&hi2c2);
@@ -45,12 +49,15 @@ int main(void){
  assert(ltc2990_voltage_ready&&ltc2990_current_ready);
  assert(voltage_calls==3&&current_calls==1);
  now=30000;data_acq_retry_power_init();assert(voltage_calls==3&&current_calls==1);
+ // A stuck bus invalidates both handles, even when both were healthy.
+ bus_stuck=1;now=35000;data_acq_retry_power_init();
+ assert(recovery_calls==1&&voltage_calls==4&&current_calls==2);
  // Unsigned deadline arithmetic remains correct across tick wrap.
  ltc2990_current_ready=0;current_failed=1;now=UINT32_MAX-1000;
  data_acq_ltc2990_init();unsigned before=current_calls;
  now=3998;data_acq_retry_power_init();assert(current_calls==before);
  now=3999;current_failed=0;data_acq_retry_power_init();
- assert(current_calls==before+1&&ltc2990_current_ready&&voltage_calls==3);
+ assert(current_calls==before+1&&ltc2990_current_ready&&voltage_calls==4);
 }
 """
         with tempfile.TemporaryDirectory() as tmp:

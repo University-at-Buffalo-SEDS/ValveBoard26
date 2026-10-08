@@ -5,6 +5,7 @@
 #include "telemetry.h"
 #include "tx_api.h"
 #include "telemetry_rates.h"
+#include "power_i2c_recovery.h"
 
 extern I2C_HandleTypeDef hi2c2;
 extern ADC_HandleTypeDef hadc3;
@@ -57,6 +58,14 @@ void data_acq_get_latest_voltages(float voltages[4])
 
 static void data_acq_ltc2990_init(void)
 {
+    if (power_i2c_needs_recovery(&hi2c2)) {
+        ltc2990_voltage_ready = 0U;
+        ltc2990_current_ready = 0U;
+        if (power_i2c_recover(&hi2c2) != HAL_OK) {
+            data_acq_last_power_retry_ticks = tx_time_get();
+            return;
+        }
+    }
     if (ltc2990_voltage_ready == 0U) {
         ltc2990_voltage_ready =
             (LTC2990_Init(&ltc2990_voltage_handle,
@@ -90,7 +99,8 @@ static void data_acq_ltc2990_init(void)
 static void data_acq_retry_power_init(void)
 {
     const ULONG now = tx_time_get();
-    if ((ltc2990_voltage_ready == 0U || ltc2990_current_ready == 0U) &&
+    if ((ltc2990_voltage_ready == 0U || ltc2990_current_ready == 0U ||
+         power_i2c_needs_recovery(&hi2c2)) &&
         (ULONG)(now - data_acq_last_power_retry_ticks) >= DATA_ACQ_POWER_RETRY_TICKS) {
         data_acq_ltc2990_init();
     }
