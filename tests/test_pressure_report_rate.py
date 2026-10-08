@@ -45,7 +45,7 @@ int main(void) {
                 subprocess.run([str(binary)], check=True)
 
     def test_default_and_override_cadence_and_overrun_yield(self):
-        for rate in (None, 50):
+        for rate in (None, 30, 50, 500):
             with self.subTest(rate=rate):
                 self.compile_rate(rate)
 

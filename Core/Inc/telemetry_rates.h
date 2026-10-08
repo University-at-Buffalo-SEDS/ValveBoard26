@@ -3,7 +3,7 @@
 
 /* Override per build; ADC3/TIM3 samples pressure at 500 Hz. */
 #ifndef VALVE_PRESSURE_REPORT_HZ
-#define VALVE_PRESSURE_REPORT_HZ 500U
+#define VALVE_PRESSURE_REPORT_HZ 50U
 #endif
 #if VALVE_PRESSURE_REPORT_HZ < 1 || VALVE_PRESSURE_REPORT_HZ > 500
 #error "VALVE_PRESSURE_REPORT_HZ must be between 1 and the 500 Hz ADC sample rate"
@@ -12,7 +12,8 @@
 #error "ThreadX tick rate cannot support VALVE_PRESSURE_REPORT_HZ"
 #endif
 
-/* Nearest whole tick: 2 ticks at 1 kHz gives 500 Hz. */
+/* Nearest whole tick: 20 ticks at 1 kHz gives 50 Hz reports.
+ * The ADC still samples at 500 Hz; avoid saturating the shared gateway. */
 #define VALVE_PRESSURE_REPORT_TICKS \
     ((TX_TIMER_TICKS_PER_SECOND + VALVE_PRESSURE_REPORT_HZ / 2U) / VALVE_PRESSURE_REPORT_HZ)
 
