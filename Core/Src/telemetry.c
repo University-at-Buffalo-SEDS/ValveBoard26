@@ -32,6 +32,12 @@ volatile uint32_t g_valve_status_can_attempts;
 volatile uint32_t g_valve_status_can_ok;
 volatile uint32_t g_valve_status_can_fail;
 volatile uint32_t g_valve_status_can_last_tick;
+typedef struct {
+  uint32_t attempts, accepted, failed, last_tick;
+} PowerCanDiagnostic;
+volatile PowerCanDiagnostic g_valve_power_can[2];
+volatile uint32_t g_valve_discovery_attempts;
+volatile int32_t g_valve_discovery_result;
 volatile uint32_t g_valve_can_unclassified;
 volatile uint32_t g_valve_queue_service_errors;
 volatile int32_t g_valve_queue_last_error;
@@ -100,6 +106,8 @@ static volatile uint32_t g_last_can_rx_ms = 0U;
 static uint8_t g_discovery_schema_announced = 0U;
 static uint8_t g_discovery_schema_requested = 0U;
 static uint64_t g_discovery_schema_retry_ms = 0ULL;
+static uint64_t g_discovery_schema_request_retry_ms = 0ULL;
+static uint32_t g_discovery_schema_retry_delay_ms = 1000U;
 
 RouterState g_router = {.r = NULL, .created = 0U, .start_time = 0ULL};
 
@@ -459,7 +467,8 @@ static UNUSED_FUNCTION uint64_t node_now_since_ms(void *user)
   (void)user;
   const RouterState s = g_router;
   const uint64_t now = tx_raw_now_ms_locked();
-  return s.r ? (now - s.start_time) : 0ULL;
+  /* Construction and initial maintenance also need an advancing clock. */
+  return now - s.start_time;
 }
 
 static SedsResult tx_send_with_priority(const uint8_t *bytes, size_t len,
@@ -491,6 +500,13 @@ static SedsResult tx_send_with_priority(const uint8_t *bytes, size_t len,
   const uint32_t diagnostic_type = status_frame_type(bytes, len);
   const uint8_t diagnostic_status =
       diagnostic_type == (uint32_t)SEDS_DT_UMBILICAL_STATUS;
+  volatile PowerCanDiagnostic *power_diag =
+      diagnostic_type == (uint32_t)SEDS_DT_BATTERY_VOLTAGE ? &g_valve_power_can[0] :
+      diagnostic_type == (uint32_t)SEDS_DT_BATTERY_CURRENT ? &g_valve_power_can[1] : NULL;
+  if (power_diag != NULL) {
+    power_diag->attempts++;
+    power_diag->last_tick = tx_time_get();
+  }
   if (diagnostic_type == UINT32_MAX) g_valve_can_unclassified++;
   if (diagnostic_status) {
     g_valve_status_can_attempts++;
@@ -504,10 +520,12 @@ static SedsResult tx_send_with_priority(const uint8_t *bytes, size_t len,
   if (can_bus_send_large(bytes, len, can_id) == HAL_OK)
   {
     if (diagnostic_status) g_valve_status_can_ok++;
+    if (power_diag != NULL) power_diag->accepted++;
     sim_probe_observe_can_tx(bytes, len);
     return SEDS_OK;
   }
   if (diagnostic_status) g_valve_status_can_fail++;
+  if (power_diag != NULL) power_diag->failed++;
   return SEDS_IO;
 }
 
@@ -646,21 +664,27 @@ SedsResult telemetry_poll_discovery(void)
    * catalog once after startup so existing relays learn newly added types.
    * Leave queue processing running between bounded retries on queue pressure. */
   const uint64_t now = tx_raw_now_ms_locked();
-  if (now >= g_discovery_schema_retry_ms) {
-    if (!g_discovery_schema_announced) {
-      g_discovery_schema_retry_ms = now + 1000ULL;
-      if (seds_router_announce_discovery(g_router.r) == SEDS_OK) {
-        g_discovery_schema_announced = 1U;
-      }
-    } else if (!g_discovery_schema_requested && g_telemetry_discovery_seen) {
-      /* Recover peer definitions when this board restarts after the peers'
-       * startup announcements. Wait for a peer, and separate the two bursts. */
-      static const uint8_t empty = 0U;
-      g_discovery_schema_retry_ms = now + 1000ULL;
-      if (seds_router_log_bytes(g_router.r, SEDS_DT_DISCOVERY_SCHEMA_REQUEST,
-                                &empty, 0U) == SEDS_OK) {
-        g_discovery_schema_requested = 1U;
-      }
+  if (!g_discovery_schema_announced && now >= g_discovery_schema_retry_ms) {
+    g_discovery_schema_retry_ms = now + g_discovery_schema_retry_delay_ms;
+    g_valve_discovery_attempts++;
+    const SedsResult result = seds_router_announce_discovery(g_router.r);
+    g_valve_discovery_result = result;
+    if (result == SEDS_OK) {
+      g_discovery_schema_announced = 1U;
+    } else if (g_discovery_schema_retry_delay_ms < 30000U) {
+      const uint32_t doubled = g_discovery_schema_retry_delay_ms * 2U;
+      g_discovery_schema_retry_delay_ms = doubled > 30000U ? 30000U : doubled;
+    }
+  }
+  /* A refused local schema must not prevent learning remote endpoint owners.
+   * In particular, a late-joining sensor still needs the GS return route. */
+  if (!g_discovery_schema_requested && g_telemetry_discovery_seen &&
+      now >= g_discovery_schema_request_retry_ms) {
+    static const uint8_t empty = 0U;
+    g_discovery_schema_request_retry_ms = now + 1000ULL;
+    if (seds_router_log_bytes(g_router.r, SEDS_DT_DISCOVERY_SCHEMA_REQUEST,
+                              &empty, 0U) == SEDS_OK) {
+      g_discovery_schema_requested = 1U;
     }
   }
   (void)flight_state_cache_poll(g_router.r);
@@ -860,6 +884,8 @@ SedsResult init_telemetry_router(void)
   result = board_packet_store_init();
   if (result != SEDS_OK) return result;
 
+  /* Keep one clock origin through construction and initial queue service. */
+  g_router.start_time = tx_raw_now_ms_locked();
   r = seds_router_new(node_now_since_ms, NULL, locals,
                       sizeof(locals) / sizeof(locals[0]));
   if (!r)
@@ -923,7 +949,8 @@ SedsResult init_telemetry_router(void)
   g_discovery_schema_announced = 0U;
   g_discovery_schema_requested = 0U;
   g_discovery_schema_retry_ms = 0ULL;
-  g_router.start_time = tx_raw_now_ms_locked();
+  g_discovery_schema_request_retry_ms = 0ULL;
+  g_discovery_schema_retry_delay_ms = 1000U;
   return SEDS_OK;
 #endif
 }

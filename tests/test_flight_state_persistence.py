@@ -11,8 +11,7 @@ class FlightStatePersistenceContract(unittest.TestCase):
         flight_state = next(
             item for item in schema["types"] if item["name"] == "FLIGHT_STATE"
         )
-        self.assertTrue(flight_state["reliable"])
-        self.assertEqual(flight_state["reliable_mode"], "Ordered")
+        self.assertEqual(flight_state["reliable"], "Ordered")
         self.assertEqual(flight_state["priority"], 16)
 
     def test_pre_rtos_startup_does_not_wait_for_timer_interrupts(self):

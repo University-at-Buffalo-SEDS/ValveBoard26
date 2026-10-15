@@ -7,6 +7,31 @@
 #include <math.h>
 #include <stdint.h>
 
+/* Index 0: battery voltage; index 1: battery current. These counters
+ * distinguish sensor validity from queue admission without logging traffic. */
+typedef struct {
+    uint32_t samples, invalid, accepted, rejected, last_tick;
+    int32_t last_result;
+    float last_value;
+} PowerReportDiagnostic;
+volatile PowerReportDiagnostic g_valve_power_publish[2];
+
+static void report_power_sample(unsigned index, SedsDataType type, float value)
+{
+    volatile PowerReportDiagnostic *diag = &g_valve_power_publish[index];
+    diag->samples++;
+    if (!isfinite(value)) {
+        diag->invalid++;
+        return;
+    }
+    diag->last_value = value;
+    diag->last_tick = tx_time_get();
+    const SedsResult result = log_telemetry_asynchronous(type, &value, 1U, sizeof(value));
+    diag->last_result = result;
+    if (result == SEDS_OK) diag->accepted++;
+    else diag->rejected++;
+}
+
 static inline void ltc2990_sleep_ms(uint32_t ms)
 {
     ULONG ticks = (ULONG)(((uint64_t)ms * TX_TIMER_TICKS_PER_SECOND + 999ULL) / 1000ULL);
@@ -299,9 +324,7 @@ void telemetry_ltc2990_update_voltage(LTC2990_Handle_t *ltc2990_handle)
     LTC2990_Step(ltc2990_handle);
     LTC2990_Get_Values(ltc2990_handle, voltages);
 
-    if (!isnan(voltages[1])) {
-        (void)log_telemetry_asynchronous(SEDS_DT_BATTERY_VOLTAGE, &voltages[1], 1U, sizeof(float));
-    }
+    report_power_sample(0U, SEDS_DT_BATTERY_VOLTAGE, voltages[1]);
 }
 
 void telemetry_ltc2990_update_current(LTC2990_Handle_t *ltc2990_handle)
@@ -313,7 +336,5 @@ void telemetry_ltc2990_update_current(LTC2990_Handle_t *ltc2990_handle)
 
     float current = (currents[CURRENT_TELEMETRY_CHANNEL_INDEX] * CURRENT_DRAW_GAIN) +
                     CURRENT_DRAW_OFFSET_A;
-    if (!isnan(current)) {
-        (void)log_telemetry_asynchronous(SEDS_DT_BATTERY_CURRENT, &current, 1U, sizeof(float));
-    }
+    report_power_sample(1U, SEDS_DT_BATTERY_CURRENT, current);
 }

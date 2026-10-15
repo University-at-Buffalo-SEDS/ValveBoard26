@@ -42,7 +42,7 @@
 #endif
 
 #ifndef CAN_BUS_POLLING
-#define CAN_BUS_POLLING 1
+#define CAN_BUS_POLLING 0
 #endif
 
 #ifndef CAN_BUS_TX_ENQUEUE_TIMEOUT_MS
@@ -148,7 +148,7 @@ static inline void can_bus_notify_rx(const uint8_t *data, size_t len) {
 
 #define CAN_BUS_FRAG_MAGIC ((uint16_t)('S') | ((uint16_t)('D') << 8))
 #define CAN_BUS_NODE_ID 6U
-#define CAN_BUS_FRAG_WIRE_LEN 64   // always send 64B payload frames for frags
+#define CAN_BUS_FRAG_WIRE_LEN 64   // fixed stride for multi-fragment packets
 #define CAN_BUS_REASM_TIMEOUT_MS 1000u // tolerate interleaved multi-sender v4 packets
 
 typedef struct __attribute__((packed)) {
@@ -261,20 +261,21 @@ static inline void rb_push_drop_oldest(uint32_t std_id, const uint8_t *data,
 //  - After observing head != tail, we must ensure subsequent reads of the slot
 //    see the writes that happened-before the producer published head.
 //  - `__DMB()` acts as an acquire barrier here.
-static inline int rb_pop(can_bus_rx_frame_t *out) {
-  uint16_t t = g_rx_tail;
-  uint16_t h = g_rx_head;
-
-  if (h == t)
+static inline int rb_pop(can_bus_rx_frame_t *out)
+{
+  const uint32_t irq_mask = __get_PRIMASK();
+  __disable_irq();
+  const uint16_t t = g_rx_tail;
+  if (g_rx_head == t) {
+    __set_PRIMASK(irq_mask);
     return 0;
-
-  __DMB(); // ensure slot contents are visible after seeing head advance
-           // (acquire)
-
+  }
+  /* The ISR may evict the oldest slot; keep copy and tail update atomic. */
+  __DMB();
   *out = g_rx_ring[t];
-
-  __DMB(); // ensure slot read completes before we advance tail (conservative)
   g_rx_tail = rb_next(t);
+  __DMB();
+  __set_PRIMASK(irq_mask);
   return 1;
 }
 
@@ -326,7 +327,9 @@ static void can_bus_drain_rx_fifo(FDCAN_HandleTypeDef *hfdcan, uint32_t rx_fifo)
   FDCAN_RxHeaderTypeDef hdr;
   uint8_t data[64];
 
-  while (HAL_FDCAN_GetRxFifoFillLevel(hfdcan, rx_fifo) > 0U) {
+  uint32_t remaining = 3U; /* Physical FIFO depth; bound interrupt work. */
+  while (remaining-- > 0U &&
+         HAL_FDCAN_GetRxFifoFillLevel(hfdcan, rx_fifo) > 0U) {
     if (HAL_FDCAN_GetRxMessage(hfdcan, rx_fifo, &hdr, data) != HAL_OK) {
       break;
     }
@@ -613,7 +616,7 @@ HAL_StatusTypeDef can_bus_send_bytes(const uint8_t *bytes, size_t len,
 }
 
 // Send an arbitrarily large buffer by fragmenting into multiple CAN FD frames.
-// This uses fixed 64B frames (DLC=64) and a small header in each frame.
+// Multi-fragment packets use 64-byte frames and a small header in each frame.
 HAL_StatusTypeDef can_bus_send_large(const uint8_t *bytes, size_t len,
                                      uint32_t std_id) {
   if (!g_hfdcan)
@@ -668,8 +671,11 @@ HAL_StatusTypeDef can_bus_send_large(const uint8_t *bytes, size_t len,
     memcpy(frame + hdr_sz, bytes + off, take);
     off += take;
 
-    // send a fixed 64-byte payload frame (pads zeros)
-    HAL_StatusTypeDef st = can_bus_send_bytes(frame, wire_len, std_id);
+    // Single fragments use the smallest legal DLC; multi-fragment stride stays 64 bytes.
+    /* Only a single fragment can shorten its first-frame stride.
+     * Keep multi-fragment frames fixed for existing reassembly code. */
+    const size_t used = frag_cnt == 1U ? hdr_sz + take : wire_len;
+    HAL_StatusTypeDef st = can_bus_send_bytes(frame, used, std_id);
     if (st != HAL_OK)
       return st;
   }

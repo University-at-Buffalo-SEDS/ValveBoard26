@@ -27,8 +27,13 @@ typedef int HAL_StatusTypeDef;
 #define SEDS_IO -2
 #define SEDS_DT_HEARTBEAT 120
 #define SEDS_DT_UMBILICAL_STATUS 117
+#define SEDS_DT_BATTERY_VOLTAGE 20
+#define SEDS_DT_BATTERY_CURRENT 21
+typedef struct {uint32_t attempts,accepted,failed,last_tick;} PowerCanDiagnostic;
+static volatile PowerCanDiagnostic g_valve_power_can[2];
+static uint32_t classified=UINT32_MAX;
 static uint32_t g_valve_can_unclassified, g_valve_status_can_attempts, g_valve_status_can_last_tick, g_valve_status_can_ok, g_valve_status_can_fail;
-static uint32_t status_frame_type(const uint8_t *p,size_t n){(void)p;(void)n;return UINT32_MAX;}
+static uint32_t status_frame_type(const uint8_t *p,size_t n){(void)p;(void)n;return classified;}
 static uint32_t tx_time_get(void){return 0;}
 #define GREEN_LED_GPIO_Port 0
 #define GREEN_LED_Pin 0
@@ -50,6 +55,12 @@ int main(void) {
    result=HAL_ERROR;
    assert(tx_send_with_priority(opaque[i],8,255,NULL)==SEDS_IO);
  }
+ classified=SEDS_DT_BATTERY_VOLTAGE;result=HAL_OK;
+ assert(tx_send_with_priority(opaque[0],8,50,NULL)==SEDS_OK);
+ assert(g_valve_power_can[0].attempts==1&&g_valve_power_can[0].accepted==1);
+ classified=SEDS_DT_BATTERY_CURRENT;result=HAL_ERROR;
+ assert(tx_send_with_priority(opaque[0],8,50,NULL)==SEDS_IO);
+ assert(g_valve_power_can[1].attempts==1&&g_valve_power_can[1].failed==1);
  assert(tx_send_with_priority(NULL,8,255,NULL)==SEDS_BAD_ARG);
  assert(tx_send_with_priority(opaque[0],0,255,NULL)==SEDS_BAD_ARG);
 }
