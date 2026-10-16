@@ -122,43 +122,44 @@ void LTC2990_Step(LTC2990_Handle_t *handle)
         return;
     }
 
-    if (LTC2990_Trigger_Conversion(handle) != 0) {
-        return;
+    /* A failed trigger/read must never republish the preceding conversion as
+     * fresh. Retain successful channels only within this acquisition cycle. */
+    for (uint8_t i = 0U; i < 4U; i++) {
+        handle->last_values[i] = NAN;
     }
-    ltc2990_sleep_ms(10U);
+    const uint32_t started = HAL_GetTick();
+    const uint8_t voltage = handle->role == LTC2990_ROLE_VOLTAGE;
+    const uint8_t channels = voltage ? 4U : 2U;
+    const uint8_t registers[4] = {V1_MSB_REG, V2_MSB_REG, V3_MSB_REG, V4_MSB_REG};
 
-    if (handle->role == LTC2990_ROLE_VOLTAGE) {
-        const uint8_t regs[4] = {V1_MSB_REG, V2_MSB_REG, V3_MSB_REG, V4_MSB_REG};
-
-        for (uint8_t i = 0U; i < 4U; i++) {
-            uint16_t raw15 = 0U;
-            int8_t valid = 0;
-            if ((LTC2990_ADC_Read_New_Data(handle, regs[i], &raw15, &valid) == 0U) && (valid != 0)) {
-                handle->last_values[i] =
-                    LTC2990_Code_To_Single_Ended_Voltage(handle, (uint16_t)(raw15 & 0x3FFFU), i);
-            } else {
-                handle->last_values[i] = NAN;
+    for (uint8_t attempt = 0U; attempt < 2U; attempt++) {
+        if (LTC2990_Trigger_Conversion(handle) == 0) {
+            ltc2990_sleep_ms(10U);
+            for (uint8_t i = 0U; i < channels; i++) {
+                if (isfinite(handle->last_values[i])) {
+                    continue;
+                }
+                uint16_t raw15 = 0U;
+                int8_t valid = 0;
+                const uint8_t reg = registers[voltage ? i : (uint8_t)(i * 2U)];
+                if ((LTC2990_ADC_Read_New_Data(handle, reg, &raw15, &valid) == 0U) &&
+                    (valid != 0)) {
+                    handle->last_values[i] = voltage
+                        ? LTC2990_Code_To_Single_Ended_Voltage(handle,
+                              (uint16_t)(raw15 & 0x3FFFU), i)
+                        : LTC2990_Code15_To_CurrentA(raw15);
+                }
             }
         }
-    } else {
-        uint16_t raw15_v1 = 0U;
-        uint16_t raw15_v3 = 0U;
-        int8_t valid_v1 = 0;
-        int8_t valid_v3 = 0;
-
-        handle->last_values[0] = NAN;
-        handle->last_values[1] = NAN;
-        handle->last_values[2] = NAN;
-        handle->last_values[3] = NAN;
-
-        if ((LTC2990_ADC_Read_New_Data(handle, V1_MSB_REG, &raw15_v1, &valid_v1) == 0U) &&
-            (valid_v1 != 0)) {
-            handle->last_values[0] = LTC2990_Code15_To_CurrentA(raw15_v1);
+        uint8_t missing = 0U;
+        for (uint8_t i = 0U; i < channels; i++) {
+            missing |= !isfinite(handle->last_values[i]);
         }
-
-        if ((LTC2990_ADC_Read_New_Data(handle, V3_MSB_REG, &raw15_v3, &valid_v3) == 0U) &&
-            (valid_v3 != 0)) {
-            handle->last_values[1] = LTC2990_Code15_To_CurrentA(raw15_v3);
+        /* Recover a transient transaction/DV failure before the next 1 Hz
+         * report. Do not repeat slow readiness timeouts or loop indefinitely
+         * on a missing device; persistent failures remain NAN. */
+        if (!missing || (uint32_t)(HAL_GetTick() - started) >= 50U) {
+            break;
         }
     }
 }
