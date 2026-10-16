@@ -825,6 +825,16 @@ SedsResult telemetry_publish_flight_state(uint8_t flight_state)
   return telemetry_publish_flight_state_at(flight_state, timestamp_ms);
 }
 
+#ifdef TELEMETRY_USE_TLSF
+static __attribute__((unused)) bool telemetry_memory_admission_probe(
+    size_t additional, size_t largest, uint32_t work)
+{
+  if (work == SEDS_MEMORY_WORK_SMALL_PROTECTED)
+    return telemetry_tlsf_admit_small_protected(additional, largest);
+  return telemetry_tlsf_admit(additional, largest);
+}
+#endif
+
 SedsResult init_telemetry_router(void)
 {
 #ifndef TELEMETRY_ENABLED
@@ -879,7 +889,7 @@ SedsResult init_telemetry_router(void)
       }};
 
 #ifdef TELEMETRY_USE_TLSF
-  seds_set_memory_admission_probe(telemetry_tlsf_admit);
+  seds_set_memory_admission_probe_v2(telemetry_memory_admission_probe);
 #endif
   result = board_packet_store_init();
   if (result != SEDS_OK) return result;
