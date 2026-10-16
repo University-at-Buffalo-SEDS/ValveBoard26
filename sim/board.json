@@ -28,7 +28,9 @@
     "clocks": [],
     "connections": [],
     "pins": [
-      {"gpio": "gpio", "pin": 31, "initial": "high"}
+      {"gpio": "gpio", "pin": 31, "initial": "high"},
+      {"gpio": "gpio", "pin": 8, "initial": "high"},
+      {"gpio": "gpio", "pin": 9, "initial": "high"}
     ],
     "dma_routes": []
   },
@@ -67,7 +69,11 @@
       "channels": 1,
       "channel_samples": [2048],
       "noise_lsb": 2
-    }
+    },
+    {"type":"adc","name":"valve_voltage_monitor","model":"ltc2990","bus":"i2c2@0x4d",
+     "channel_samples":[9830,9336,9175,9175]},
+    {"type":"adc","name":"valve_current_monitor","model":"ltc2990","bus":"i2c2@0x4c",
+     "channel_samples":[25,0,25,0]}
   ],
   "execution": {
     "factory_boot_success_symbol": "_tx_thread_schedule",
