@@ -257,7 +257,10 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
 
   if (cmd_u8 == CMD_SEQUENCE)
   {
-    (void)thread_comm_request_launch_sequence(pkt->timestamp);
+    if (thread_comm_request_launch_sequence(pkt->timestamp) != TX_SUCCESS)
+    {
+      return SEDS_HANDLER_ERROR;
+    }
     (void)thread_comm_set_flight_state(VALVE_FLIGHT_STATE_LAUNCH);
     return SEDS_OK;
   }

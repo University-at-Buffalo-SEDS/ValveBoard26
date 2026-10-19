@@ -205,14 +205,13 @@ static void service_launch_sequence_request(void)
 {
     uint64_t launch_timestamp_ms = 0ULL;
 
-    if (thread_comm_take_launch_sequence_request(&launch_timestamp_ms) == 0U)
+    if (thread_comm_get_abort() != 0U ||
+        thread_comm_take_launch_sequence_request(&launch_timestamp_ms) == 0U)
     {
         return;
     }
 
-    (void)thread_comm_set_abort(0U);
     (void)thread_comm_set_flight_state(VALVE_FLIGHT_STATE_LAUNCH);
-    g_aborted = 0U;
     (void)thread_comm_set_launch_command_timestamp_ms(launch_timestamp_ms);
     start_launch_sequence();
 }

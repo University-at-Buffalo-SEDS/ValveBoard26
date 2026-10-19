@@ -1,4 +1,5 @@
 #include "thread_comm.h"
+#include "board_abort_latch.h"
 
 static TX_MUTEX g_thread_comm_state_mutex;
 static TX_MUTEX g_thread_comm_ring_mutex;
@@ -70,7 +71,7 @@ UINT thread_comm_init(TX_BYTE_POOL *byte_pool)
 
     g_thread_comm_head = 0U;
     g_thread_comm_tail = 0U;
-    g_thread_comm_abort = 0U;
+    g_thread_comm_abort = board_abort_latch_is_set();
     g_thread_comm_flight_state = VALVE_FLIGHT_STATE_STARTUP;
     g_thread_comm_groundstation_heartbeat_ms = 0ULL;
     g_thread_comm_launch_command_timestamp_ms = 0ULL;
@@ -225,7 +226,11 @@ UINT thread_comm_set_abort(uint8_t abort_requested)
         return status;
     }
 
-    g_thread_comm_abort = (abort_requested != 0U) ? 1U : 0U;
+    if (abort_requested != 0U)
+    {
+        board_abort_latch_set();
+        g_thread_comm_abort = 1U;
+    }
 
     status = tx_mutex_put(&g_thread_comm_state_mutex);
     return status;
@@ -394,6 +399,12 @@ UINT thread_comm_request_launch_sequence(uint64_t timestamp_ms)
     if (status != TX_SUCCESS)
     {
         return status;
+    }
+
+    if (g_thread_comm_abort != 0U)
+    {
+        (void)tx_mutex_put(&g_thread_comm_state_mutex);
+        return TX_QUEUE_ERROR;
     }
 
     g_thread_comm_launch_command_timestamp_ms = timestamp_ms;

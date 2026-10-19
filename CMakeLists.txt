@@ -165,3 +165,6 @@ option(ENABLE_BOARD_WATCHDOG "Enable independent hardware watchdog with task pro
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/Core/Src/board_watchdog.c)
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/Core/Src/board_health.c)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE BOARD_WATCHDOG_ENABLE=$<BOOL:${ENABLE_BOARD_WATCHDOG}>)
+
+# Retained board-local abort; deliberately outside the generic network stack.
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/Core/Src/board_abort_latch.c)

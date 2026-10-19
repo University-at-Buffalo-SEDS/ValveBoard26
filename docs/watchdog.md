@@ -27,3 +27,23 @@ reset/soak qualification.
 
 Valve and actuator outputs initialize to their normal safe boot state; queued
 commands and active output sequences are not replayed by this watchdog.
+
+## Abort latch and recovery
+
+A GSE abort is retained in the MCU backup domain (TAMP registers 30 and 31,
+reserved for this board). Software resets, watchdog resets and NRST do not
+clear it. Neither restored connectivity nor a launch command can rearm outputs.
+The abort service keeps ThreadX, telemetry and watchdog progress running.
+There is no software clear API and no flash write on the abort path.
+
+To recover, first use GroundStation's on-screen **Clear GSE abort** control.
+This returns its persisted shared state to Idle and resets operation checks;
+it does not unlock the board or command outputs. Then remove all board power,
+including USB/backfeed and any independent VBAT supply, and restore power.
+The hardware backup-domain reset clears the board latch. Repeat the operation
+checks before filling. Leaving the station in Aborted can relatch a restarted
+board as soon as it receives the shared state.
+
+Host tests model retained registers across reset classes and interrupted
+marker writes. Both factory images build on macOS. Physical power removal,
+backup supply wiring and watchdog reset retention still require hardware testing.
