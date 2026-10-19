@@ -1,7 +1,10 @@
+#include "can_tx_queue.h"
+#include "board_health.h"
 // telemetry.c
 #include "telemetry.h"
 #include "flight_state_cache.h"
 #include "sim_network_probe.h"
+#include "board_can_priority.h"
 #include "status_frame_probe.h"
 #include "ota_stream.h"
 
@@ -89,7 +92,7 @@ static void print_data_no_telem(void *data, size_t len)
 
 static UNUSED_FUNCTION uint8_t g_can_rx_subscribed = 0U;
 static UNUSED_FUNCTION int32_t g_can_side_id = -1;
-#define BOARD_CAN_MAX_FRAME_BYTES 128U
+#define BOARD_CAN_MAX_FRAME_BYTES CAN_TX_ALIGNED_FRAME_BYTES
 #define BOARD_SIDE_TRANSPORT_TEMPLATES 4U
 static uint8_t g_local_unix_valid = 0U;
 static uint64_t g_local_unix_ms = 0ULL;
@@ -513,10 +516,8 @@ static SedsResult tx_send_with_priority(const uint8_t *bytes, size_t len,
     g_valve_status_can_last_tick = tx_time_get();
   }
   const uint32_t can_id =
-      (priority >= 200U ||
-       sim_probe_packed_data_type(bytes, len) == (uint32_t)SEDS_DT_HEARTBEAT)
-          ? 0x006U
-          : 0x106U;
+      board_can_arbitration_id(bytes, len, priority,
+          sim_probe_packed_data_type(bytes, len), (uint32_t)SEDS_DT_HEARTBEAT, 0x006U);
   if (can_bus_send_large(bytes, len, can_id) == HAL_OK)
   {
     if (diagnostic_status) g_valve_status_can_ok++;
@@ -651,6 +652,10 @@ SedsResult telemetry_announce_discovery(void)
 
 SedsResult telemetry_poll_discovery(void)
 {
+#ifdef TELEMETRY_ENABLED
+  if (g_router.r) board_health_poll(g_router.r);
+#endif
+
 #ifndef TELEMETRY_ENABLED
   return SEDS_OK;
 #else

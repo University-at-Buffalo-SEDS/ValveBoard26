@@ -41,6 +41,8 @@ class MemoryProbeContractTests(unittest.TestCase):
                 hooks
                 + telemetry
                 + can_bus
+                + (root / "Core/Src/Drivers/ltc2990.c").read_text()
+                + (root / "Core/Src/can_tx_queue.c").read_text()
                 + main_thread
                 + safety_thread
                 + telemetry_thread
