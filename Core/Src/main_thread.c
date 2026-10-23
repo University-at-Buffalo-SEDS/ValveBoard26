@@ -175,14 +175,15 @@ static void start_launch_sequence(void)
     g_launch_sequence_pilot_open_ticks = 0U;
     g_launch_sequence_last_pilot_status_ticks = 0U;
     g_launch_sequence_start_count++;
+    if (thread_comm_get_flight_state() != VALVE_FLIGHT_STATE_LAUNCH)
+    {
+        (void)thread_comm_set_flight_state(VALVE_FLIGHT_STATE_LAUNCH);
+    }
+#ifdef TELEMETRY_ENABLED
     uint64_t launch_timestamp_ms = thread_comm_get_launch_command_timestamp_ms();
     if (launch_timestamp_ms == 0ULL)
     {
         launch_timestamp_ms = telemetry_unix_ms();
-    }
-    if (thread_comm_get_flight_state() != VALVE_FLIGHT_STATE_LAUNCH)
-    {
-        (void)thread_comm_set_flight_state(VALVE_FLIGHT_STATE_LAUNCH);
     }
     if (launch_timestamp_ms != 0ULL)
     {
@@ -198,6 +199,7 @@ static void start_launch_sequence(void)
     {
         (void)telemetry_send_actuator_command(CMD_IGNITER_SEQUENCE);
     }
+#endif
     (void)publish_umbilical_status(CMD_SEQUENCE, 1U);
 }
 

@@ -16,7 +16,7 @@ typedef struct {
 } PowerReportDiagnostic;
 volatile PowerReportDiagnostic g_valve_power_publish[2];
 
-static void report_power_sample(unsigned index, SedsDataType type, float value)
+static void report_power_sample(unsigned index, uint32_t type, float value)
 {
     volatile PowerReportDiagnostic *diag = &g_valve_power_publish[index];
     diag->samples++;
@@ -26,10 +26,14 @@ static void report_power_sample(unsigned index, SedsDataType type, float value)
     }
     diag->last_value = value;
     diag->last_tick = tx_time_get();
+#ifdef TELEMETRY_ENABLED
     const SedsResult result = log_telemetry_asynchronous(type, &value, 1U, sizeof(value));
     diag->last_result = result;
     if (result == SEDS_OK) diag->accepted++;
     else diag->rejected++;
+#else
+    (void)type;
+#endif
 }
 
 static inline void ltc2990_sleep_ms(uint32_t ms)

@@ -1,5 +1,7 @@
 #ifndef STATUS_REPORT_RETRY_H
 #define STATUS_REPORT_RETRY_H
+#include <stdint.h>
+#ifdef TELEMETRY_ENABLED
 #include "telemetry.h"
 #include "tx_api.h"
 
@@ -38,4 +40,10 @@ static inline void retry_pending_status_reports(void)
         }
     }
 }
+#else
+/* Reporting is disabled; local output control does not depend on a router. */
+static inline void publish_umbilical_status(uint8_t id, uint8_t state)
+{ (void)id; (void)state; }
+static inline void retry_pending_status_reports(void) {}
+#endif /* TELEMETRY_ENABLED */
 #endif

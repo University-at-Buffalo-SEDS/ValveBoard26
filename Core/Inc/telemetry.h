@@ -1,4 +1,6 @@
 #pragma once
+#include "board_commands.h"
+#ifdef TELEMETRY_ENABLED
 #include "sedsnet_config.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -73,19 +75,8 @@ uint64_t telemetry_now_ms(void);
 uint64_t telemetry_unix_ms(void);
 uint64_t telemetry_unix_s(void);
 uint8_t telemetry_unix_is_valid(void);
-enum valve_commands {
-    CMD_PILOT_OPEN = 0,
-    CMD_NORMALLY_OPEN_OPEN = 1,
-    CMD_DUMP_OPEN = 2,
-    CMD_PILOT_CLOSE = 3,
-    CMD_NORMALLY_OPEN_CLOSE = 4,
-    CMD_DUMP_CLOSE = 5,
-    CMD_SEQUENCE = 6,
-    CMD_ABORT = 7,
-};
-enum actuator_commands {
-    CMD_IGNITER_SEQUENCE = 14,
-};
+
+
 void telemetry_set_unix_time_ms(uint64_t unix_ms);
 
 void die(const char *fmt, ...);
@@ -93,3 +84,5 @@ void die(const char *fmt, ...);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* TELEMETRY_ENABLED */

@@ -50,9 +50,11 @@ extern void telemetry_init_lock(void);
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN PV */
+#ifdef TELEMETRY_ENABLED
 #define VALVE_SEDSNET_EMERGENCY_POOL_SIZE (16U * 1024U)
 static TX_BYTE_POOL sedsnet_emergency_byte_pool;
 static ULONG sedsnet_emergency_pool_memory[VALVE_SEDSNET_EMERGENCY_POOL_SIZE / sizeof(ULONG)];
+#endif
 
 /* USER CODE END PV */
 
@@ -74,6 +76,7 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
   /* USER CODE END App_ThreadX_MEM_POOL */
 
   /* USER CODE BEGIN App_ThreadX_Init */
+#ifdef TELEMETRY_ENABLED
   telemetry_set_byte_pool(byte_pool);
   if (tx_byte_pool_create(&sedsnet_emergency_byte_pool, "SEDSNet emergency",
                           sedsnet_emergency_pool_memory,
@@ -84,18 +87,21 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
   telemetry_set_emergency_byte_pool(&sedsnet_emergency_byte_pool);
   /* Initialize telemetry lock used by Rust (telemetry_lock/telemetry_unlock). */
   telemetry_init_lock();
+#endif
   ret = thread_comm_init(byte_pool);
   if (ret != TX_SUCCESS)
   {
     Error_Handler();
   }
 
+#ifdef TELEMETRY_ENABLED
   ret = create_telemetry_thread(byte_pool);
   if (ret != TX_SUCCESS)
   {
     Error_Handler();
   }
 
+#endif
   ret = create_main_thread(byte_pool);
   if (ret != TX_SUCCESS)  {
     Error_Handler();

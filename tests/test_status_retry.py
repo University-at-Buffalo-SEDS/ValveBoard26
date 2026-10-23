@@ -41,7 +41,7 @@ int main(void) {
 """
         with tempfile.TemporaryDirectory() as tmp:
             binary = str(pathlib.Path(tmp) / "status-retry")
-            subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+            subprocess.run(["cc", "-DTELEMETRY_ENABLED=1", "-std=c11", "-Wall", "-Wextra", "-Werror",
                             "-x", "c", "-", "-o", binary],
                            input=code, text=True, check=True)
             subprocess.run([binary], check=True)

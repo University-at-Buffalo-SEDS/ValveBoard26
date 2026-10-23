@@ -124,8 +124,10 @@ static void data_acq_report_pressure(void)
     }
 
     if (pressureTransducerRead(&fuel_tank_pressure, &sample) == HAL_OK) {
+#ifdef TELEMETRY_ENABLED
         (void)log_telemetry_asynchronous(SEDS_DT_FUEL_TANK_PRESSURE, &sample.pressure, 1U,
                                          sizeof(sample.pressure));
+#endif
         data_acq_last_pressure_ticks = now;
     } else {
         data_acq_pressure_read_fail_count++;
@@ -176,8 +178,10 @@ void data_acq_thread_entry(ULONG initial_input)
 UINT create_data_acq_thread(TX_BYTE_POOL *byte_pool)
 {
     (void)byte_pool;
+#ifdef TELEMETRY_ENABLED
     const UINT pressure_status = pressure_sd_init(&fuel_tank_pressure);
     if (pressure_status != TX_SUCCESS) return pressure_status;
+#endif
 
     return tx_thread_create(&data_acq_thread,
                             "Data Acquisition Thread",
