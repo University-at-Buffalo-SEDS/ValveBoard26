@@ -1,6 +1,6 @@
 #include "pressure_transducer_driver.h"
 
-static float pressure_from_adc(const pressure_transducer_t *sensor, uint32_t raw_adc)
+float pressureTransducerConvertRaw(const pressure_transducer_t *sensor, uint32_t raw_adc)
 {
     const float adc_span = sensor->max_adc - sensor->min_adc;
     const float pressure_span = sensor->max_pressure - sensor->min_pressure;
@@ -98,7 +98,7 @@ HAL_StatusTypeDef pressureTransducerInit(pressure_transducer_t *sensor)
     }
 
     if (sensor->hadc->DMA_Handle != NULL) {
-        __HAL_DMA_DISABLE_IT(sensor->hadc->DMA_Handle, DMA_IT_HT | DMA_IT_TC);
+        __HAL_DMA_ENABLE_IT(sensor->hadc->DMA_Handle, DMA_IT_HT | DMA_IT_TC);
     }
 
     status = HAL_TIM_Base_Start(sensor->trigger_timer);
@@ -125,7 +125,7 @@ HAL_StatusTypeDef pressureTransducerRead(pressure_transducer_t *sensor,
 
     raw_adc = pressure_latest_raw_adc(sensor);
     sample->raw_adc = raw_adc;
-    sample->pressure = pressure_from_adc(sensor, raw_adc);
+    sample->pressure = pressureTransducerConvertRaw(sensor, raw_adc);
 
     return HAL_OK;
 }

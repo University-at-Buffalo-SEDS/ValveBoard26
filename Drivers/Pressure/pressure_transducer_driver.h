@@ -63,3 +63,5 @@ HAL_StatusTypeDef pressureTransducerRead(pressure_transducer_t *sensor,
                                          pressure_transducer_sample_t *sample);
 HAL_StatusTypeDef pressureTransducerDebug(const pressure_transducer_t *sensor,
                                           pressure_transducer_debug_t *debug);
+
+float pressureTransducerConvertRaw(const pressure_transducer_t *sensor, uint32_t raw_adc);

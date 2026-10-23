@@ -2,6 +2,7 @@
 
 #include "ltc2990.h"
 #include "pressure_transducer_driver.h"
+#include "pressure_sd.h"
 #include "telemetry.h"
 #include "tx_api.h"
 #include "telemetry_rates.h"
@@ -175,6 +176,8 @@ void data_acq_thread_entry(ULONG initial_input)
 UINT create_data_acq_thread(TX_BYTE_POOL *byte_pool)
 {
     (void)byte_pool;
+    const UINT pressure_status = pressure_sd_init(&fuel_tank_pressure);
+    if (pressure_status != TX_SUCCESS) return pressure_status;
 
     return tx_thread_create(&data_acq_thread,
                             "Data Acquisition Thread",
