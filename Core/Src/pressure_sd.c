@@ -10,7 +10,10 @@ typedef struct { uint16_t raw[4]; uint32_t first_ms, first_sequence; } capture_t
 _Static_assert(sizeof(capture_t)==4*sizeof(ULONG), "pressure capture queue uses four words");
 static TX_QUEUE queue;
 static TX_THREAD worker;
-static ULONG storage[16*4], stack[4608/sizeof(ULONG)];
+/* Fair queue admission can reclaim routing metadata during a publication.
+ * The three-radio profile exceeds the former 4.5 KiB producer stack. */
+#define PRESSURE_SD_THREAD_STACK_SIZE ((6U * 1024U) + 512U)
+static ULONG storage[16*4], stack[PRESSURE_SD_THREAD_STACK_SIZE/sizeof(ULONG)];
 static pressure_transducer_t *source;
 static uint32_t sequence, last_sequence, last_observed_first_ms;
 static pressure_sd_clock_t source_sample_clock;

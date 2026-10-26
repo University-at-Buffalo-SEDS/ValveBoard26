@@ -13,7 +13,9 @@
 
 TX_THREAD main_thread;
 
-#define MAIN_THREAD_STACK_SIZE (12U * 1024U)
+/* Rebalance one KiB toward the publishing tasks; measured control headroom
+ * exceeded six KiB in the linked flight and network profiles. */
+#define MAIN_THREAD_STACK_SIZE (11U * 1024U)
 /* GSE requires actual valve-state reports fresher than two seconds. */
 #define UMBILICAL_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
 #define LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS 10000U

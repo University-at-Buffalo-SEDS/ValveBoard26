@@ -14,7 +14,8 @@ extern TIM_HandleTypeDef htim3;
 
 TX_THREAD data_acq_thread;
 
-#define DATA_ACQ_THREAD_STACK_SIZE ((4U * 1024U) + 512U)
+/* Keep headroom for typed publication and fair admission under discovery load. */
+#define DATA_ACQ_THREAD_STACK_SIZE ((5U * 1024U) + 512U)
 #define DATA_ACQ_REPORT_PERIOD_TICKS ((ULONG)TX_TIMER_TICKS_PER_SECOND)
 #define DATA_ACQ_POWER_RETRY_TICKS (5U * TX_TIMER_TICKS_PER_SECOND)
 #define DATA_ACQ_STARTUP_DELAY_TICKS (1U * TX_TIMER_TICKS_PER_SECOND)
