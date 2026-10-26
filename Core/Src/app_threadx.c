@@ -56,6 +56,27 @@ static TX_BYTE_POOL sedsnet_emergency_byte_pool;
 static ULONG sedsnet_emergency_pool_memory[VALVE_SEDSNET_EMERGENCY_POOL_SIZE / sizeof(ULONG)];
 #endif
 
+volatile uint32_t g_thread_stack_error_count = 0U;
+volatile uint32_t g_thread_stack_error_thread __attribute__((used, externally_visible));
+volatile uint32_t g_thread_stack_error_start __attribute__((used, externally_visible));
+volatile uint32_t g_thread_stack_error_end __attribute__((used, externally_visible));
+volatile uint32_t g_thread_stack_error_highest __attribute__((used, externally_visible));
+
+static void thread_stack_error_handler(TX_THREAD *thread_ptr)
+{
+  g_thread_stack_error_count++;
+  g_thread_stack_error_thread = (uint32_t)(uintptr_t)thread_ptr;
+  if (thread_ptr != TX_NULL)
+  {
+    g_thread_stack_error_start = (uint32_t)(uintptr_t)thread_ptr->tx_thread_stack_start;
+    g_thread_stack_error_end = (uint32_t)(uintptr_t)thread_ptr->tx_thread_stack_end;
+    g_thread_stack_error_highest = (uint32_t)(uintptr_t)thread_ptr->tx_thread_stack_highest_ptr;
+  }
+  /* Match the other boards: preserve the first stack error and let the
+   * independent watchdog reset instead of continuing with corrupt state. */
+  Error_Handler();
+}
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -76,6 +97,7 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
   /* USER CODE END App_ThreadX_MEM_POOL */
 
   /* USER CODE BEGIN App_ThreadX_Init */
+  (void)tx_thread_stack_error_notify(thread_stack_error_handler);
 #ifdef TELEMETRY_ENABLED
   telemetry_set_byte_pool(byte_pool);
   if (tx_byte_pool_create(&sedsnet_emergency_byte_pool, "SEDSNet emergency",

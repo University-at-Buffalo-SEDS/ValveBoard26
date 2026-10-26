@@ -99,6 +99,15 @@ static void run(ULONG unused)
         else g_pressure_sd_published_samples+=4U;
     }
 }
+uint32_t pressure_sd_stack_remaining(void)
+{
+    const uintptr_t start = (uintptr_t)worker.tx_thread_stack_start;
+    const uintptr_t end = (uintptr_t)worker.tx_thread_stack_end;
+    const uintptr_t highest = (uintptr_t)worker.tx_thread_stack_highest_ptr;
+    if (start == 0U || highest < start || highest > end) return 0U;
+    return (uint32_t)(highest - start);
+}
+
 UINT pressure_sd_init(pressure_transducer_t *sensor)
 {
     if(!sensor || !sensor->hadc || !sensor->hadc->DMA_Handle || PRESSURE_TRANSDUCER_DMA_BUFFER_LEN!=16U)return TX_PTR_ERROR;
