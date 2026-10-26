@@ -46,7 +46,8 @@ class MemoryProbeContractTests(unittest.TestCase):
                 + main_thread
                 + safety_thread
                 + telemetry_thread
-                + flight_state_cache,
+                + flight_state_cache
+                + (root / "Core/Src/app_threadx.c").read_text(),
             )
 
 
