@@ -107,9 +107,7 @@ static volatile uint8_t g_abort_broadcast_sent = 0U;
 static volatile uint32_t g_last_can_rx_ms = 0U;
 
 static uint8_t g_discovery_schema_announced = 0U;
-static uint8_t g_discovery_schema_requested = 0U;
 static uint64_t g_discovery_schema_retry_ms = 0ULL;
-static uint64_t g_discovery_schema_request_retry_ms = 0ULL;
 static uint32_t g_discovery_schema_retry_delay_ms = 1000U;
 
 RouterState g_router = {.r = NULL, .created = 0U, .start_time = 0ULL};
@@ -685,17 +683,8 @@ SedsResult telemetry_poll_discovery(void)
       g_discovery_schema_retry_delay_ms = doubled > 30000U ? 30000U : doubled;
     }
   }
-  /* A refused local schema must not prevent learning remote endpoint owners.
-   * In particular, a late-joining sensor still needs the GS return route. */
-  if (!g_discovery_schema_requested && g_telemetry_discovery_seen &&
-      now >= g_discovery_schema_request_retry_ms) {
-    static const uint8_t empty = 0U;
-    g_discovery_schema_request_retry_ms = now + 1000ULL;
-    if (seds_router_log_bytes(g_router.r, SEDS_DT_DISCOVERY_SCHEMA_REQUEST,
-                              &empty, 0U) == SEDS_OK) {
-      g_discovery_schema_requested = 1U;
-    }
-  }
+  /* SDK polling recovers missing peer schemas after late join or restart. */
+
   (void)flight_state_cache_poll(g_router.r);
   const SedsResult result = seds_router_poll_discovery(g_router.r, &did_queue);
   if (result == SEDS_OK) {
@@ -966,9 +955,7 @@ SedsResult init_telemetry_router(void)
   (void)flight_state_cache_init(r);
   g_router.created = 1U;
   g_discovery_schema_announced = 0U;
-  g_discovery_schema_requested = 0U;
   g_discovery_schema_retry_ms = 0ULL;
-  g_discovery_schema_request_retry_ms = 0ULL;
   g_discovery_schema_retry_delay_ms = 1000U;
   return SEDS_OK;
 #endif
