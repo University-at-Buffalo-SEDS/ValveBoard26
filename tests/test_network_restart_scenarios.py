@@ -36,6 +36,11 @@ class NetworkRestartScenarioTests(unittest.TestCase):
                                                 ROOT, "stm32g4", "Release", ultra_soak=ultra_soak)
         return captured
 
+    def test_host_utc_matches_the_board_rtc_fixture_epoch(self):
+        for topology in self.capture(False):
+            primary = next(h for h in topology["host_nodes"] if h["name"] == "groundstation")
+            self.assertEqual(primary["env"].get("GS_SIM_NETWORK_EPOCH_MS"), "1767225600000")
+
     def test_short_gate_has_no_reboots(self):
         topologies = self.capture(False)
         self.assertTrue(topologies)
