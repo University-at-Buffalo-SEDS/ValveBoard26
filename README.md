@@ -8,6 +8,11 @@ latency bound when packets are lost or a route is unavailable.
 SEDSNet 4.0.31 uses final-destination ACKs to gate ordered streams across
 shared CAN and Gateway; retries preserve order without hop-level CAN sequencing.
 
+Battery voltage and current reports request unordered reliable delivery, so
+accepted power samples are retained for acknowledgement and retry during
+startup queue pressure. Their sampling rates and normal telemetry priority
+are unchanged; pressure samples remain best effort.
+
 ValveBoard26 targets the STM32G491 and controls fill-system valves while
 sampling the board's ADC inputs. It exchanges commands, acknowledgements, and
 telemetry over SEDSNet CAN-FD.
