@@ -70,9 +70,9 @@
       "channel_samples": [2048],
       "noise_lsb": 2
     },
-    {"type":"adc","name":"valve_voltage_monitor","model":"ltc2990","bus":"i2c2@0x4d",
+    {"type":"adc","name":"valve_voltage_monitor","model":"ltc2990","bus":"i2c2@0x4d","bits":15,"channels":4,
      "channel_samples":[9830,9336,9175,9175]},
-    {"type":"adc","name":"valve_current_monitor","model":"ltc2990","bus":"i2c2@0x4c",
+    {"type":"adc","name":"valve_current_monitor","model":"ltc2990","bus":"i2c2@0x4c","bits":15,"channels":4,
      "channel_samples":[25,0,25,0]}
   ],
   "execution": {
