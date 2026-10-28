@@ -44,6 +44,11 @@ volatile int32_t g_valve_discovery_result;
 volatile uint32_t g_valve_can_unclassified;
 volatile uint32_t g_valve_queue_service_errors;
 volatile int32_t g_valve_queue_last_error;
+#ifdef SEDS_FIRMWARE_SIM_TEST
+uint32_t g_sim_router_startup_memory[16]
+    __attribute__((used, externally_visible));
+volatile int32_t g_sim_router_startup_memory_words;
+#endif
 
 #ifndef TELEMETRY_ENABLED
 static void print_data_no_telem(void *data, size_t len)
@@ -906,6 +911,14 @@ SedsResult init_telemetry_router(void)
     g_can_side_id = -1;
     return SEDS_ERR;
   }
+
+#ifdef SEDS_FIRMWARE_SIM_TEST
+  /* Observe allocated storage, including any startup capacity reduction.
+   * This fixed-buffer query does not allocate or service queued packets. */
+  g_sim_router_startup_memory_words = seds_router_copy_memory_counters(
+      r, g_sim_router_startup_memory,
+      sizeof(g_sim_router_startup_memory) / sizeof(g_sim_router_startup_memory[0]));
+#endif
 
   if (seds_router_set_preferred_discovery_master(r, "GS", 2U) != SEDS_OK)
   {

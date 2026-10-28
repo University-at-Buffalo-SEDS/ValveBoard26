@@ -13,6 +13,13 @@ progress. IRQ activity alone cannot feed it. Debug globals expose the reset
 cause, missing task mask, feed count, and configuration failure. Reset flags
 are captured then cleared so future resets are classified independently.
 
+ThreadX stack errors record the offending worker and its stack bounds in
+`g_thread_stack_error_*`, then enter `Error_Handler` so the independent watchdog
+can reset the board. This preserves the first detected error instead of
+continuing with damaged task state. Simulator qualification requires zero stack
+errors and at least 1 KiB of measured pressure-SD worker stack margin, alongside
+the existing control, network, acquisition, and safety stack checks.
+
 Monitored workers: network, main control, and safety. With telemetry disabled, the network bit is excluded; a gateway without
 telemetry does not start the watchdog because it has no monitored worker.
 This does not monitor every peripheral independently (for example the DAQ SD

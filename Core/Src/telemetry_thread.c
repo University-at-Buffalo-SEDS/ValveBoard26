@@ -3,6 +3,7 @@
 #include "VB-Threads.h"
 #include "tx_api.h"
 #include "telemetry.h"
+#include "pressure_sd.h"
 #include "safety_diagnostics.h"
 #include "ota_stream.h"
 #include "can_bus.h"
@@ -22,6 +23,7 @@ volatile uint32_t g_sim_main_stack_remaining = 0U;
 volatile uint32_t g_sim_telemetry_stack_remaining = 0U;
 volatile uint32_t g_sim_data_acq_stack_remaining = 0U;
 volatile uint32_t g_sim_safety_stack_remaining = 0U;
+volatile uint32_t g_sim_pressure_sd_stack_remaining = 0U;
 
 static uint32_t stack_remaining(const TX_THREAD *thread)
 {
@@ -72,6 +74,7 @@ void telemetry_thread_entry(ULONG initial_input)
     g_sim_telemetry_stack_remaining = stack_remaining(&telemetry_thread);
     g_sim_data_acq_stack_remaining = stack_remaining(&data_acq_thread);
     g_sim_safety_stack_remaining = stack_remaining(&safety_thread);
+    g_sim_pressure_sd_stack_remaining = pressure_sd_stack_remaining();
 
     (void)can_bus_init(&hfdcan2);
     // Ensure router exists early (so we can send requests immediately)
@@ -90,6 +93,7 @@ void telemetry_thread_entry(ULONG initial_input)
         g_sim_telemetry_stack_remaining = stack_remaining(&telemetry_thread);
         g_sim_data_acq_stack_remaining = stack_remaining(&data_acq_thread);
         g_sim_safety_stack_remaining = stack_remaining(&safety_thread);
+    g_sim_pressure_sd_stack_remaining = pressure_sd_stack_remaining();
 
         tx_thread_sleep(1);
     }
