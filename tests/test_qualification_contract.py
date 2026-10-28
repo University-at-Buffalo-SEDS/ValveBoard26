@@ -88,11 +88,11 @@ class QualificationContractTests(unittest.TestCase):
         self.assertIn("TX_APP_MEM_POOL_SIZE                     40960", app_config)
         self.assertIn("TELEMETRY_THREAD_STACK_SIZE (13U * 1024U)", telemetry_thread)
         self.assertIn(
-            "MAIN_THREAD_STACK_SIZE (12U * 1024U)",
+            "MAIN_THREAD_STACK_SIZE (11U * 1024U)",
             (root / "Core/Src/main_thread.c").read_text(),
         )
         self.assertIn(
-            "DATA_ACQ_THREAD_STACK_SIZE ((4U * 1024U) + 512U)",
+            "DATA_ACQ_THREAD_STACK_SIZE ((5U * 1024U) + 512U)",
             (root / "Core/Src/data_acq_thread.c").read_text(),
         )
         self.assertIn(
@@ -107,6 +107,8 @@ class QualificationContractTests(unittest.TestCase):
         self.assertEqual(probes["pool_low_water"]["minimum"], 1024)
         self.assertEqual(probes["allocation_failures"]["maximum"], 0)
         self.assertEqual(probes["telemetry_stack_remaining"]["minimum"], 1024)
+        for name in ["main_stack_remaining", "data_acq_stack_remaining", "pressure_sd_stack_remaining"]:
+            self.assertGreaterEqual(probes[name]["minimum"], 1024)
 
     def test_both_valve_ack_states_have_a_bounded_immediate_retry(self):
         root = Path(build.__file__).resolve().parent
