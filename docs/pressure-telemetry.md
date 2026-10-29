@@ -20,3 +20,21 @@ arrival rate; this is a producer target, not an end-to-end delivery guarantee.
 overrides, invalid rates and overrun behavior. Build with `./build.py build
 --release`. Hardware/network validation should check GroundStation's received
 pressure timestamps under normal fill-system traffic.
+
+Pressure SD archive packets use a separate admission policy from live pressure
+telemetry. Before enqueueing a new archive packet, the board reserves reliable
+credits for live output-state reports. The reservation is the larger of four
+credits (the periodic four-state synchronization burst) and 25% of the actual
+configured end-to-end reliable window, capped at that window. The policy also
+counts queued originals so a stalled dispatch worker cannot overcommit credits.
+`PRESSURE_SD_CONTROL_RESERVE_MIN` and `PRESSURE_SD_CONTROL_RESERVE_PERCENT`
+configure this application policy; windows of four or fewer leave no archive
+capacity and require a larger window to share archive and status traffic.
+
+This prevents an unavailable DAQ archive destination from monopolizing the live
+status window. It changes neither capture cadence nor healthy packet cadence,
+and does not discard already accepted reliable packets. A refused archive batch
+retains its original bytes and clocks in the existing FIFO and retries admission
+for at most 200 ms. Existing admission retry, capture-drop and publish-drop
+counters continue to expose prolonged outages; archive retention is bounded by
+the FIFO and the configured SEDSnet retry horizon.

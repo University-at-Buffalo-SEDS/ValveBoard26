@@ -19,6 +19,9 @@ typedef int SedsResult;
 static uint32_t now,g_pressure_sd_admission_retries;
 static unsigned calls,sleeps,refusals;
 static int failure;
+static struct { void *r; } g_router = { (void *)1 };
+static int init_telemetry_router(void){g_router.r=(void *)1;return SEDS_OK;}
+static int pressure_sd_archive_admission(void *r){assert(r!=NULL);return SEDS_OK;}
 static uint8_t expected[44];
 uint32_t HAL_GetTick(void){return now;}
 void tx_thread_sleep(unsigned ticks){assert(ticks==1);++sleeps;now+=ticks;}

@@ -1,6 +1,7 @@
 #include "pressure_sd.h"
 #include "pressure_sd_wire.h"
 #include "pressure_sd_clock.h"
+#include "pressure_sd_admission.h"
 #include "board_uptime.h"
 #include "telemetry.h"
 
@@ -73,7 +74,10 @@ static SedsResult publish_batch(const uint8_t *wire)
 {
     const uint32_t started=HAL_GetTick();
     for(;;){
-        const SedsResult result=log_telemetry_asynchronous(
+        SedsResult result=SEDS_OK;
+        if (g_router.r == NULL) result=init_telemetry_router();
+        if (result==SEDS_OK) result=pressure_sd_archive_admission(g_router.r);
+        if (result==SEDS_OK) result=log_telemetry_asynchronous(
             SEDS_DT_VALVE_PRESSURE_SD_V1,wire,PRESSURE_SD_BYTES,1U);
         if(result!=SEDS_IO || (uint32_t)(HAL_GetTick()-started)>=200U)return result;
         ++g_pressure_sd_admission_retries;
