@@ -175,3 +175,6 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE BOARD_WATCHDOG_ENABLE=$
 
 # Retained board-local abort; deliberately outside the generic network stack.
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/Core/Src/board_abort_latch.c)
+
+# Low-rate internal die temperature; no separate telemetry stream.
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/Core/Src/board_temperature.c)

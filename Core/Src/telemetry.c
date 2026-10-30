@@ -1,3 +1,4 @@
+#include "ground_heartbeat_owner.h"
 #include "can_tx_queue.h"
 #include "board_health.h"
 // telemetry.c
@@ -350,6 +351,10 @@ SedsResult Heartbeat_handler(const SedsPacketView *pkt, void *user)
     return SEDS_BAD_ARG;
   }
 
+  /* Other board health must not refresh the ground-controller watchdog. */
+  if (!ground_heartbeat_owner_matches(pkt->sender, pkt->sender_len))
+    return SEDS_OK;
+
   g_heartbeat_handler_count++;
   if (thread_comm_note_groundstation_heartbeat(telemetry_now_ms()) != TX_SUCCESS)
   {
@@ -358,6 +363,17 @@ SedsResult Heartbeat_handler(const SedsPacketView *pkt, void *user)
 
   return SEDS_OK;
 }
+
+/* Shared HEART_BEAT routing can converge on another physical branch. The
+ * ground controller also addresses this board's unique endpoint; only an
+ * actual HEARTBEAT uses the existing strict logical-GS watchdog handler. */
+static SedsResult control_packet_handler(const SedsPacketView *packet, void *user)
+{
+  if (packet != NULL && packet->ty == SEDS_DT_HEARTBEAT)
+    return Heartbeat_handler(packet, user);
+  return Valve_Command_handler(packet, user);
+}
+
 
 static SedsResult telemetry_apply_local_unix_time_locked(SedsRouter *router)
 {
@@ -868,7 +884,7 @@ SedsResult init_telemetry_router(void)
   static const SedsLocalEndpointDesc locals[] = {
       {
           .endpoint = SEDS_EP_VALVE_BOARD,
-          .packet_handler = Valve_Command_handler,
+          .packet_handler = control_packet_handler,
           .packed_handler = NULL,
           .user = NULL,
       },
