@@ -80,9 +80,12 @@ UINT tx_semaphore_put(TX_SEMAPHORE*s){s->count++;return 0;}
 SedsResult seds_router_resolve_hostname_address(SedsRouter*r,const char*n,size_t size,uint32_t*out){(void)r;(void)n;(void)size;*out=1;return SEDS_OK;}
 SedsResult seds_router_get_network_time_ms(SedsRouter*r,uint64_t*out){(void)r;*out=now;return SEDS_OK;}
 SedsResult seds_router_log_queue_typed(SedsRouter*r,SedsDataType ty,const void*data,size_t count,size_t size,SedsElemKind kind){(void)r;assert(ty==201&&count==40&&size==1&&kind==SEDS_EK_UNSIGNED);memcpy(response,data,40);return SEDS_OK;}
-void seds_router_disable_managed_variable(SedsRouter*r,SedsDataType ty){(void)r;assert(!state_mutex->locked&&ty==SEDS_DT_FLIGHT_STATE);update_callback=NULL;}
-SedsResult seds_router_enable_network_variable(SedsRouter*r,SedsDataType ty,bool read,bool write){(void)r;assert(!state_mutex->locked&&ty==SEDS_DT_FLIGHT_STATE&&read&&!write);return SEDS_OK;}
-SedsResult seds_router_on_network_variable_update(SedsRouter*r,SedsDataType ty,SedsResult(*cb)(const SedsPacketView*,void*),void*user){(void)r;assert(ty==SEDS_DT_FLIGHT_STATE&&!user);update_callback=cb;return SEDS_OK;}
+void seds_router_disable_managed_variable(SedsRouter*r,SedsDataType ty){(void)r;(void)ty;assert(!"whole-service disable forbidden during selective retirement");}
+SedsResult seds_router_invalidate_network_variable_cache(SedsRouter*r,SedsDataType ty,bool*out_invalidated){assert(out_invalidated==NULL);(void)r;assert(!state_mutex->locked&&ty==SEDS_DT_FLIGHT_STATE);return SEDS_OK;}
+
+static unsigned selective_enable_calls,selective_callback_calls;
+SedsResult seds_router_enable_network_variable(SedsRouter*r,SedsDataType ty,bool read,bool write){assert(++selective_enable_calls==1U);(void)r;assert(!state_mutex->locked&&ty==SEDS_DT_FLIGHT_STATE&&read&&!write);return SEDS_OK;}
+SedsResult seds_router_on_network_variable_update(SedsRouter*r,SedsDataType ty,SedsResult(*cb)(const SedsPacketView*,void*),void*user){assert(++selective_callback_calls==1U);(void)r;assert(ty==SEDS_DT_FLIGHT_STATE&&!user);update_callback=cb;return SEDS_OK;}
 SedsResult seds_router_request_managed_variable(SedsRouter*r,SedsDataType ty){(void)r;(void)ty;return SEDS_OK;}
 SedsResult flight_state_cache_apply_network_update(const SedsPacketView*p){return thread_comm_apply_managed_flight_state(p->payload[0])==TX_SUCCESS?SEDS_OK:SEDS_HANDLER_ERROR;}
 static uint8_t read_outputs(uint32_t*out){assert(state_mutex->locked);*out=SAFE_MASK;return BOARD_RECOVERY_OUTPUTS_VALID|BOARD_RECOVERY_SAFE_OUTPUTS;}

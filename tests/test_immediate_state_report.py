@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 import unittest
 
+from checked_router_fixture import checked_hooks
+from router_lifecycle_fixture import function as actual_function
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
@@ -47,16 +49,14 @@ int main(void) {
 
     def test_reports_open_and_closed_before_return_without_protocol_ack(self):
         source = (ROOT / "Core/Src/telemetry.c").read_text()
-        publisher = re.search(
-            r"SedsResult telemetry_publish_umbilical_status\(.*?\n}",
-            source, re.S).group()
+        publisher='\n'.join(actual_function(source,n)for n in ('telemetry_publish_umbilical_status_locked','telemetry_publish_umbilical_status'))
         code = r"""
 #include <assert.h>
 #include <stdint.h>
 #include <stddef.h>
 #define TELEMETRY_ENABLED 1
 typedef int SedsResult;
-enum { SEDS_OK=0, SEDS_ERR=-1, SEDS_DT_UMBILICAL_STATUS=7, SEDS_EK_UNSIGNED=0 };
+enum { SEDS_OK=0, SEDS_ERR=-1, SEDS_BAD_ARG=-2, SEDS_DT_UMBILICAL_STATUS=7, SEDS_EK_UNSIGNED=0 };
 uint32_t g_umbilical_status_attempts, g_umbilical_status_last_payload;
 uint32_t g_umbilical_status_enqueue_failures;
 int32_t g_umbilical_status_last_result;
@@ -81,7 +81,7 @@ static int log_telemetry_synchronous(int type, const void *data,
     return seds_router_log_typed(g_router.r,type,data,count,size,SEDS_EK_UNSIGNED);
 }
 /* Deliberately no async queue or protocol ACK mock: neither may be required. */
-""" + publisher + r"""
+""" +'\nstatic unsigned checked_depth;\nstatic void telemetry_lock(void){assert(!checked_depth);++checked_depth;}\nstatic void telemetry_unlock(void){assert(checked_depth==1);--checked_depth;}\n'+checked_hooks(ROOT)+"\n"+ publisher + r"""
 int main(void) {
     for (int id=0; id<7; ++id) {
         calls=0;

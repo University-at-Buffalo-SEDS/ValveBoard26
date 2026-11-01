@@ -4,6 +4,8 @@ import subprocess
 import tempfile
 import unittest
 
+from checked_router_fixture import checked_hooks
+from router_lifecycle_fixture import function as actual_function
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 class StatusPublishDiagnostics(unittest.TestCase):
@@ -38,7 +40,7 @@ int main(void) {
 
     def test_production_publish_acceptance_and_retry_failure(self):
         source = (ROOT / "Core/Src/telemetry.c").read_text()
-        function = re.search(r"SedsResult telemetry_publish_umbilical_status\([^)]*\)\s*\{.*?\n\}", source, re.S).group()
+        function='\n'.join(actual_function(source,n)for n in ('telemetry_publish_umbilical_status_locked','telemetry_publish_umbilical_status'))
         declaration = re.search(r"typedef struct \{.*?\} ValveStatusDiagnostic;", source, re.S).group()
         code = r"""
 #include <assert.h>
@@ -46,6 +48,7 @@ int main(void) {
 #define TELEMETRY_ENABLED
 #define SEDS_OK 0
 #define SEDS_ERR -1
+#define SEDS_BAD_ARG -2
 #define SEDS_DT_UMBILICAL_STATUS 42
 #define SEDS_EK_UNSIGNED 0
 typedef int SedsResult;
@@ -62,8 +65,9 @@ static int seds_router_log_typed(void *r, int ty, const uint8_t *p,
 }
 """ + declaration + """
 volatile ValveStatusDiagnostic g_valve_status_publish[7];
-""" + function + r"""
+""" +'\nstatic unsigned checked_depth;\nstatic void telemetry_lock(void){assert(!checked_depth);++checked_depth;}\nstatic void telemetry_unlock(void){assert(checked_depth==1);--checked_depth;}\n'+checked_hooks(ROOT)+"\n"+ function + r"""
 int main(void) {
+  fixture_get_failure=1;assert(telemetry_publish_umbilical_status(2,1)==SEDS_BAD_ARG&&!sends&&!g_valve_status_publish[2].calls);fixture_get_failure=0;
   assert(telemetry_publish_umbilical_status(2,1)==0);
   assert(g_valve_status_publish[2].accepted==1);
   assert(g_valve_status_publish[2].last_state==1);

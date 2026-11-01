@@ -1,3 +1,8 @@
+
+#ifdef TELEMETRY_ENABLED
+extern int telemetry_router_enter(void);
+extern int telemetry_router_leave(void);
+#endif
 #include "ground_heartbeat_owner.h"
 #include "can_tx_queue.h"
 #include "board_health.h"
@@ -117,6 +122,10 @@ static uint8_t g_discovery_schema_announced = 0U;
 static uint64_t g_discovery_schema_retry_ms = 0ULL;
 static uint32_t g_discovery_schema_retry_delay_ms = 1000U;
 
+#define TELEMETRY_ROUTER_RETRY_MS 500U
+#ifdef TELEMETRY_ENABLED
+static uint32_t g_router_retry_after_ms;
+#endif
 RouterState g_router = {.r = NULL, .created = 0U, .start_time = 0ULL};
 
 /* Exported simulator/HIL health signals. A linked-bay test requires both a
@@ -481,7 +490,7 @@ uint8_t telemetry_link_recently_active(void)
   return ((uint32_t)(now_ticks - last_rx_ticks) < timeout_ticks) ? 1U : 0U;
 }
 
-uint64_t telemetry_unix_ms(void)
+static uint64_t telemetry_unix_ms_locked(void)
 {
 #ifndef TELEMETRY_ENABLED
   return g_local_unix_valid ? g_local_unix_ms : 0ULL;
@@ -502,11 +511,24 @@ uint64_t telemetry_unix_ms(void)
 #endif
 }
 
+uint64_t telemetry_unix_ms(void)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return 0;
+#endif
+  uint64_t result = telemetry_unix_ms_locked();
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave()) return 0;
+#endif
+  return result;
+}
+
+
 uint64_t telemetry_unix_s(void) { return telemetry_unix_ms() / 1000ULL; }
 
 uint8_t telemetry_unix_is_valid(void) { return telemetry_unix_ms() != 0ULL ? 1U : 0U; }
 
-void telemetry_set_unix_time_ms(uint64_t unix_ms)
+static void telemetry_set_unix_time_ms_locked(uint64_t unix_ms)
 {
   g_local_unix_ms = unix_ms;
   g_local_unix_valid = (unix_ms != 0ULL) ? 1U : 0U;
@@ -518,6 +540,18 @@ void telemetry_set_unix_time_ms(uint64_t unix_ms)
   }
 #endif
 }
+
+void telemetry_set_unix_time_ms(uint64_t unix_ms)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return;
+#endif
+  telemetry_set_unix_time_ms_locked(unix_ms);
+#ifdef TELEMETRY_ENABLED
+  (void)telemetry_router_leave();
+#endif
+}
+
 
 static UNUSED_FUNCTION uint64_t node_now_since_ms(void *user)
 {
@@ -597,7 +631,7 @@ static UNUSED_FUNCTION void telemetry_can_rx(const uint8_t *data, size_t len, vo
   rx_asynchronous(data, len);
 }
 
-void rx_asynchronous(const uint8_t *bytes, size_t len)
+static void rx_asynchronous_locked(const uint8_t *bytes, size_t len)
 {
 #ifndef TELEMETRY_ENABLED
   (void)bytes;
@@ -631,7 +665,19 @@ void rx_asynchronous(const uint8_t *bytes, size_t len)
 #endif
 }
 
-static UNUSED_FUNCTION void rx_synchronous(const uint8_t *bytes, size_t len)
+void rx_asynchronous(const uint8_t *bytes, size_t len)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return;
+#endif
+  rx_asynchronous_locked(bytes, len);
+#ifdef TELEMETRY_ENABLED
+  (void)telemetry_router_leave();
+#endif
+}
+
+
+static UNUSED_FUNCTION void rx_synchronous_locked(const uint8_t *bytes, size_t len)
 {
 #ifndef TELEMETRY_ENABLED
   (void)bytes;
@@ -660,6 +706,18 @@ static UNUSED_FUNCTION void rx_synchronous(const uint8_t *bytes, size_t len)
 #endif
 }
 
+static UNUSED_FUNCTION void rx_synchronous(const uint8_t *bytes, size_t len)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return;
+#endif
+  rx_synchronous_locked(bytes, len);
+#ifdef TELEMETRY_ENABLED
+  (void)telemetry_router_leave();
+#endif
+}
+
+
 static void telemetry_update_network_health(SedsRouter *router)
 {
   uint64_t network_time_ms = 0ULL;
@@ -674,7 +732,7 @@ static void telemetry_update_network_health(SedsRouter *router)
   }
 }
 
-SedsResult telemetry_poll_timesync(void)
+static SedsResult telemetry_poll_timesync_locked(void)
 {
 #ifndef TELEMETRY_ENABLED
   return SEDS_OK;
@@ -690,7 +748,20 @@ SedsResult telemetry_poll_timesync(void)
 #endif
 }
 
-SedsResult telemetry_announce_discovery(void)
+SedsResult telemetry_poll_timesync(void)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = telemetry_poll_timesync_locked();
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
+
+static SedsResult telemetry_announce_discovery_locked(void)
 {
 #ifndef TELEMETRY_ENABLED
   return SEDS_OK;
@@ -704,7 +775,20 @@ SedsResult telemetry_announce_discovery(void)
 #endif
 }
 
-SedsResult telemetry_poll_discovery(void)
+SedsResult telemetry_announce_discovery(void)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = telemetry_announce_discovery_locked();
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
+
+static SedsResult telemetry_poll_discovery_locked(void)
 {
 #ifdef TELEMETRY_ENABLED
   if (g_router.r) board_health_poll(g_router.r);
@@ -747,7 +831,20 @@ SedsResult telemetry_poll_discovery(void)
 #endif
 }
 
-SedsResult telemetry_publish_umbilical_status(uint8_t cmd_id, uint8_t on)
+SedsResult telemetry_poll_discovery(void)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = telemetry_poll_discovery_locked();
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
+
+static SedsResult telemetry_publish_umbilical_status_locked(uint8_t cmd_id, uint8_t on)
 {
   const uint8_t payload[2] = {cmd_id, (uint8_t)((on != 0U) ? 1U : 0U)};
 
@@ -799,7 +896,20 @@ SedsResult telemetry_publish_umbilical_status(uint8_t cmd_id, uint8_t on)
 #endif
 }
 
-SedsResult telemetry_send_actuator_command(uint8_t cmd_id)
+SedsResult telemetry_publish_umbilical_status(uint8_t cmd_id, uint8_t on)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = telemetry_publish_umbilical_status_locked(cmd_id, on);
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
+
+static SedsResult telemetry_send_actuator_command_locked(uint8_t cmd_id)
 {
 #ifndef TELEMETRY_ENABLED
   (void)cmd_id;
@@ -815,7 +925,20 @@ SedsResult telemetry_send_actuator_command(uint8_t cmd_id)
 #endif
 }
 
-SedsResult telemetry_send_actuator_command_at(uint8_t cmd_id, uint64_t timestamp_ms)
+SedsResult telemetry_send_actuator_command(uint8_t cmd_id)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = telemetry_send_actuator_command_locked(cmd_id);
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
+
+static SedsResult telemetry_send_actuator_command_at_locked(uint8_t cmd_id, uint64_t timestamp_ms)
 {
 #ifndef TELEMETRY_ENABLED
   (void)cmd_id;
@@ -832,6 +955,19 @@ SedsResult telemetry_send_actuator_command_at(uint8_t cmd_id, uint64_t timestamp
 #endif
 }
 
+SedsResult telemetry_send_actuator_command_at(uint8_t cmd_id, uint64_t timestamp_ms)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = telemetry_send_actuator_command_at_locked(cmd_id, timestamp_ms);
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
+
 SedsResult telemetry_broadcast_abort(const char *reason)
 {
   static const char default_reason[] = "Valve board abort";
@@ -846,7 +982,7 @@ SedsResult telemetry_broadcast_abort(const char *reason)
                                            (reason != NULL) ? reason : default_reason);
 }
 
-SedsResult telemetry_publish_flight_state_at(uint8_t flight_state, uint64_t timestamp_ms)
+static SedsResult telemetry_publish_flight_state_at_locked(uint8_t flight_state, uint64_t timestamp_ms)
 {
 #ifndef TELEMETRY_ENABLED
   (void)flight_state;
@@ -862,6 +998,19 @@ SedsResult telemetry_publish_flight_state_at(uint8_t flight_state, uint64_t time
                                   sizeof(flight_state), SEDS_EK_UNSIGNED, &timestamp_ms, 1);
 #endif
 }
+
+SedsResult telemetry_publish_flight_state_at(uint8_t flight_state, uint64_t timestamp_ms)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = telemetry_publish_flight_state_at_locked(flight_state, timestamp_ms);
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
 
 SedsResult telemetry_publish_flight_state(uint8_t flight_state)
 {
@@ -885,7 +1034,7 @@ static __attribute__((unused)) bool telemetry_memory_admission_probe(
 }
 #endif
 
-SedsResult init_telemetry_router(void)
+static SedsResult init_telemetry_router_locked(void)
 {
 #ifndef TELEMETRY_ENABLED
   return SEDS_OK;
@@ -1017,16 +1166,51 @@ SedsResult init_telemetry_router(void)
   /* Discovery begins from the normal poll loop after CAN startup. */
 
   g_telemetry_init_error_code = TELEMETRY_INIT_OK;
-  g_router.r = r;
-  board_recovery_transport_set_router(r);
-  (void)flight_state_cache_init(r);
-  g_router.created = 1U;
   g_discovery_schema_announced = 0U;
   g_discovery_schema_retry_ms = 0ULL;
   g_discovery_schema_retry_delay_ms = 1000U;
+  result = flight_state_cache_init(r);
+  if (result != SEDS_OK) {
+    g_telemetry_init_error_code = TELEMETRY_INIT_CACHE_FAILED;
+    seds_router_free(r);
+    return result;
+  }
+  /* Publish only a complete router. RX and lazy producers share its mutex. */
+  board_recovery_transport_set_router(r);
+  g_router.r = r;
+  g_router.created = 1U;
   return SEDS_OK;
 #endif
 }
+SedsResult init_telemetry_router(void)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result;
+#ifdef TELEMETRY_ENABLED
+  const uint32_t now_ms = (uint32_t)tx_raw_now_ms_locked();
+  if (g_router.created && g_router.r) {
+    result = SEDS_OK;
+  } else if (g_router_retry_after_ms != 0U &&
+             (int32_t)(now_ms - g_router_retry_after_ms) < 0) {
+    result = SEDS_IO;
+  } else {
+    result = init_telemetry_router_locked();
+    if (result == SEDS_OK) {
+      g_router_retry_after_ms = 0U;
+    } else {
+      g_router_retry_after_ms = now_ms + TELEMETRY_ROUTER_RETRY_MS;
+      if (g_router_retry_after_ms == 0U) g_router_retry_after_ms = 1U;
+    }
+  }
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#else
+  result = init_telemetry_router_locked();
+#endif
+  return result;
+}
+
 
 static inline SedsElemKind guess_kind_from_elem_size(size_t elem_size)
 {
@@ -1037,7 +1221,7 @@ static inline SedsElemKind guess_kind_from_elem_size(size_t elem_size)
   return SEDS_EK_UNSIGNED;
 }
 
-SedsResult log_telemetry_synchronous(SedsDataType data_type, const void *data,
+static SedsResult log_telemetry_synchronous_locked(SedsDataType data_type, const void *data,
                                      size_t element_count, size_t element_size)
 {
 #ifdef TELEMETRY_ENABLED
@@ -1065,7 +1249,21 @@ SedsResult log_telemetry_synchronous(SedsDataType data_type, const void *data,
 #endif
 }
 
-SedsResult log_telemetry_asynchronous(SedsDataType data_type, const void *data,
+SedsResult log_telemetry_synchronous(SedsDataType data_type, const void *data,
+                                     size_t element_count, size_t element_size)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = log_telemetry_synchronous_locked(data_type, data, element_count, element_size);
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
+
+static SedsResult log_telemetry_asynchronous_locked(SedsDataType data_type, const void *data,
                                       size_t element_count, size_t element_size)
 {
 #ifdef TELEMETRY_ENABLED
@@ -1088,7 +1286,21 @@ SedsResult log_telemetry_asynchronous(SedsDataType data_type, const void *data,
 #endif
 }
 
-SedsResult log_telemetry_string_asynchronous(SedsDataType data_type, const char *str)
+SedsResult log_telemetry_asynchronous(SedsDataType data_type, const void *data,
+                                      size_t element_count, size_t element_size)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = log_telemetry_asynchronous_locked(data_type, data, element_count, element_size);
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
+
+static SedsResult log_telemetry_string_asynchronous_locked(SedsDataType data_type, const char *str)
 {
 #ifdef TELEMETRY_ENABLED
   if (!str)
@@ -1114,7 +1326,20 @@ SedsResult log_telemetry_string_asynchronous(SedsDataType data_type, const char 
 #endif
 }
 
-SedsResult dispatch_tx_queue(void)
+SedsResult log_telemetry_string_asynchronous(SedsDataType data_type, const char *str)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = log_telemetry_string_asynchronous_locked(data_type, str);
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
+
+static SedsResult dispatch_tx_queue_locked(void)
 {
 #ifndef TELEMETRY_ENABLED
   return SEDS_OK;
@@ -1128,7 +1353,20 @@ SedsResult dispatch_tx_queue(void)
 #endif
 }
 
-SedsResult process_rx_queue(void)
+SedsResult dispatch_tx_queue(void)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = dispatch_tx_queue_locked();
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
+
+static SedsResult process_rx_queue_locked(void)
 {
 #ifndef TELEMETRY_ENABLED
   return SEDS_OK;
@@ -1142,7 +1380,20 @@ SedsResult process_rx_queue(void)
 #endif
 }
 
-SedsResult dispatch_tx_queue_timeout(uint32_t timeout_ms)
+SedsResult process_rx_queue(void)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = process_rx_queue_locked();
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
+
+static SedsResult dispatch_tx_queue_timeout_locked(uint32_t timeout_ms)
 {
 #ifndef TELEMETRY_ENABLED
   (void)timeout_ms;
@@ -1157,7 +1408,20 @@ SedsResult dispatch_tx_queue_timeout(uint32_t timeout_ms)
 #endif
 }
 
-SedsResult process_rx_queue_timeout(uint32_t timeout_ms)
+SedsResult dispatch_tx_queue_timeout(uint32_t timeout_ms)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = dispatch_tx_queue_timeout_locked(timeout_ms);
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
+
+static SedsResult process_rx_queue_timeout_locked(uint32_t timeout_ms)
 {
 #ifndef TELEMETRY_ENABLED
   (void)timeout_ms;
@@ -1172,7 +1436,20 @@ SedsResult process_rx_queue_timeout(uint32_t timeout_ms)
 #endif
 }
 
-SedsResult process_all_queues_timeout(uint32_t timeout_ms)
+SedsResult process_rx_queue_timeout(uint32_t timeout_ms)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = process_rx_queue_timeout_locked(timeout_ms);
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
+
+static SedsResult process_all_queues_timeout_locked(uint32_t timeout_ms)
 {
 #ifndef TELEMETRY_ENABLED
   (void)timeout_ms;
@@ -1193,7 +1470,20 @@ SedsResult process_all_queues_timeout(uint32_t timeout_ms)
 #endif
 }
 
-static UNUSED_FUNCTION SedsResult log_error_impl(uint8_t queue, const char *fmt, va_list args)
+SedsResult process_all_queues_timeout(uint32_t timeout_ms)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = process_all_queues_timeout_locked(timeout_ms);
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
+
+static UNUSED_FUNCTION SedsResult log_error_impl_locked(uint8_t queue, const char *fmt, va_list args)
 {
   va_list args_copy;
   int len = 0;
@@ -1235,6 +1525,19 @@ static UNUSED_FUNCTION SedsResult log_error_impl(uint8_t queue, const char *fmt,
   return seds_router_log_string_ex(g_router.r, SEDS_DT_TELEMETRY_ERROR, buf, (size_t)written,
                                    NULL, queue);
 }
+
+static UNUSED_FUNCTION SedsResult log_error_impl(uint8_t queue, const char *fmt, va_list args)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return SEDS_BAD_ARG;
+#endif
+  SedsResult result = log_error_impl_locked(queue, fmt, args);
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_leave() && result == SEDS_OK) return SEDS_ERR;
+#endif
+  return result;
+}
+
 
 SedsResult log_error_asynchronous(const char *fmt, ...)
 {
