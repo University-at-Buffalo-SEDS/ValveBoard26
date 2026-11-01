@@ -77,7 +77,14 @@ UINT tx_mutex_put(TX_MUTEX*m){assert(m->locked);m->locked=0;return 0;}
 UINT tx_semaphore_create(TX_SEMAPHORE*s,const char*n,ULONG count){(void)n;s->count=count;return 0;}
 UINT tx_semaphore_get(TX_SEMAPHORE*s,ULONG w){(void)w;if(!s->count)return TX_NO_INSTANCE;s->count--;return 0;}
 UINT tx_semaphore_put(TX_SEMAPHORE*s){s->count++;return 0;}
-SedsResult seds_router_resolve_hostname_address(SedsRouter*r,const char*n,size_t size,uint32_t*out){(void)r;(void)n;(void)size;*out=1;return SEDS_OK;}
+bool seds_router_sender_matches_hostname(const SedsRouter*r,const char*s,size_t n,const char*owner,size_t owner_n){
+ assert(r&&owner_n==2&&!memcmp(owner,"GS",2));if(!s)return false;
+ /* Named/assigned SDK boundary only; generic compact identity is exercised
+  * against the actual SDK in the identity regressions. */
+ if(n==owner_n&&!memcmp(s,owner,n))return true;
+ char alias[32];int length=snprintf(alias,sizeof alias,"@addr:%u",(unsigned)1U);
+ return length>0&&(size_t)length==n&&!memcmp(s,alias,n);}
+
 SedsResult seds_router_get_network_time_ms(SedsRouter*r,uint64_t*out){(void)r;*out=now;return SEDS_OK;}
 SedsResult seds_router_log_queue_typed(SedsRouter*r,SedsDataType ty,const void*data,size_t count,size_t size,SedsElemKind kind){(void)r;assert(ty==201&&count==40&&size==1&&kind==SEDS_EK_UNSIGNED);memcpy(response,data,40);return SEDS_OK;}
 void seds_router_disable_managed_variable(SedsRouter*r,SedsDataType ty){(void)r;(void)ty;assert(!"whole-service disable forbidden during selective retirement");}

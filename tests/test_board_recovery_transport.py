@@ -9,6 +9,7 @@ class RecoveryTransportTests(unittest.TestCase):
    w=Path(directory)
    source=r"""
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 #include "board_recovery_transport.h"
 #include "board_recovery.h"
@@ -25,7 +26,14 @@ void board_recovery_cancel_prepare(uint8_t desired,uint32_t epoch){assert(desire
 int32_t flight_state_cache_prepare_recovery(uint8_t desired){assert(desired==0&&floors>0);prepared=1;return cache_ok?0:-9;}
 int32_t board_recovery_snapshot(BoardRecoverySnapshot*out){*out=(BoardRecoverySnapshot){.actual_state=0,.flags=31,.abort_epoch=10,.actual_outputs_mask=6};return 0;}
 int32_t board_recovery_apply_safe(uint8_t desired,uint32_t epoch,BoardRecoverySnapshot*out){assert(desired==0&&epoch==10&&floors>0&&prepared);applies++;if(complete){out->abort_epoch=11;out->flags=30;return 0;}return -14;}
-SedsResult seds_router_resolve_hostname_address(SedsRouter*r,const char*n,size_t length,uint32_t*out){(void)r;assert(length==2&&!memcmp(n,"GS",2));*out=primary;return SEDS_OK;}
+bool seds_router_sender_matches_hostname(const SedsRouter*r,const char*s,size_t n,const char*owner,size_t owner_n){
+ assert(r&&owner_n==2&&!memcmp(owner,"GS",2));if(!s)return false;
+ /* Named/assigned SDK boundary only; generic compact identity is exercised
+  * against the actual SDK in the identity regressions. */
+ if(n==owner_n&&!memcmp(s,owner,n))return true;
+ char alias[32];int length=snprintf(alias,sizeof alias,"@addr:%u",(unsigned)primary);
+ return length>0&&(size_t)length==n&&!memcmp(s,alias,n);}
+
 SedsResult seds_router_get_network_time_ms(SedsRouter*r,uint64_t*out){(void)r;*out=now;return SEDS_OK;}
 SedsResult seds_router_log_queue_typed(SedsRouter*r,SedsDataType type,const void*data,size_t count,size_t size,SedsElemKind kind){(void)r;assert(type==201&&count==40&&size==1&&kind==SEDS_EK_UNSIGNED);memcpy(response,data,40);statuses++;return SEDS_OK;}
 int main(void){
