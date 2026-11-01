@@ -178,3 +178,11 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/Core/Src/board_
 
 # Low-rate internal die temperature; no separate telemetry stream.
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/Core/Src/board_temperature.c)
+
+# Board-owned explicit manual recovery: strict singleton target, primary-source
+# validation and verified persistent stale-command floor; SDK remains generic.
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    ${CMAKE_SOURCE_DIR}/Core/Src/board_recovery_wire.c
+    ${CMAKE_SOURCE_DIR}/Core/Src/board_recovery_boot.c
+    ${CMAKE_SOURCE_DIR}/Core/Src/board_recovery_floor.c
+    "$<$<BOOL:${ENABLE_TELEMETRY}>:${CMAKE_SOURCE_DIR}/Core/Src/board_recovery_transport.c>")

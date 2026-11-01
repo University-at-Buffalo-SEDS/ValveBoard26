@@ -19,7 +19,7 @@ class AbortLatchTests(unittest.TestCase):
 #define __DSB() ((void)0)
 static struct {uint32_t CSR, APB1ENR1;} rcc;
 static struct {uint32_t CR1;} pwr;
-static struct {uint32_t BKP30R, BKP31R;} tamp;
+static struct {uint32_t BKP28R, BKP29R, BKP30R, BKP31R;} tamp;
 #define RCC (&rcc)
 #define PWR (&pwr)
 #define TAMP (&tamp)
@@ -48,6 +48,16 @@ int main(void) {
     assert(!board_abort_latch_is_set());
     rcc.CSR=1U << 28; board_abort_latch_init();
     assert(!board_abort_latch_is_set()); /* Normal reboot stays clear. */
+    board_launch_latch_set(); assert(board_launch_latch_is_set());
+    launch_latched=0;backup_ready=0;board_abort_latch_init();
+    assert(board_launch_latch_is_set()); /* watchdog/software reset */
+    tamp.BKP29R=0;launch_latched=0;board_abort_latch_init();
+    assert(board_launch_latch_is_set()); /* torn launch marker */
+    backup_ready=0;assert(!board_abort_latch_clear_for_recovery());
+    assert(board_launch_latch_is_set());
+    backup_ready=1;assert(board_abort_latch_clear_for_recovery());
+    assert(!board_launch_latch_is_set()&&!board_abort_latch_is_set());
+    assert(!tamp.BKP28R&&!tamp.BKP29R&&!tamp.BKP30R&&!tamp.BKP31R);
     return 0;
 }
 """
@@ -68,7 +78,8 @@ int main(void) {
 static unsigned aborted=1, starts, takes;
 static unsigned thread_comm_get_abort(void){return aborted;}
 static unsigned thread_comm_take_launch_sequence_request(uint64_t *stamp){takes++;*stamp=123;return 1;}
-static void thread_comm_set_flight_state(unsigned state){(void)state;}
+#define TX_SUCCESS 0U
+static unsigned thread_comm_set_flight_state(unsigned state){(void)state;return TX_SUCCESS;}
 static void thread_comm_set_launch_command_timestamp_ms(uint64_t stamp){(void)stamp;}
 static void start_launch_sequence(void){starts++;}
 """
@@ -85,11 +96,12 @@ int main(void){
             subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror',str(src),'-o',str(exe)],check=True)
             subprocess.run([str(exe)],check=True)
 
-    def test_init_precedes_reset_flag_clear_and_no_clear_api_exists(self):
+    def test_init_precedes_watchdog_and_only_explicit_recovery_clear_exists(self):
         source=(ROOT/'Core/Src/main.c').read_text()
         self.assertLess(source.index('board_abort_latch_init();'),source.index('board_watchdog_start();'))
         header=(ROOT/'Core/Inc/board_abort_latch.h').read_text()
-        self.assertNotIn('void board_abort_latch_clear',header)
+        self.assertNotIn('void board_abort_latch_clear(',header)
+        self.assertIn('uint8_t board_abort_latch_clear_for_recovery(void)',header)
 
 if __name__ == '__main__':
     unittest.main()

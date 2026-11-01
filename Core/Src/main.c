@@ -33,6 +33,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "flight_state_cache.h"
+#include "board_recovery_boot.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -156,6 +157,8 @@ int main(void)
   /* USER CODE END 2 */
 
   board_abort_latch_init();
+  /* Establish recovery identity before cached state restore and control tasks. */
+  (void)board_recovery_boot_generation();
   flight_state_cache_restore();
   board_watchdog_start();
   MX_ThreadX_Init();

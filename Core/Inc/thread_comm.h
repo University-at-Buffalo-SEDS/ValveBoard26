@@ -89,6 +89,8 @@ UINT thread_comm_receive(thread_comm_msg_t *msg, ULONG wait_option);
  * @retval ThreadX error code Mutex access failed.
  */
 UINT thread_comm_set_abort(uint8_t abort_requested);
+/* One newly delivered operator Stop; advances recovery epoch even if latched. */
+UINT thread_comm_request_manual_abort(void);
 
 /**
  * @brief Read the shared abort flag.
@@ -115,8 +117,17 @@ UINT thread_comm_set_shared_value(int32_t value);
 int32_t thread_comm_get_shared_value(void);
 
 UINT thread_comm_set_flight_state(uint8_t flight_state);
+/* Managed state is not manual Abort provenance; admission is atomic with launch. */
+UINT thread_comm_apply_managed_flight_state(uint8_t flight_state);
 uint8_t thread_comm_get_flight_state(void);
 uint8_t thread_comm_abort_allowed(void);
+uint8_t thread_comm_request_automatic_abort(void);
+/* Exact typed automatic ordinary-valve commands only; no launch/abort/pyro. */
+#define THREAD_COMM_AUTOMATIC_TAG 0x80U
+UINT thread_comm_admit_automatic(thread_comm_msg_t msg);
+/* Callback must contain only bounded GPIO/timer/RAM operations, no SDK/IO wait.
+ * Launch and auto-application serialize through this same state mutex. */
+uint8_t thread_comm_apply_automatic(thread_comm_msg_t msg, void (*apply)(uint8_t));
 UINT thread_comm_set_launch_command_timestamp_ms(uint64_t timestamp_ms);
 uint64_t thread_comm_get_launch_command_timestamp_ms(void);
 UINT thread_comm_request_launch_sequence(uint64_t timestamp_ms);

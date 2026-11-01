@@ -37,18 +37,16 @@ static uint64_t safety_now_ms(void)
 static void safety_request_abort(uint32_t reason, const char *message)
 {
     (void)message; /* Network thread reports the recorded first cause. */
-    if (thread_comm_get_abort() != 0U)
-    {
-        return;
-    }
-
-    safety_record_first_abort(reason, safety_now_ms(),
-                              thread_comm_get_groundstation_heartbeat_ms(),
-                              thread_comm_get_flight_state(),
-                              HAL_GPIO_ReadPin(Continuity_GPIO_Port, Continuity_Pin),
-                              thread_comm_get_abort());
-    (void)thread_comm_set_abort(1U);
-    (void)thread_comm_send(CMD_ABORT, TX_NO_WAIT);
+    const uint64_t failure_ms = safety_now_ms();
+    const uint64_t heartbeat_ms = thread_comm_get_groundstation_heartbeat_ms();
+    const uint8_t flight_state = thread_comm_get_flight_state();
+    const uint32_t continuity = HAL_GPIO_ReadPin(Continuity_GPIO_Port, Continuity_Pin);
+    const uint32_t abort_before = thread_comm_get_abort();
+    if (thread_comm_request_automatic_abort() == 0U) return;
+    safety_record_first_abort(reason, failure_ms, heartbeat_ms, flight_state,
+                              continuity, abort_before);
+    /* The retained Abort flag is consumed by every control-owner loop.
+     * A redundant queued Abort could outlive verified recovery and relatch. */
 }
 
 static void safety_check_heartbeat(void)
@@ -116,8 +114,7 @@ static void safety_check_continuity(void)
             SAFETY_LAUNCH_CONTINUITY_TIMEOUT_MS)
         {
             safety_launch_continuity_timeout_count++;
-            safety_request_abort(SAFETY_ABORT_LAUNCH_CONTINUITY,
-                                 "Valve safety abort: launch continuity timeout");
+            /* Diagnostic only: launch continuity loss must never abort. */
         }
         return;
     }

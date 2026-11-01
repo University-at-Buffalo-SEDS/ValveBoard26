@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "thread_comm.h"
+#include "board_recovery_transport.h"
 
 /* Passive debugger evidence: success is API acceptance, not a remote ACK. */
 typedef struct {
@@ -224,6 +225,9 @@ static bool telemetry_unix_ms_to_utc(uint64_t unix_ms, int32_t *year, uint8_t *m
 
 SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
 {
+  /* Explicit recovery installs a persisted replay floor before clearing abort. */
+  if (pkt != NULL && board_recovery_command_is_stale(pkt)) return SEDS_OK;
+
   (void)user;
 
   if (pkt == NULL)
@@ -242,6 +246,16 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
     return (got < 0) ? (SedsResult)got : SEDS_BAD_ARG;
   }
 
+  /* Origin fits the existing fixed U8 schema. The high bit is reserved for
+   * automatic ordinary valves; manual/launch/abort/pyro commands stay untagged. */
+  if (pkt->payload_len != 1U) return SEDS_BAD_ARG;
+  if ((cmd_u8 & THREAD_COMM_AUTOMATIC_TAG) != 0U) {
+    const uint8_t command = cmd_u8 & (uint8_t)~THREAD_COMM_AUTOMATIC_TAG;
+    if (!(command <= CMD_DUMP_CLOSE)) return SEDS_BAD_ARG;
+    return thread_comm_admit_automatic((thread_comm_msg_t)command) == TX_SUCCESS
+               ? SEDS_OK : SEDS_HANDLER_ERROR;
+  }
+
   g_sim_valve_commands_received++;
   if (cmd_u8 == CMD_PILOT_OPEN)
   {
@@ -254,8 +268,9 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
 
   if (cmd_u8 == CMD_ABORT)
   {
-    (void)thread_comm_set_abort(true);
-    (void)thread_comm_send(CMD_ABORT, TX_NO_WAIT);
+    (void)thread_comm_request_manual_abort();
+    /* The retained Abort flag already wakes the periodic control-owner path;
+     * do not queue a second intent that could arrive after recovery. */
     (void)telemetry_broadcast_abort("Valve board abort command");
     return SEDS_OK;
   }
@@ -281,21 +296,36 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
 
 SedsResult Abort_handler(const SedsPacketView *pkt, void *user)
 {
+  /* Preserve operator Abort, but identify delayed automatic requests so an
+   * old prelaunch retry cannot terminate a subsequently admitted launch. */
+  static const char automatic_prefix[] = "SEDS_AUTO_ABORT_V1:";
+  if (pkt != NULL && pkt->payload != NULL &&
+      pkt->payload_len >= sizeof(automatic_prefix) - 1U &&
+      memcmp(pkt->payload, automatic_prefix, sizeof(automatic_prefix) - 1U) == 0) {
+    if (board_recovery_automatic_is_stale(pkt)) return SEDS_OK;
+    (void)thread_comm_request_automatic_abort();
+    return SEDS_OK;
+  }
+
   (void)pkt;
   (void)user;
-  (void)thread_comm_set_abort(true);
-  (void)thread_comm_send(CMD_ABORT, TX_NO_WAIT);
+  (void)thread_comm_request_manual_abort();
+  /* The retained Abort flag already wakes the periodic control-owner path;
+     * do not queue a second intent that could arrive after recovery. */
   /* SEDSNet forwards this system-wide abort; do not originate an echo. */
   return SEDS_OK;
 }
 
 SedsResult Flight_State_handler(const SedsPacketView *pkt, void *user)
 {
+  /* Explicit recovery installs a persisted replay floor before clearing abort. */
+  if (pkt != NULL && board_recovery_command_is_stale(pkt)) return SEDS_HANDLER_ERROR;
+
   (void)user;
 
   if (thread_comm_get_abort() != 0U)
   {
-    return SEDS_OK;
+    return SEDS_HANDLER_ERROR;
   }
 
   if (pkt == NULL || pkt->payload == NULL || pkt->payload_len == 0U)
@@ -315,18 +345,11 @@ SedsResult Flight_State_handler(const SedsPacketView *pkt, void *user)
   g_flight_state_handler_count++;
   g_last_flight_state_packet = flight_state;
 
-  const uint8_t current_flight_state = thread_comm_get_flight_state();
-  if ((current_flight_state >= VALVE_FLIGHT_STATE_LAUNCH) &&
-      (flight_state < current_flight_state))
-  {
-    return SEDS_OK;
-  }
-
-  if (thread_comm_set_flight_state(flight_state) != TX_SUCCESS)
+  if (thread_comm_apply_managed_flight_state(flight_state) != TX_SUCCESS)
   {
     g_flight_state_handler_error_count++;
+    return SEDS_HANDLER_ERROR;
   }
-
   return SEDS_OK;
 }
 
@@ -367,8 +390,16 @@ SedsResult Heartbeat_handler(const SedsPacketView *pkt, void *user)
 /* Shared HEART_BEAT routing can converge on another physical branch. The
  * ground controller also addresses this board's unique endpoint; only an
  * actual HEARTBEAT uses the existing strict logical-GS watchdog handler. */
+static SedsResult Board_Recovery_handler(const SedsPacketView *packet, void *user)
+{
+  (void)user;
+  return board_recovery_handle(g_router.r, packet, SEDS_EP_BOARD_RECOVERY,
+      (uint32_t)(((uint64_t)tx_time_get() * 1000U) / TX_TIMER_TICKS_PER_SECOND));
+}
+
 static SedsResult control_packet_handler(const SedsPacketView *packet, void *user)
 {
+
   if (packet != NULL && packet->ty == SEDS_DT_HEARTBEAT)
     return Heartbeat_handler(packet, user);
   return Valve_Command_handler(packet, user);
@@ -883,6 +914,12 @@ SedsResult init_telemetry_router(void)
   }
   static const SedsLocalEndpointDesc locals[] = {
       {
+          .endpoint = SEDS_EP_BOARD_RECOVERY,
+          .packet_handler = Board_Recovery_handler,
+          .packed_handler = NULL,
+          .user = NULL,
+      },
+      {
           .endpoint = SEDS_EP_VALVE_BOARD,
           .packet_handler = control_packet_handler,
           .packed_handler = NULL,
@@ -981,6 +1018,7 @@ SedsResult init_telemetry_router(void)
 
   g_telemetry_init_error_code = TELEMETRY_INIT_OK;
   g_router.r = r;
+  board_recovery_transport_set_router(r);
   (void)flight_state_cache_init(r);
   g_router.created = 1U;
   g_discovery_schema_announced = 0U;
