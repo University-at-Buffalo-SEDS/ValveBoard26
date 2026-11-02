@@ -182,6 +182,13 @@ void DMA1_Channel1_IRQHandler(void)
 void USB_LP_IRQHandler(void)
 {
   /* USER CODE BEGIN USB_LP_IRQn 0 */
+#if !FIRMWARE_USB_DEBUG_ENABLED
+  /* USB debug was not initialized in this profile. A stale/spurious IRQ
+   * must not enter HAL with an uninitialized peripheral handle. */
+  HAL_NVIC_DisableIRQ(USB_LP_IRQn);
+  HAL_NVIC_ClearPendingIRQ(USB_LP_IRQn);
+  return;
+#endif
 
   /* USER CODE END USB_LP_IRQn 0 */
   HAL_PCD_IRQHandler(&hpcd_USB_FS);

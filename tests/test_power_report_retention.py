@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from native_sdk import copy_inputs, dependency_inputs, source_files
 ROOT = Path(__file__).resolve().parents[1]
 
 class PowerReportRetentionTests(unittest.TestCase):
@@ -22,14 +23,10 @@ class PowerReportRetentionTests(unittest.TestCase):
         self.assertTrue((source / "src/router.rs").is_file())
         with tempfile.TemporaryDirectory(prefix="valve-power-retention-") as directory:
             work = Path(directory)
-            lib = work / "sdk"
-            lib.mkdir()
-            for name in ("src", "sedsnet_macros", "Cargo.toml", "Cargo.lock", "build.rs"):
-                path = source / name
-                if path.is_dir():
-                    shutil.copytree(path, lib / name, ignore=shutil.ignore_patterns("target", ".git"))
-                else:
-                    shutil.copy2(path, lib / name)
+            # The normal host prerequisite prepares an owned SDK snapshot with
+            # relocated local CRC dependencies. Keep those real inputs when
+            # creating this independent embedded test build too.
+            lib, _ = copy_inputs(source, source_files(source), dependency_inputs(source), work / "inputs")
             manifest = lib / "Cargo.toml"
             manifest.write_text(re.sub(r"crate-type\s*=\s*\[[^\]]*\]", 'crate-type = ["rlib"]', manifest.read_text()))
             shutil.copy2(ROOT / "config/sedsnet.json", lib / "telemetry_config.json")
@@ -38,7 +35,7 @@ class PowerReportRetentionTests(unittest.TestCase):
             shutil.copy2(ROOT / "tests/native/power_report_retention.rs", work / "src/main.rs")
             (work / "Cargo.toml").write_text(
                 '[package]\nname="valve-power-retention"\nversion="0.1.0"\nedition="2024"\n'
-                '[dependencies]\nsedsnet={package="SEDSnet",path="sdk",default-features=false,'
+                '[dependencies]\nsedsnet={package="SEDSnet",path="inputs/source",default-features=false,'
                 'features=["discovery","timesync","serde","serde_json","cryptography","compact-packet-store"]}\n'
                 'serde_json={version="1",default-features=false,features=["alloc"]}\n')
             subprocess.run(["cargo", "run", "--offline", "--quiet"], cwd=work, check=True, timeout=180)

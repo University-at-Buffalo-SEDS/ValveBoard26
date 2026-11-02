@@ -3,6 +3,7 @@ import dataclasses
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -18,6 +19,18 @@ def cached_source(name, env):
     explicit = os.environ.get(env)
     if explicit and (Path(explicit) / "CMakeLists.txt").is_file():
         return Path(explicit)
+    for cache in sorted(ROOT.glob("build/*/CMakeCache.txt")):
+        values = dict(re.findall(r"(?m)^([A-Za-z_][A-Za-z0-9_]*):[^=\r\n]*=([^\r\n]*)$", cache.read_text()))
+        candidates = []
+        override = values.get("FETCHCONTENT_SOURCE_DIR_" + name.upper())
+        if override:
+            candidates.append(Path(override))
+        base = values.get("FETCHCONTENT_BASE_DIR")
+        if base:
+            candidates.append(Path(base) / (name + "-src"))
+        for candidate in candidates:
+            if (candidate / "CMakeLists.txt").is_file():
+                return candidate
     return next((p for p in ROOT.glob(f"build/*/_deps/{name}-src")
                  if (p / "CMakeLists.txt").is_file()), None)
 
@@ -43,6 +56,18 @@ def overlay_source(destination):
 
 
 class NoTelemetryTests(unittest.TestCase):
+    def test_cached_source_finds_configured_external_fetchcontent_base(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dependency = root / "owned-dependencies/sedslaunchcore-src"
+            dependency.mkdir(parents=True)
+            (dependency / "CMakeLists.txt").write_text("# fixture source\n")
+            cache = root / "build/Release/CMakeCache.txt"
+            cache.parent.mkdir(parents=True)
+            cache.write_text(f"FETCHCONTENT_BASE_DIR:PATH={dependency.parent}\n")
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch(__name__ + ".ROOT", root):
+                self.assertEqual(cached_source("sedslaunchcore", "SDK_FREE_LAUNCHCORE_SOURCE"), dependency)
+
     def test_cli_keeps_no_telemetry_in_cmake(self):
         spec = importlib.util.spec_from_file_location('sdk_free_build_cli', ROOT / 'build.py')
         module = importlib.util.module_from_spec(spec)
