@@ -122,6 +122,9 @@ UINT thread_comm_apply_managed_flight_state(uint8_t flight_state);
 uint8_t thread_comm_get_flight_state(void);
 uint8_t thread_comm_abort_allowed(void);
 uint8_t thread_comm_request_automatic_abort(void);
+/* Link loss excludes Idle; other automatic safety rules remain unchanged. */
+uint8_t thread_comm_request_heartbeat_abort(void);
+uint8_t thread_comm_heartbeat_abort_allowed(void);
 /* Exact typed automatic ordinary-valve commands only; no launch/abort/pyro. */
 #define THREAD_COMM_AUTOMATIC_TAG 0x80U
 UINT thread_comm_admit_automatic(thread_comm_msg_t msg);

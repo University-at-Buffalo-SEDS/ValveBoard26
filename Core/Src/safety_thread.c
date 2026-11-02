@@ -42,7 +42,9 @@ static void safety_request_abort(uint32_t reason, const char *message)
     const uint8_t flight_state = thread_comm_get_flight_state();
     const uint32_t continuity = HAL_GPIO_ReadPin(Continuity_GPIO_Port, Continuity_Pin);
     const uint32_t abort_before = thread_comm_get_abort();
-    if (thread_comm_request_automatic_abort() == 0U) return;
+    const uint8_t claimed = reason == SAFETY_ABORT_HEARTBEAT
+        ? thread_comm_request_heartbeat_abort() : thread_comm_request_automatic_abort();
+    if (claimed == 0U) return;
     safety_record_first_abort(reason, failure_ms, heartbeat_ms, flight_state,
                               continuity, abort_before);
     /* The retained Abort flag is consumed by every control-owner loop.
@@ -55,7 +57,7 @@ static void safety_check_heartbeat(void)
     /* Read reception before local uptime to avoid a concurrent-update underflow. */
     const uint64_t now_ms = safety_now_ms();
 
-    if (thread_comm_abort_allowed() == 0U)
+    if (thread_comm_heartbeat_abort_allowed() == 0U)
     {
         safety_heartbeat_missing_since_ms = 0ULL;
         return;

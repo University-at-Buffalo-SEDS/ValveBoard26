@@ -4,7 +4,7 @@ Actual thread state/queue, receiver, safety producer and command consumer run
 with an interleaving at the producer's already-completed Abort claim.
 """
 from pathlib import Path
-import ast,os,subprocess,tempfile,unittest
+import ast,os,re,subprocess,tempfile,unittest
 from test_launch_abort_policy import function
 ROOT=Path(os.environ.get('VB_ABORT_OWNER_SOURCE',Path(__file__).resolve().parents[1]))
 BASE=Path(__file__).resolve().parents[1]
@@ -65,7 +65,9 @@ int main(int argc,char**argv){
  assert(argc==2);TX_BYTE_POOL pool={0};assert(thread_comm_init(&pool)==0);
  board_recovery_bind_owner(read_outputs,prepare,finish);assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_IDLE)==TX_SUCCESS);
  const uint8_t command=CMD_ABORT;SedsPacketView packet={.payload=&command,.payload_len=1,.timestamp=100};
- if(!strcmp(argv[1],"automatic"))safety_request_abort(1,"first cause");
+ /* Heartbeat is intentionally inert in Idle. Preserve the original late
+  * after-claim recovery schedule in supervised prelaunch instead. */
+ if(!strcmp(argv[1],"automatic")){assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_PREFILL)==TX_SUCCESS);safety_request_abort(SAFETY_ABORT_HEARTBEAT,"first cause");}
  else if(!strcmp(argv[1],"manual"))assert(Abort_handler(&packet,0)==SEDS_OK);
  else if(!strcmp(argv[1],"typed"))assert(Valve_Command_handler(&packet,0)==SEDS_OK);
  else assert(0);
@@ -78,6 +80,7 @@ int main(int argc,char**argv){
  return 0;
 }
 '''
+  code=re.search(r'enum\s*\{.*?\};',(ROOT/'Core/Inc/safety_diagnostics.h').read_text(),re.S).group()+'\n'+code
   control=(ROOT/'Core/Src/main_thread.c').read_text();telemetry=(ROOT/'Core/Src/telemetry.c').read_text();safety=(ROOT/'Core/Src/safety_thread.c').read_text()
   for key,value in [('ACTUAL_CONSUMER',function(control,'handle_command')),('ACTUAL_MANUAL',function(telemetry,'Abort_handler')),('ACTUAL_TYPED',function(telemetry,'Valve_Command_handler')),('ACTUAL_SAFETY',function(safety,'safety_request_abort'))]:code=code.replace(key,value)
   with tempfile.TemporaryDirectory(prefix='abort-owner-notification-')as tmp:

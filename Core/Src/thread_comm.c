@@ -252,6 +252,25 @@ uint8_t thread_comm_request_automatic_abort(void)
     return claimed;
 }
 
+/* Heartbeat loss alone is inert in Idle. Recheck current state and the
+ * retained launch latch atomically with the existing Abort owner. */
+uint8_t thread_comm_request_heartbeat_abort(void)
+{
+    uint8_t claimed = 0U;
+    if (g_thread_comm_initialized == 0U ||
+        tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER) != TX_SUCCESS) {
+        return 0U;
+    }
+    if (board_launch_latch_is_set() == 0U && g_thread_comm_abort == 0U &&
+        g_thread_comm_flight_state > VALVE_FLIGHT_STATE_IDLE &&
+        g_thread_comm_flight_state < VALVE_FLIGHT_STATE_LAUNCH) {
+        thread_comm_latch_abort_locked(0U);
+        claimed = 1U;
+    }
+    (void)tx_mutex_put(&g_thread_comm_state_mutex);
+    return claimed;
+}
+
 /* Every newly delivered manual intent invalidates an older query/ticket, even
  * if abort is already latched. Periodic setters and automatic repeats do not. */
 UINT thread_comm_request_manual_abort(void)
@@ -425,6 +444,17 @@ uint8_t thread_comm_abort_allowed(void)
     const uint8_t flight_state = thread_comm_get_flight_state();
     return ((board_launch_latch_is_set() == 0U) &&
             (flight_state > VALVE_FLIGHT_STATE_STARTUP) &&
+            (flight_state < VALVE_FLIGHT_STATE_LAUNCH))
+               ? 1U
+               : 0U;
+}
+
+/* Advisory only; the heartbeat claim rechecks under the state owner. */
+uint8_t thread_comm_heartbeat_abort_allowed(void)
+{
+    const uint8_t flight_state = thread_comm_get_flight_state();
+    return ((board_launch_latch_is_set() == 0U) &&
+            (flight_state > VALVE_FLIGHT_STATE_IDLE) &&
             (flight_state < VALVE_FLIGHT_STATE_LAUNCH))
                ? 1U
                : 0U;
