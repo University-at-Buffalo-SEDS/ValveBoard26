@@ -5,6 +5,7 @@
 #include "board_recovery_floor.h"
 #include "bootstrap_owner.h"
 #include <stdatomic.h>
+#include <string.h>
 #include "board_commands.h"
 #include "safety_diagnostics.h"
 
@@ -47,11 +48,90 @@ static uint8_t (*g_bootstrap_stop)(void);
 static uint8_t g_bootstrap_finalizing;
 static bool bootstrap_state_release(void);
 static uint8_t safety_launch_inhibit_locked(void);
+static uint8_t g_thread_comm_flight_state = VALVE_FLIGHT_STATE_STARTUP;
+/* One original accepted operation. Completion preserves continuity; only an
+ * explicit Stop/reset revokes it. No backup-marker-only/warm-boot replay. */
+enum {LAUNCH_NONE,LAUNCH_PENDING,LAUNCH_TAKEN,LAUNCH_RUNNING,LAUNCH_COMPLETED};
+static struct {
+ thread_comm_launch_owner_t owner;
+ char sender[THREAD_COMM_LAUNCH_SENDER_MAX];
+ uint32_t sender_len,slot;
+ uint8_t phase,initial_verified;
+} g_accepted_launch;
+static uint32_t g_launch_serial;
+static _Atomic uint8_t g_launch_continuity;
+static void launch_revoke_locked(void) {
+ g_accepted_launch.phase=LAUNCH_NONE;
+ atomic_store_explicit(&g_launch_continuity,0U,memory_order_release);
+}
+static uint8_t launch_source_valid_locked(uint64_t source) {
+ return source==0U || g_command_cutoff_ms==0U || source>g_command_cutoff_ms;
+}
+static uint8_t launch_identity_valid(const char*sender,uint32_t length) {
+ return length<=THREAD_COMM_LAUNCH_SENDER_MAX && (length==0U || sender!=0);
+}
+static uint8_t launch_record_live_locked(void) {
+ return g_thread_comm_recovery_epoch!=0U && g_thread_comm_recovery_epoch!=UINT32_MAX &&
+  g_accepted_launch.phase!=LAUNCH_NONE && g_accepted_launch.initial_verified &&
+  g_accepted_launch.owner.epoch==g_thread_comm_recovery_epoch && !g_thread_comm_abort && !g_recovery_pending &&
+  launch_source_valid_locked(g_accepted_launch.owner.source_utc);
+}
+static uint8_t launch_same_original_locked(uint64_t source,const char*sender,uint32_t length) {
+ return launch_identity_valid(sender,length) && launch_record_live_locked() &&
+  source==g_accepted_launch.owner.source_utc && length==g_accepted_launch.sender_len &&
+  (length==0U || memcmp(sender,g_accepted_launch.sender,length)==0);
+}
+static uint8_t launch_token_current_locked(const thread_comm_launch_owner_t*owner) {
+ return owner && owner->serial && owner->serial!=UINT32_MAX && launch_record_live_locked() &&
+  owner->serial==g_accepted_launch.owner.serial && owner->epoch==g_accepted_launch.owner.epoch &&
+  owner->source_utc==g_accepted_launch.owner.source_utc;
+}
+static void launch_accept_locked(uint64_t source,const char*sender,uint32_t length,uint32_t slot,uint32_t serial) {
+ g_accepted_launch.owner=(thread_comm_launch_owner_t){source,g_thread_comm_recovery_epoch,serial};
+ g_accepted_launch.sender_len=length;if(length)memcpy(g_accepted_launch.sender,sender,length);
+ g_accepted_launch.slot=slot;g_accepted_launch.initial_verified=1U;g_accepted_launch.phase=LAUNCH_PENDING;
+ g_launch_serial=serial;atomic_store_explicit(&g_launch_continuity,1U,memory_order_release);
+}
+uint8_t thread_comm_launch_continuity(void) {return atomic_load_explicit(&g_launch_continuity,memory_order_acquire);}
+uint8_t thread_comm_launch_original_accepted(uint64_t source,const char*sender,uint32_t length) {
+ if(!g_thread_comm_initialized||!launch_identity_valid(sender,length)||tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return 0U;
+ uint8_t accepted=launch_same_original_locked(source,sender,length);
+ if(tx_mutex_put(&g_thread_comm_state_mutex)!=TX_SUCCESS)return 0U;
+ return accepted;
+}
+uint8_t thread_comm_launch_claim(uint64_t source,uint32_t epoch,thread_comm_launch_owner_t*out) {
+ if(!out||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER)!=TX_SUCCESS)return 0U;
+ uint8_t current=launch_record_live_locked()&&g_accepted_launch.phase==LAUNCH_TAKEN&&
+  source==g_accepted_launch.owner.source_utc&&epoch==g_accepted_launch.owner.epoch;
+ if(current)*out=g_accepted_launch.owner;
+ if(tx_mutex_put(&g_thread_comm_state_mutex)!=TX_SUCCESS)return 0U;
+ return current;
+}
+uint8_t thread_comm_launch_begin_owned(const thread_comm_launch_owner_t*owner,void(*apply)(void*),void*context) {
+ if(!apply||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER)!=TX_SUCCESS)return 0U;
+ uint8_t current=launch_token_current_locked(owner)&&g_accepted_launch.phase==LAUNCH_TAKEN;
+ if(current){g_accepted_launch.phase=LAUNCH_RUNNING;g_thread_comm_flight_state=VALVE_FLIGHT_STATE_LAUNCH;apply(context);}
+ if(tx_mutex_put(&g_thread_comm_state_mutex)!=TX_SUCCESS)return 0U;
+ return current;
+}
+uint8_t thread_comm_launch_effect_owned(const thread_comm_launch_owner_t*owner,void(*apply)(void*),void*context) {
+ if(!apply||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER)!=TX_SUCCESS)return 0U;
+ uint8_t current=launch_token_current_locked(owner)&&g_accepted_launch.phase==LAUNCH_RUNNING;
+ if(current)apply(context);
+ if(tx_mutex_put(&g_thread_comm_state_mutex)!=TX_SUCCESS)return 0U;
+ return current;
+}
+void thread_comm_launch_complete_owned(const thread_comm_launch_owner_t*owner) {
+ if(!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return;
+ if(launch_token_current_locked(owner)&&g_accepted_launch.phase==LAUNCH_RUNNING)g_accepted_launch.phase=LAUNCH_COMPLETED;
+ (void)tx_mutex_put(&g_thread_comm_state_mutex);
+}
 static void thread_comm_latch_abort_locked(uint8_t new_manual_intent)
 {
+    launch_revoke_locked();
     const uint8_t new_owner = new_manual_intent != 0U || g_thread_comm_abort == 0U || g_recovery_pending != 0U;
     if (new_owner && g_thread_comm_recovery_epoch != 0U) {
-        g_thread_comm_recovery_epoch++;
+        launch_revoke_locked();g_thread_comm_recovery_epoch++;
     }
     g_recovery_pending = 0U;
     if (new_owner) {
@@ -62,7 +142,7 @@ static void thread_comm_latch_abort_locked(uint8_t new_manual_intent)
     g_thread_comm_abort = 1U;
 }
 
-static uint8_t g_thread_comm_flight_state = VALVE_FLIGHT_STATE_STARTUP;
+
 static uint64_t g_thread_comm_groundstation_heartbeat_ms = 0ULL;
 static uint64_t g_thread_comm_launch_command_timestamp_ms = 0ULL;
 static uint8_t g_thread_comm_launch_sequence_pending = 0U;
@@ -212,6 +292,9 @@ UINT thread_comm_init(TX_BYTE_POOL *byte_pool)
     g_safety_report = (thread_comm_safety_report_t){0};
     g_safety_report_inflight_lease = g_safety_report_inflight_cause = g_safety_report_last_lease = 0U;
     g_safety_report_closing = 0U;
+    /* Queue initialization never reconstructs a physical operation from backup. */
+    launch_revoke_locked();
+    g_accepted_launch.initial_verified=0U;
     g_thread_comm_initialized = 1U;
 
     return TX_SUCCESS;
@@ -439,6 +522,27 @@ UINT thread_comm_request_manual_abort_original_utc(uint64_t source)
         if (g_manual_stop_apply) g_manual_stop_apply();
     }
     return tx_mutex_put(&g_thread_comm_state_mutex);
+}
+
+/* Trusted sender classification occurs before this RAM-only state owner.
+ * Original UTC must remain above the already validated recovery floor. */
+UINT thread_comm_request_accepted_launch_manual_abort(uint64_t source)
+{
+ if(!g_thread_comm_initialized)return TX_MUTEX_ERROR;
+ UINT status=tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER);
+ if(status!=TX_SUCCESS)return status;
+ /* Prepare revokes Launch execution before its epoch advances. Its actual
+  * accepted history may still authorize Stop, never Launch continuation. */
+ if(!g_thread_comm_recovery_epoch||g_thread_comm_recovery_epoch==UINT32_MAX||
+    !g_accepted_launch.initial_verified||!g_accepted_launch.owner.serial||
+    g_accepted_launch.owner.epoch!=g_thread_comm_recovery_epoch)status=TX_QUEUE_ERROR;
+ else if(!source||source==UINT64_MAX||(g_command_cutoff_ms&&source<=g_command_cutoff_ms))status=THREAD_COMM_STALE_TIMESTAMP;
+ else {
+  thread_comm_latch_abort_locked(1U);
+  if(g_manual_stop_apply)g_manual_stop_apply();
+ }
+ const UINT released=tx_mutex_put(&g_thread_comm_state_mutex);
+ return released==TX_SUCCESS?status:released;
 }
 
 UINT thread_comm_set_abort(uint8_t abort_requested)
@@ -677,77 +781,39 @@ uint64_t thread_comm_get_launch_command_timestamp_ms(void)
     return timestamp_ms;
 }
 
-static UINT thread_comm_request_launch_sequence_impl(uint64_t timestamp_ms, uint8_t network)
+static UINT thread_comm_request_launch_sequence_impl(uint64_t source,uint8_t network,const char*sender,uint32_t length)
 {
-    UINT status;
-
-    if (g_thread_comm_initialized == 0U)
-    {
-        return TX_MUTEX_ERROR;
-    }
-
-    status = tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER);
-    if (status != TX_SUCCESS)
-    {
-        return status;
-    }
-
-    if (network && (g_command_admission_fault || g_recovery_pending ||
-                    !network_timestamp_allowed_locked(timestamp_ms))) {
-        const UINT result = g_command_admission_fault ? THREAD_COMM_COMMIT_UNCERTAIN : THREAD_COMM_STALE_TIMESTAMP;
-        (void)tx_mutex_put(&g_thread_comm_state_mutex);return result;
-    }
-    if (g_thread_comm_abort != 0U || !persistent_store_controls_ready())
-    {
-        (void)tx_mutex_put(&g_thread_comm_state_mutex);
-        return TX_QUEUE_ERROR;
-    }
-
-    if (safety_launch_inhibit_locked() == 0U) {
-        g_thread_comm_launch_sequence_pending = 0U;
-        (void)tx_mutex_put(&g_thread_comm_state_mutex);
-        return TX_QUEUE_ERROR;
-    }
-    g_thread_comm_launch_command_timestamp_ms = timestamp_ms;
-    g_thread_comm_launch_sequence_pending = 1U;
-
-    return tx_mutex_put(&g_thread_comm_state_mutex);
+ if(!launch_identity_valid(sender,length)||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return TX_MUTEX_ERROR;
+ UINT status=TX_QUEUE_ERROR;uint8_t newly_staged=0U;
+ if(g_accepted_launch.phase!=LAUNCH_NONE)status=launch_same_original_locked(source,sender,length)?TX_SUCCESS:TX_QUEUE_ERROR;
+ else if(g_thread_comm_recovery_epoch!=0U&&g_thread_comm_recovery_epoch!=UINT32_MAX&&
+   g_launch_serial<UINT32_MAX-1U&&!g_thread_comm_abort&&!g_recovery_pending&&!g_command_admission_fault&&
+   persistent_store_controls_ready()&&(!network||network_timestamp_allowed_locked(source))) {
+  if(safety_launch_inhibit_locked()) {
+   g_thread_comm_launch_command_timestamp_ms=source;g_thread_comm_launch_sequence_pending=1U;
+   launch_accept_locked(source,sender,length,0U,g_launch_serial+1U);newly_staged=1U;status=TX_SUCCESS;
+  }
+ }
+ if(tx_mutex_put(&g_thread_comm_state_mutex)!=TX_SUCCESS){/* This call owns only its new candidate, never an earlier accepted one. */
+  if(newly_staged){g_accepted_launch.initial_verified=0U;launch_revoke_locked();}
+  g_command_admission_fault=1U;return THREAD_COMM_COMMIT_UNCERTAIN;}
+ return status;
+}
+UINT thread_comm_request_launch_sequence(uint64_t source){return thread_comm_request_launch_sequence_impl(source,0U,0,0U);}
+UINT thread_comm_request_network_launch_sequence(uint64_t source){return thread_comm_request_launch_sequence_impl(source,1U,0,0U);}
+UINT thread_comm_request_network_launch_original(uint64_t source,const char*sender,uint32_t length){return thread_comm_request_launch_sequence_impl(source,1U,sender,length);}
+uint8_t thread_comm_take_accepted_launch(thread_comm_launch_owner_t*out) {
+ if(!out||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return 0U;
+ uint8_t taken=g_thread_comm_launch_sequence_pending&&g_accepted_launch.phase==LAUNCH_PENDING&&launch_record_live_locked();
+ if(taken){*out=g_accepted_launch.owner;g_thread_comm_launch_sequence_pending=0U;g_accepted_launch.phase=LAUNCH_TAKEN;}
+ if(tx_mutex_put(&g_thread_comm_state_mutex)!=TX_SUCCESS)return 0U;
+ return taken;
 }
 
-UINT thread_comm_request_launch_sequence(uint64_t timestamp_ms) {return thread_comm_request_launch_sequence_impl(timestamp_ms,0U);}
-UINT thread_comm_request_network_launch_sequence(uint64_t timestamp_ms) {return thread_comm_request_launch_sequence_impl(timestamp_ms,1U);}
-
-uint8_t thread_comm_take_launch_sequence_request(uint64_t *timestamp_ms)
-{
-    UINT status;
-    uint8_t pending = 0U;
-
-    if (timestamp_ms != TX_NULL)
-    {
-        *timestamp_ms = 0ULL;
-    }
-
-    if (g_thread_comm_initialized == 0U)
-    {
-        return 0U;
-    }
-
-    status = tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER);
-    if (status == TX_SUCCESS)
-    {
-        pending = persistent_store_controls_ready() ? g_thread_comm_launch_sequence_pending : 0U;
-        if (pending != 0U)
-        {
-            if (timestamp_ms != TX_NULL)
-            {
-                *timestamp_ms = g_thread_comm_launch_command_timestamp_ms;
-            }
-            g_thread_comm_launch_sequence_pending = 0U;
-        }
-        (void)tx_mutex_put(&g_thread_comm_state_mutex);
-    }
-
-    return pending;
+uint8_t thread_comm_take_launch_sequence_request(uint64_t *timestamp_ms) {
+ thread_comm_launch_owner_t owner={0};uint8_t taken=thread_comm_take_accepted_launch(&owner);
+ if(timestamp_ms)*timestamp_ms=taken?owner.source_utc:0U;
+ return taken;
 }
 
 UINT thread_comm_note_groundstation_heartbeat(uint64_t timestamp_ms)
@@ -899,6 +965,7 @@ int32_t board_recovery_begin_prepare(uint8_t desired_state, uint32_t expected_ep
         /* Internal recovery barrier is not a NEW manual Stop: do not advance
          * epoch or broadcast ABORT. Failed backup verification keeps RAM safe
          * and returns before any floor/state flash can be attempted. */
+        launch_revoke_locked();
         g_safety_report_closing = 2U;
         g_safety_report.reason = 0U;
         g_thread_comm_abort = 1U;
@@ -1001,7 +1068,7 @@ static void service_board_recovery(bool explicit_fresh_owner)
                     g_bootstrap_finalizing=1U;g_bootstrap_binding.valid=0U;
                 }
                 g_recovery_completed_epoch = g_thread_comm_recovery_epoch;
-                g_thread_comm_recovery_epoch++;
+                launch_revoke_locked();g_thread_comm_recovery_epoch++;
             }
         }
     }
@@ -1147,40 +1214,11 @@ uint8_t thread_comm_apply_automatic_owned(thread_comm_msg_t msg,uint32_t epoch,v
     return applied;
 }
 
-uint8_t thread_comm_take_launch_sequence_request_owned(uint64_t *timestamp_ms,uint32_t*epoch)
-{
-    if(!epoch)return 0U;
-    *epoch=0U;
-    UINT status;
-    uint8_t pending = 0U;
-
-    if (timestamp_ms != TX_NULL)
-    {
-        *timestamp_ms = 0ULL;
-    }
-
-    if (g_thread_comm_initialized == 0U)
-    {
-        return 0U;
-    }
-
-    status = tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER);
-    if (status == TX_SUCCESS)
-    {
-        pending = persistent_store_controls_ready() ? g_thread_comm_launch_sequence_pending : 0U;
-        if (pending != 0U)
-        {
-            if (timestamp_ms != TX_NULL)
-            {
-                *timestamp_ms = g_thread_comm_launch_command_timestamp_ms;
-            }
-            *epoch=g_thread_comm_recovery_epoch;
-            g_thread_comm_launch_sequence_pending = 0U;
-        }
-        (void)tx_mutex_put(&g_thread_comm_state_mutex);
-    }
-
-    return pending;
+uint8_t thread_comm_take_launch_sequence_request_owned(uint64_t *timestamp_ms,uint32_t*epoch) {
+ if(!epoch)return 0U;
+ thread_comm_launch_owner_t owner={0};uint8_t taken=thread_comm_take_accepted_launch(&owner);
+ *epoch=taken?owner.epoch:0U;if(timestamp_ms)*timestamp_ms=taken?owner.source_utc:0U;
+ return taken;
 }
 
 int thread_comm_ota_reset_original(uint32_t epoch,void(*apply)(void*),void*context) {

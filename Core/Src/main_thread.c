@@ -36,6 +36,7 @@ static uint8_t g_no_servo_open_state = 0U;
 static uint8_t g_nitrous_servo_open_state = 0U;
 static uint8_t g_launch_sequence_active = 0U;
 static uint32_t g_launch_manual_epoch;
+static thread_comm_launch_owner_t g_launch_owner;
 static uint8_t g_launch_sequence_actuator_started = 0U;
 static uint8_t g_launch_sequence_pilot_opened = 0U;
 static uint8_t g_launch_sequence_completed = 0U;
@@ -181,56 +182,29 @@ static void start_launch_sequence_locked(void*context){
     g_launch_sequence_start_count++;
  q->started=1U;
 }
-static void start_launch_sequence(uint32_t command_epoch)
+static void start_launch_sequence(thread_comm_launch_owner_t owner)
 {
-    if (g_launch_sequence_active != 0U)
-    {
-        return;
-    }
-
-    /* Revalidate in the actual owner before any sequence state or peer send.
-     * A failed durable latch never becomes a successful physical start. */
-    if (thread_comm_set_flight_state(VALVE_FLIGHT_STATE_LAUNCH) != TX_SUCCESS) return;
-
-    LaunchStart request={command_epoch,tx_time_get(),0U};
-    if(!thread_comm_manual_effect_owned(0U,command_epoch,start_launch_sequence_locked,&request)||!request.started)return;
+    if(g_launch_sequence_active)return;
+    /* INITIAL verification and mailbox acceptance already established this
+     * exact owner. A SECOND storage failure cannot invent a new Abort. */
+    LaunchStart request={owner.epoch,tx_time_get(),0U};
+    g_launch_owner=owner;
+    if(!thread_comm_launch_begin_owned(&owner,start_launch_sequence_locked,&request)||!request.started)return;
 #ifdef TELEMETRY_ENABLED
-    uint64_t launch_timestamp_ms = thread_comm_get_launch_command_timestamp_ms();
-    if (launch_timestamp_ms == 0ULL)
-    {
-        launch_timestamp_ms = telemetry_unix_ms();
+    const uint64_t launch_timestamp_ms=owner.source_utc;
+    if(launch_timestamp_ms!=0ULL){
+        (void)telemetry_publish_flight_state_at(VALVE_FLIGHT_STATE_LAUNCH,launch_timestamp_ms);
+        (void)telemetry_send_actuator_command_at(CMD_IGNITER_SEQUENCE,launch_timestamp_ms);
     }
-    if (launch_timestamp_ms != 0ULL)
-    {
-        (void)telemetry_publish_flight_state_at(VALVE_FLIGHT_STATE_LAUNCH,
-                                                launch_timestamp_ms);
-    }
-    if (launch_timestamp_ms != 0ULL)
-    {
-        (void)telemetry_send_actuator_command_at(CMD_IGNITER_SEQUENCE,
-                                                 launch_timestamp_ms);
-    }
-    else
-    {
-        (void)telemetry_send_actuator_command(CMD_IGNITER_SEQUENCE);
-    }
+    /* Source-zero is a local fixture boundary, never a renewed network UTC. */
 #endif
-    (void)publish_umbilical_status(CMD_SEQUENCE, 1U);
+    (void)publish_umbilical_status(CMD_SEQUENCE,1U);
 }
-
 static void service_launch_sequence_request(void)
 {
-    uint64_t launch_timestamp_ms = 0ULL;uint32_t command_epoch=0U;
-
-    if (thread_comm_get_abort() != 0U ||
-        thread_comm_take_launch_sequence_request_owned(&launch_timestamp_ms,&command_epoch) == 0U)
-    {
-        return;
-    }
-
-    if (thread_comm_set_flight_state(VALVE_FLIGHT_STATE_LAUNCH) != TX_SUCCESS) return;
-    (void)thread_comm_set_launch_command_timestamp_ms(launch_timestamp_ms);
-    start_launch_sequence(command_epoch);
+    thread_comm_launch_owner_t owner={0};
+    if(thread_comm_get_abort()!=0U||!thread_comm_take_accepted_launch(&owner))return;
+    start_launch_sequence(owner);
 }
 
 static void apply_automatic_valve(uint8_t command);
@@ -282,7 +256,8 @@ static void service_launch_sequence_locked(void*context)
 }
 static void service_launch_sequence(void){
  uint8_t events=0U;
- (void)thread_comm_manual_effect_owned(0U,g_launch_manual_epoch,service_launch_sequence_locked,&events);
+ (void)thread_comm_launch_effect_owned(&g_launch_owner,service_launch_sequence_locked,&events);
+ if(!g_launch_sequence_active)thread_comm_launch_complete_owned(&g_launch_owner);
  if(events&1U)(void)publish_umbilical_status(CMD_PILOT_OPEN,g_pilot_valve_state);
  if(events&2U)(void)publish_umbilical_status(CMD_SEQUENCE,g_launch_sequence_active);
 }
@@ -311,8 +286,9 @@ static void apply_automatic_valve(uint8_t command)
 
 static void apply_manual_valve_locked(void*context){apply_automatic_valve(*(const uint8_t*)context);}
 static void handle_command(thread_comm_msg_t cmd,uint32_t command_epoch){
-    if (!persistent_store_controls_ready() && cmd != CMD_ABORT) {
-        main_thread_force_outputs_safe_off();
+    if(cmd==CMD_ABORT){(void)thread_comm_request_manual_abort();return;}
+    if (!persistent_store_controls_ready()) {
+        if(!thread_comm_launch_continuity())main_thread_force_outputs_safe_off();
         return;
     }
 
@@ -349,7 +325,7 @@ static void handle_command(thread_comm_msg_t cmd,uint32_t command_epoch){
       return;
     }
     switch(cmd){
-    case CMD_SEQUENCE:start_launch_sequence(command_epoch);break;
+    case CMD_SEQUENCE:service_launch_sequence_request();break;
     case CMD_ABORT:(void)thread_comm_request_manual_abort();break;
     default:break;
     }
@@ -482,7 +458,7 @@ void main_thread_entry(ULONG initial_input)
         board_watchdog_progress(BOARD_WATCHDOG_CONTROL);
         thread_comm_service_board_recovery();
         board_bootstrap_storage_service();
-        if (!persistent_store_controls_ready()) main_thread_force_outputs_safe_off();
+        if (!persistent_store_controls_ready()&&!thread_comm_launch_continuity()) main_thread_force_outputs_safe_off();
         service_launch_sequence_request();
 
         if (thread_comm_get_abort() != 0U)

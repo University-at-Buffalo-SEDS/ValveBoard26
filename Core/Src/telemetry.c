@@ -235,6 +235,26 @@ static bool telemetry_unix_ms_to_utc(uint64_t unix_ms, int32_t *year, uint8_t *m
 
 SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
 {
+  /* Only a trusted exact network Stop of an already accepted Launch may
+   * use its retained RAM cutoff when later storage access is unavailable. */
+  if(pkt&&pkt->payload&&pkt->payload_len==1U&&pkt->payload[0]==CMD_ABORT&&
+     board_recovery_manual_stop_source_allowed(g_router.r,pkt)){
+    const UINT stopped=thread_comm_request_accepted_launch_manual_abort(pkt->timestamp);
+    if(stopped==THREAD_COMM_STALE_TIMESTAMP)return SEDS_OK;
+    if(stopped==TX_SUCCESS){
+      (void)telemetry_broadcast_abort("Valve board abort command");
+      return SEDS_OK;
+    }
+    if(stopped!=TX_QUEUE_ERROR)return SEDS_IO;
+    /* No prior accepted owner: retain ordinary cutoff/freshness admission. */
+  }
+  /* An exact already committed original needs no new storage read/admission.
+   * Refused/uncertain queue attempts never appear in this owner receipt. */
+  if(pkt&&pkt->payload&&pkt->payload_len==1U&&pkt->payload[0]==CMD_SEQUENCE){
+    if(pkt->sender_len>THREAD_COMM_LAUNCH_SENDER_MAX||(!pkt->sender&&pkt->sender_len))return SEDS_BAD_ARG;
+    if(thread_comm_launch_original_accepted(pkt->timestamp,pkt->sender,(uint32_t)pkt->sender_len))return SEDS_OK;
+  }
+
   /* Publish storage-validated cutoff before state-lock admission; no NVM
    * getter runs under that lock. Refusal/IO is not a stale-command receipt. */
   if (pkt != NULL && board_recovery_sync_command_cutoff()!=SEDS_OK) return SEDS_IO;
@@ -289,7 +309,7 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
 
   if (cmd_u8 == CMD_SEQUENCE)
   {
-    const UINT admitted=thread_comm_request_network_launch_sequence(pkt->timestamp);
+    const UINT admitted=thread_comm_request_network_launch_original(pkt->timestamp,pkt->sender,(uint32_t)pkt->sender_len);
     if (admitted==THREAD_COMM_STALE_TIMESTAMP) return SEDS_OK;
     if (admitted != TX_SUCCESS)
     {

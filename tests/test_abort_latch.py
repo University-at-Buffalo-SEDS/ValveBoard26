@@ -77,11 +77,10 @@ int main(void) {
 #define VALVE_FLIGHT_STATE_LAUNCH 6
 static unsigned aborted=1, starts, takes;
 static unsigned thread_comm_get_abort(void){return aborted;}
-static unsigned thread_comm_take_launch_sequence_request_owned(uint64_t *stamp,uint32_t *epoch){takes++;*stamp=123;*epoch=7;return 1;}
+typedef struct{uint64_t source_utc;uint32_t epoch,serial;}thread_comm_launch_owner_t;
+static unsigned thread_comm_take_accepted_launch(thread_comm_launch_owner_t*owner){takes++;*owner=(thread_comm_launch_owner_t){123,7,1};return 1;}
 #define TX_SUCCESS 0U
-static unsigned thread_comm_set_flight_state(unsigned state){(void)state;return TX_SUCCESS;}
-static void thread_comm_set_launch_command_timestamp_ms(uint64_t stamp){(void)stamp;}
-static void start_launch_sequence(uint32_t epoch){assert(epoch==7);starts++;}
+static void start_launch_sequence(thread_comm_launch_owner_t owner){assert(owner.epoch==7&&owner.source_utc==123&&owner.serial==1);starts++;}
 """
         main=r"""
 int main(void){

@@ -25,7 +25,7 @@ static uint64_t g_sim_last_valve_command_ms;
 #define TX_TIMER_TICKS_PER_SECOND 1000U
 ULONG tx_time_get(void){return 100;}
 static void apply_automatic_valve(uint8_t cmd){(void)cmd;}
-static void start_launch_sequence(uint32_t epoch){assert(epoch);}
+static void service_launch_sequence_request(void){}
 static void apply_manual_valve_locked(void*context){apply_automatic_valve(*(uint8_t*)context);}
 static int publish_umbilical_status(unsigned cmd,unsigned value){(void)cmd;(void)value;return 0;}
 ACTUAL_CONSUMER
@@ -46,7 +46,7 @@ typedef int SedsResult;
 static SedsResult board_recovery_sync_command_cutoff(void){return SEDS_OK;}
 #define SEDS_BAD_ARG -1
 #define SEDS_HANDLER_ERROR -3
-typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;} SedsPacketView;
+typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;const char*sender;size_t sender_len;} SedsPacketView;
 static uint8_t board_recovery_command_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static uint8_t board_recovery_automatic_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static struct{void*r;}g_router;

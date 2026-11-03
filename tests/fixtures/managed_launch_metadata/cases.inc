@@ -36,6 +36,14 @@
 #endif
   assert(thread_comm_apply_managed_flight_state(15)!=TX_SUCCESS&&!thread_comm_get_abort());
   assert(thread_comm_apply_managed_flight_state(6)!=TX_SUCCESS&&!thread_comm_get_abort());
-  assert(launch_request()!=TX_SUCCESS&&thread_comm_get_abort());
-  puts("PASS already accepted metadata7..14 no writes/Abort/regression; separate new physical admission still verifies");return 0;
+  /* This is the SAME already accepted original, now at the published cutoff.
+   * It must not reacquire physical ownership or reverify SECOND backup loss
+   * into a new automatic Abort. Fresh INITIAL admission negatives above remain. */
+  assert(launch_request()!=TX_SUCCESS&&!thread_comm_get_abort()&&dsb_writes==before);
+#ifdef VB
+  assert(!peer_sends&&!status_sends&&!g_launch_sequence_active&&!thread_comm_take_launch_sequence_request(&original_command));
+#else
+  assert(thread_comm_receive(&original_command,TX_NO_WAIT)!=TX_SUCCESS);
+#endif
+  puts("PASS already accepted metadata7..14 and retired original: no writes/Abort/regression/refire");return 0;
  }

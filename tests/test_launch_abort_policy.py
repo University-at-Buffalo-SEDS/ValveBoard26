@@ -93,7 +93,7 @@ static SedsResult board_recovery_sync_command_cutoff(void){return SEDS_OK;}
 #define SEDS_BAD_ARG -1
 #define SEDS_ERR -2
 #define SEDS_HANDLER_ERROR -3
-typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;} SedsPacketView;
+typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;const char*sender;size_t sender_len;} SedsPacketView;
 static uint8_t board_recovery_command_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static uint8_t board_recovery_automatic_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static struct{void*r;}g_router;
@@ -101,7 +101,6 @@ static bool board_recovery_manual_stop_source_allowed(void*r,const SedsPacketVie
 static unsigned g_flight_state_handler_error_count,g_flight_state_handler_count,g_last_flight_state_packet;
 static unsigned g_command_queue_drop_count,g_sim_valve_commands_received,g_sim_valve_open_seen,g_sim_groundstation_confirmation_received;
 static int32_t seds_pkt_get_u8(const SedsPacketView*p,uint8_t*v,size_t n){assert(n==1);*v=p->payload[0];return 1;}
-static bool is_replayed_igniter_sequence_command(const SedsPacketView*p,uint8_t c){(void)p;(void)c;return false;}
 static int telemetry_broadcast_abort(const char*reason){(void)reason;return 0;}
 '''+receiver+'\n'+command_receiver+'\n'+managed_receiver+r'''
 CONTROL_STUBS

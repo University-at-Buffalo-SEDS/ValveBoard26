@@ -21,6 +21,18 @@ extern "C" {
  */
 typedef ULONG thread_comm_msg_t;
 
+/* Application-local receipt, never a SEDSnet wire packet ID. */
+#define THREAD_COMM_LAUNCH_SENDER_MAX 32U
+typedef struct { uint64_t source_utc; uint32_t epoch, serial; } thread_comm_launch_owner_t;
+uint8_t thread_comm_launch_continuity(void);
+UINT thread_comm_request_accepted_launch_manual_abort(uint64_t source_utc);
+uint8_t thread_comm_launch_original_accepted(uint64_t source,const char*sender,uint32_t sender_len);
+uint8_t thread_comm_launch_claim(uint64_t source,uint32_t epoch,thread_comm_launch_owner_t*out);
+uint8_t thread_comm_launch_begin_owned(const thread_comm_launch_owner_t*owner,void(*apply)(void*),void*context);
+uint8_t thread_comm_launch_effect_owned(const thread_comm_launch_owner_t*owner,void(*apply)(void*),void*context);
+void thread_comm_launch_complete_owned(const thread_comm_launch_owner_t*owner);
+UINT thread_comm_request_network_launch_original(uint64_t source,const char*sender,uint32_t sender_len);
+uint8_t thread_comm_take_accepted_launch(thread_comm_launch_owner_t*out);
 typedef enum {
     VALVE_FLIGHT_STATE_STARTUP = 0,
     VALVE_FLIGHT_STATE_IDLE = 1,

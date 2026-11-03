@@ -92,9 +92,10 @@ int main(int argc,char**argv){
 #ifdef VB
  if(!strcmp(scenario,"owner_bad")){
   assert(launch_request()==TX_SUCCESS);test_tamp.BKP28R=test_tamp.BKP29R=0;drop_launch=1;service_launch_sequence_request();
-  assert(peer_sends==0&&status_sends==0&&!g_launch_sequence_active&&thread_comm_get_abort());return 0;
+  /* Initial verified acceptance owns continuation despite SECOND loss. */
+  assert(peer_sends==1&&status_sends==1&&g_launch_sequence_active&&!thread_comm_get_abort());return 0;
  }
- if(!strcmp(scenario,"direct_owner_bad")){drop_launch=1;start_launch_sequence(thread_comm_manual_epoch());assert(!peer_sends&&!status_sends&&!g_launch_sequence_active&&thread_comm_get_abort());return 0;}
+ if(!strcmp(scenario,"direct_owner_bad")){drop_launch=1;start_launch_sequence((thread_comm_launch_owner_t){.source_utc=10000,.epoch=thread_comm_manual_epoch(),.serial=1});assert(!peer_sends&&!status_sends&&!g_launch_sequence_active&&!thread_comm_get_abort());return 0;}
  if(!strcmp(scenario,"stop_before_owner")){assert(launch_request()==0);before_lock=manual_stop;service_launch_sequence_request();assert(!peer_sends&&!g_launch_sequence_active&&thread_comm_get_abort());return 0;}
 #endif
  assert(!strcmp(scenario,"healthy"));assert(launch_request()==TX_SUCCESS);assert(board_launch_latch_is_set()&&!thread_comm_get_abort());
@@ -110,7 +111,7 @@ int main(int argc,char**argv){
 def owner_source(owner):
  # Preserve actual typed original-epoch context and bounded raw setup callback.
  context=re.search(r'typedef struct\{[^\n]*\} LaunchStart;',owner).group(0)
- return 'static uint32_t g_launch_manual_epoch;\n'+context+'\n'+'\n'.join(function(owner,name)for name in ['start_launch_sequence_locked','start_launch_sequence','service_launch_sequence_request'])
+ return 'static uint32_t g_launch_manual_epoch;\nstatic thread_comm_launch_owner_t g_launch_owner;\n'+context+'\n'+'\n'.join(function(owner,name)for name in ['start_launch_sequence_locked','start_launch_sequence','service_launch_sequence_request'])
 
 class VerifiedLaunchTests(unittest.TestCase):
  @classmethod
@@ -131,6 +132,6 @@ class VerifiedLaunchTests(unittest.TestCase):
  def test_managed_launch_state_never_accepts_failed_durable_latch(self):self.case('managed_bad')
  def test_direct_state_setter_propagates_failed_durable_latch(self):self.case('setter_bad')
  def test_healthy_launch_and_watchdog_retention_preserve_manual_stop(self):self.case('healthy');self.case('reboot_good')
- def test_vb_owner_revalidates_before_peer_actuator_send(self):
+ def test_vb_owner_requires_initial_acceptance_and_preserves_it_across_second_loss(self):
   if self.vb:self.case('owner_bad');self.case('direct_owner_bad');self.case('stop_before_owner')
   else:self.case('stop_before_request')
