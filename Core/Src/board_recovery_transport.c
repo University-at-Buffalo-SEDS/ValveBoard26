@@ -1,19 +1,32 @@
+#include "persistent_store_health.h"
 #include "board_recovery_transport.h"
 #include "board_recovery_wire.h"
 #include "board_recovery_boot.h"
 #include "board_recovery_floor.h"
 #include "board_recovery.h"
 #include "flight_state_cache.h"
+#include "thread_comm.h"
+#include "board_bootstrap_storage.h"
+#include "bootstrap_owner.h"
+#include "bootstrap_marker.h"
+#include <stdatomic.h>
 #include <string.h>
 static SedsRouter *recovery_router;
 void board_recovery_transport_set_router(SedsRouter *router) { recovery_router=router; }
-static uint8_t previous_request[BOARD_RECOVERY_REQUEST_SIZE];
-static uint8_t previous_request_valid;
-static uint8_t previous_result;
+static atomic_flag dispatching=ATOMIC_FLAG_INIT;
 static uint8_t authorized_primary(SedsRouter *router,const SedsPacketView *packet)
 {
  return packet!=NULL && seds_router_sender_matches_hostname(router,
      packet->sender,packet->sender_len,"GS",2U);
+}
+uint8_t board_recovery_manual_stop_source_allowed(SedsRouter*router,const SedsPacketView*packet){
+ return router&&packet&&(authorized_primary(router,packet)||seds_router_sender_matches_hostname(router,packet->sender,packet->sender_len,"RRLS",4U));
+}
+SedsResult board_recovery_sync_command_cutoff(void)
+{
+ uint64_t cutoff=0U;
+ if (!board_recovery_floor_read_cutoff(&cutoff)) return SEDS_IO;
+ return cutoff==0U || thread_comm_publish_command_cutoff(cutoff)==TX_SUCCESS ? SEDS_OK : SEDS_IO;
 }
 uint8_t board_recovery_command_is_stale(const SedsPacketView *packet)
 {
@@ -28,7 +41,7 @@ uint8_t board_recovery_command_is_stale(const SedsPacketView *packet)
 uint8_t board_recovery_managed_update_allowed(const SedsPacketView *packet)
 {
  if (!board_recovery_floor_is_healthy()) return 0U;
- if (!board_recovery_floor_active()) return 1U;
+ if (!board_recovery_floor_active()) return packet!=NULL && packet->ty==SEDS_DT_FLIGHT_STATE ? recovery_router!=NULL && authorized_primary(recovery_router,packet) : 1U;
  return recovery_router!=0 && authorized_primary(recovery_router,packet) &&
         !board_recovery_command_is_stale(packet);
 }
@@ -36,76 +49,56 @@ uint8_t board_recovery_automatic_is_stale(const SedsPacketView *packet)
 {
  return board_recovery_command_is_stale(packet);
 }
-SedsResult board_recovery_handle(SedsRouter *router,const SedsPacketView *packet,
-                                uint32_t local_endpoint,uint32_t uptime_ms)
-{
- if (router==0 || packet==0 || packet->ty!=SEDS_DT_BOARD_RECOVERY_REQUEST ||
-     packet->num_endpoints!=1U || packet->endpoints==0 ||
-     packet->endpoints[0]!=local_endpoint) return SEDS_BAD_ARG;
- if (authorized_primary(router,packet)==0U) return SEDS_PERMISSION_DENIED;
- BoardRecoveryRequest request;
- if (board_recovery_decode_request(packet->payload,packet->payload_len,&request)==0U) return SEDS_BAD_ARG;
- BoardRecoverySnapshot snapshot={.actual_state=255U};
- uint64_t generation=request.operation==BOARD_RECOVERY_QUERY ?
-     board_recovery_boot_query_generation() : board_recovery_boot_current();
- uint8_t result=BOARD_RECOVERY_RESULT_OK;
- if (board_recovery_snapshot(&snapshot)!=0) result=BOARD_RECOVERY_RESULT_IO;
- if (generation==0U || (snapshot.flags&BOARD_RECOVERY_SUPPORTED)==0U) {
-  snapshot.flags&=(uint8_t)~BOARD_RECOVERY_SUPPORTED;
-  result=BOARD_RECOVERY_RESULT_UNSUPPORTED;
- }
- if (request.operation==BOARD_RECOVERY_QUERY && result==BOARD_RECOVERY_RESULT_OK &&
-     !board_recovery_floor_is_healthy()) result=BOARD_RECOVERY_RESULT_IO;
- if (request.operation==BOARD_RECOVERY_RECOVER && result==BOARD_RECOVERY_RESULT_OK) {
-  uint64_t now=0U;
-  uint8_t duplicate=previous_request_valid &&
-      memcmp(previous_request+4U,packet->payload+4U,8U)==0 &&
-      memcmp(previous_request+24U,packet->payload+24U,8U)==0;
-  if (generation!=request.expected_boot_generation) result=BOARD_RECOVERY_RESULT_STALE;
-  else if (duplicate && memcmp(previous_request,packet->payload,BOARD_RECOVERY_REQUEST_SIZE)!=0)
-   result=BOARD_RECOVERY_RESULT_INVALID;
-  else if (packet->timestamp==0U || seds_router_get_network_time_ms(router,&now)!=SEDS_OK ||
-           (now>=packet->timestamp ? now-packet->timestamp>5000U : packet->timestamp-now>1000U))
-   result=BOARD_RECOVERY_RESULT_STALE;
-  else if (!duplicate && snapshot.abort_epoch!=request.expected_abort_epoch)
-   result=BOARD_RECOVERY_RESULT_STALE;
-  else if (!duplicate && !board_recovery_floor_allows_recovery_time(request.issuer_session,packet->timestamp))
-   result=BOARD_RECOVERY_RESULT_STALE;
-  else if (duplicate && previous_result!=BOARD_RECOVERY_RESULT_PENDING &&
-           previous_result!=BOARD_RECOVERY_RESULT_OK)
-   result=previous_result; /* Retry observes failure; it never repeats NVM. */
-  else {
-   uint8_t prepared_ok=0U;
-   if (!duplicate) {
-    /* Install the cancellation barrier before any storage operation. */
-    memcpy(previous_request,packet->payload,BOARD_RECOVERY_REQUEST_SIZE);
-    previous_request_valid=1U;
-    previous_result=BOARD_RECOVERY_RESULT_IO;
-    int32_t prepared=board_recovery_begin_prepare(request.desired_state,request.expected_abort_epoch);
-    if (prepared!=0) {
-     result=prepared==-10 ? BOARD_RECOVERY_RESULT_STALE : BOARD_RECOVERY_RESULT_IO;
-     previous_result=result;
-    } else {
-     if (!board_recovery_floor_commit(request.issuer_session,packet->timestamp) ||
-         flight_state_cache_prepare_recovery(request.desired_state)!=0) {
-      board_recovery_cancel_prepare(request.desired_state,request.expected_abort_epoch);
-      result=BOARD_RECOVERY_RESULT_IO;
-     } else { prepared_ok=1U; result=BOARD_RECOVERY_RESULT_PENDING; }
-    }
-   }
-   if (duplicate || prepared_ok) {
-    int32_t applied=board_recovery_apply_safe(request.desired_state,request.expected_abort_epoch,&snapshot);
-    result=applied==0 ? BOARD_RECOVERY_RESULT_OK : applied==-14 ? BOARD_RECOVERY_RESULT_PENDING :
-           applied==-9 ? BOARD_RECOVERY_RESULT_IO : BOARD_RECOVERY_RESULT_STALE;
-    previous_result=result;
-   }
-  }
- }
- if (result==BOARD_RECOVERY_RESULT_IO) (void)board_recovery_snapshot(&snapshot);
+
+static SedsResult send_status(SedsRouter*router,uint8_t result,const BoardRecoveryRequest*request,
+                            uint64_t generation,const BoardRecoverySnapshot*snapshot,uint32_t uptime_ms) {
  uint8_t status[BOARD_RECOVERY_STATUS_SIZE];
- board_recovery_encode_status(status,result,snapshot.actual_state,snapshot.flags,&request,
-                              generation,snapshot.abort_epoch,uptime_ms,snapshot.actual_outputs_mask);
- /* Status metadata targets only GroundStation; ACK is not state confirmation. */
- return seds_router_log_queue_typed(router,SEDS_DT_BOARD_STATE_STATUS,status,
-                                   sizeof status,sizeof(uint8_t),SEDS_EK_UNSIGNED);
+ board_recovery_encode_status(status,result,snapshot->actual_state,(uint8_t)(snapshot->flags|BOARD_RECOVERY_VERIFIED_IMPLEMENTATION|BOARD_RECOVERY_MANUAL_UTC_IMPLEMENTATION),request,
+  generation,snapshot->abort_epoch,uptime_ms,snapshot->actual_outputs_mask);
+ return seds_router_log_queue_typed(router,SEDS_DT_BOARD_STATE_STATUS,status,sizeof status,sizeof(uint8_t),SEDS_EK_UNSIGNED);
+}
+static uint64_t bootstrap_now(void*context) {
+ uint64_t now=0U;if(seds_router_get_network_time_ms((SedsRouter*)context,&now)!=SEDS_OK)return 0U;return now;
+}
+static bool bootstrap_reply(void*context,const BoardRecoveryRequest*request,uint8_t result) {
+ BoardRecoverySnapshot snapshot={.actual_state=255U};(void)board_recovery_snapshot(&snapshot);
+ return send_status((SedsRouter*)context,result,request,board_recovery_boot_current(),&snapshot,
+  (uint32_t)(((uint64_t)tx_time_get()*1000U)/TX_TIMER_TICKS_PER_SECOND))==SEDS_OK;
+}
+static SedsResult handle_serialized(SedsRouter*router,const SedsPacketView*packet,uint32_t local_endpoint,uint32_t uptime_ms) {
+ if(!router||!packet||packet->ty!=SEDS_DT_BOARD_RECOVERY_REQUEST||packet->num_endpoints!=1U||!packet->endpoints||packet->endpoints[0]!=local_endpoint)return SEDS_BAD_ARG;
+ if(!authorized_primary(router,packet))return SEDS_PERMISSION_DENIED;
+ BoardRecoveryRequest request;
+ if(!board_recovery_decode_request(packet->payload,packet->payload_len,&request))return SEDS_BAD_ARG;
+ BoardRecoverySnapshot snapshot={.actual_state=255U};int32_t observed=board_recovery_snapshot(&snapshot);
+ uint64_t generation=board_recovery_boot_current();uint8_t result=observed==0?BOARD_RECOVERY_RESULT_OK:BOARD_RECOVERY_RESULT_IO;
+ if(request.operation==BOARD_RECOVERY_QUERY) {
+  generation=board_bootstrap_storage_query_generation();
+  if((!generation&&!board_bootstrap_storage_uncertain_first())||(snapshot.flags&BOARD_RECOVERY_SUPPORTED)==0U){snapshot.flags&=(uint8_t)~BOARD_RECOVERY_SUPPORTED;result=BOARD_RECOVERY_RESULT_UNSUPPORTED;}
+  else if(generation==UINT64_MAX)result=BOARD_RECOVERY_RESULT_IO;
+  else if(board_bootstrap_storage_pending()) {
+   uint8_t required=BOARD_RECOVERY_ABORT_LATCHED|BOARD_RECOVERY_SAFE_OUTPUTS|BOARD_RECOVERY_OUTPUTS_VALID|BOARD_RECOVERY_SUPPORTED;
+   result=board_bootstrap_storage_query_healthy()&&(snapshot.flags&required)==required?BOARD_RECOVERY_RESULT_OK:BOARD_RECOVERY_RESULT_IO;
+   /* This getter reads the SDK's RAM clock, never sends a time request. Old
+    * queued QUERY may receive a reply but cannot arm a second recovery leg. */
+   uint64_t now=bootstrap_now(router);
+   if(bootstrap_request_fresh(packet->timestamp,now))
+    (void)board_bootstrap_storage_note_query(&request,packet->timestamp,generation,snapshot.abort_epoch);
+  }
+  return send_status(router,result,&request,generation,&snapshot,uptime_ms);
+ }
+ uint64_t now=bootstrap_now(router);
+ int32_t staged=board_bootstrap_storage_stage_first_leg(&request,packet->timestamp,now,snapshot.abort_epoch,router,bootstrap_reply,bootstrap_now);
+ if(staged<0)return SEDS_OK;
+ result=(uint8_t)staged;
+ (void)board_recovery_snapshot(&snapshot);
+
+ return send_status(router,result,&request,generation,&snapshot,uptime_ms);
+}
+SedsResult board_recovery_handle(SedsRouter*router,const SedsPacketView*packet,uint32_t local_endpoint,uint32_t uptime_ms) {
+ /* Nonblocking serialization: no transport waits/SDK lock cycle, and manual
+  * Stop has its independent endpoint/owner path. */
+ if(atomic_flag_test_and_set_explicit(&dispatching,memory_order_acquire))return SEDS_IO;
+ SedsResult result=handle_serialized(router,packet,local_endpoint,uptime_ms);
+ atomic_flag_clear_explicit(&dispatching,memory_order_release);return result;
 }

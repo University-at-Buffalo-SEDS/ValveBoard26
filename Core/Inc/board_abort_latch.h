@@ -13,6 +13,9 @@ void board_launch_latch_set(void);
 /* Return true only after current backup marker write and exact readback. */
 uint8_t board_launch_latch_set_verified(void);
 uint8_t board_launch_latch_is_set(void);
+/* Monotonic RAM evidence of a full verified marker this lifecycle/retained boot.
+ * Metadata only: this never replaces fresh physical admission verification. */
+uint8_t board_launch_latch_was_verified(void);
 
 uint8_t board_abort_latch_clear_for_recovery(void);
 

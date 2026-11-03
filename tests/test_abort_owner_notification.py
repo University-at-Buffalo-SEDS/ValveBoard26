@@ -25,10 +25,8 @@ static uint64_t g_sim_last_valve_command_ms;
 #define TX_TIMER_TICKS_PER_SECOND 1000U
 ULONG tx_time_get(void){return 100;}
 static void apply_automatic_valve(uint8_t cmd){(void)cmd;}
-static void pilot_valve_on(void){} static void pilot_valve_off(void){}
-static void nitrous_valve_close(void){} static void nitrous_valve_open(void){}
-static void normally_open_valve_close(void){} static void normally_open_valve_open(void){}
-static void start_launch_sequence(void){}
+static void start_launch_sequence(uint32_t epoch){assert(epoch);}
+static void apply_manual_valve_locked(void*context){apply_automatic_valve(*(uint8_t*)context);}
 static int publish_umbilical_status(unsigned cmd,unsigned value){(void)cmd;(void)value;return 0;}
 ACTUAL_CONSUMER
 static unsigned recoveries;
@@ -37,18 +35,22 @@ static void recover_then_launch(void){
  assert(snapshot.flags&BOARD_RECOVERY_ABORT_LATCHED);
  assert(board_recovery_begin_prepare(0,snapshot.abort_epoch)==0);
  assert(board_recovery_apply_safe(0,snapshot.abort_epoch,&snapshot)==-14);
- thread_comm_service_board_recovery();assert(!thread_comm_get_abort());
+ board_recovery_execute_owned();assert(!thread_comm_get_abort());
  assert(thread_comm_request_launch_sequence(10000)==TX_SUCCESS);
  assert(board_launch_latch_is_set());recoveries++;
 }
 static UINT paused_manual_abort(void){UINT result=thread_comm_request_manual_abort();assert(result==TX_SUCCESS);recover_then_launch();return result;}
 typedef int SedsResult;
+#define SEDS_IO -9
 #define SEDS_OK 0
+static SedsResult board_recovery_sync_command_cutoff(void){return SEDS_OK;}
 #define SEDS_BAD_ARG -1
 #define SEDS_HANDLER_ERROR -3
 typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;} SedsPacketView;
 static uint8_t board_recovery_command_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static uint8_t board_recovery_automatic_is_stale(const SedsPacketView*p){(void)p;return 0;}
+static struct{void*r;}g_router;
+static bool board_recovery_manual_stop_source_allowed(void*r,const SedsPacketView*p){(void)r;(void)p;return false;}
 static int32_t seds_pkt_get_u8(const SedsPacketView*p,uint8_t*out,size_t n){assert(n==1);*out=p->payload[0];return 1;}
 static int telemetry_broadcast_abort(const char*reason){assert(!strcmp(reason,"Valve board abort command"));return 0;}
 #define thread_comm_request_manual_abort paused_manual_abort
@@ -58,21 +60,24 @@ ACTUAL_TYPED
 #define Continuity_GPIO_Port 0
 #define Continuity_Pin 0
 static unsigned HAL_GPIO_ReadPin(unsigned port,unsigned pin){(void)port;(void)pin;return 1;}
+static uint64_t telemetry_event_clock_snapshot(void){return 9000;}
 static uint64_t safety_now_ms(void){return 100;}
-static void safety_record_first_abort(uint32_t reason,uint64_t failure,uint64_t heartbeat,uint8_t flight,uint32_t continuity,uint32_t before){(void)reason;(void)failure;(void)heartbeat;(void)flight;(void)continuity;(void)before;recover_then_launch();}
+static uint8_t paused_local_abort(uint32_t reason,uint64_t failure,uint64_t heartbeat,uint32_t flight,uint32_t continuity,uint64_t original_utc,uint8_t heartbeat_only){assert(original_utc==9000);uint8_t claimed=thread_comm_request_local_abort(reason,failure,heartbeat,flight,continuity,original_utc,heartbeat_only);assert(claimed);recover_then_launch();return claimed;}
+#define thread_comm_request_local_abort paused_local_abort
 ACTUAL_SAFETY
+#undef thread_comm_request_local_abort
 int main(int argc,char**argv){
  assert(argc==2);TX_BYTE_POOL pool={0};assert(thread_comm_init(&pool)==0);
  board_recovery_bind_owner(read_outputs,prepare,finish);assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_IDLE)==TX_SUCCESS);
  const uint8_t command=CMD_ABORT;SedsPacketView packet={.payload=&command,.payload_len=1,.timestamp=100};
- /* Heartbeat is intentionally inert in Idle. Preserve the original late
-  * after-claim recovery schedule in supervised prelaunch instead. */
+ /* Heartbeat is now intentionally inert in Idle. Preserve this original
+  * late-after-claim recovery test in its supervised active prelaunch state. */
  if(!strcmp(argv[1],"automatic")){assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_PREFILL)==TX_SUCCESS);safety_request_abort(SAFETY_ABORT_HEARTBEAT,"first cause");}
  else if(!strcmp(argv[1],"manual"))assert(Abort_handler(&packet,0)==SEDS_OK);
  else if(!strcmp(argv[1],"typed"))assert(Valve_Command_handler(&packet,0)==SEDS_OK);
  else assert(0);
  assert(recoveries==1&&finished==1);
- thread_comm_msg_t queued;while(thread_comm_receive(&queued,TX_NO_WAIT)==TX_SUCCESS)handle_command(queued);
+ thread_comm_msg_t queued;uint32_t epoch=0;while(thread_comm_receive_owned(&queued,&epoch)==TX_SUCCESS)handle_command(queued,epoch);
  assert(!thread_comm_get_abort());
  /* A genuinely NEW manual Stop after Launch remains unconditional and does
   * not depend on ordinary queue capacity or an owner notification. */
@@ -80,8 +85,8 @@ int main(int argc,char**argv){
  return 0;
 }
 '''
-  code=re.search(r'enum\s*\{.*?\};',(ROOT/'Core/Inc/safety_diagnostics.h').read_text(),re.S).group()+'\n'+code
   control=(ROOT/'Core/Src/main_thread.c').read_text();telemetry=(ROOT/'Core/Src/telemetry.c').read_text();safety=(ROOT/'Core/Src/safety_thread.c').read_text()
+  code='#include <assert.h>\nstatic void main_thread_force_outputs_safe_off(void){assert(0 && "unexpected store inhibition in healthy Abort fixture");}\n'+code
   for key,value in [('ACTUAL_CONSUMER',function(control,'handle_command')),('ACTUAL_MANUAL',function(telemetry,'Abort_handler')),('ACTUAL_TYPED',function(telemetry,'Valve_Command_handler')),('ACTUAL_SAFETY',function(safety,'safety_request_abort'))]:code=code.replace(key,value)
   with tempfile.TemporaryDirectory(prefix='abort-owner-notification-')as tmp:
    p=Path(tmp);(p/'tx_api.h').write_text(tx);(p/'test.c').write_text(code);binary=p/'test'

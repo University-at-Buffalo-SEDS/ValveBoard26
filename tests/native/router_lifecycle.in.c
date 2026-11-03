@@ -247,7 +247,16 @@ int main(int argc,char**argv){
  pthread_mutexattr_t attr;assert(!pthread_mutexattr_init(&attr));assert(!pthread_mutexattr_settype(&attr,PTHREAD_MUTEX_RECURSIVE));
  assert(!pthread_mutex_init(&g_telemetry_mutex.mutex,&attr));g_telemetry_mutex.tx_mutex_id=TX_MUTEX_ID;
  fail_write=false;
- if(!strcmp(argv[2],"race")){
+ if(!strcmp(argv[2],"busy_retry")){
+  assert(init_telemetry_router()==SEDS_OK);
+  input_size=pack(SEDS_DT_FLIGHT_STATE,1,input,sizeof input);store_busy=true;
+  rx_asynchronous(input,(size_t)input_size);
+  if(RX_QUEUED_ONLY){assert(telemetry_router_enter());(void)seds_router_process_all_queues(g_router.r);assert(telemetry_router_leave());}
+  assert(app_callbacks==1&&writes==0&&g_persisted_state==5&&g_flight_state_cache_errors==0&&invalidations==1);
+  store_busy=false;rx_asynchronous(input,(size_t)input_size);
+  if(RX_QUEUED_ONLY){assert(telemetry_router_enter());(void)seds_router_process_all_queues(g_router.r);assert(telemetry_router_leave());}
+  assert(app_callbacks==2&&writes==1&&stored==1&&g_persisted_state==1&&g_flight_state_cache_errors==0&&invalidations==1);
+ }else if(!strcmp(argv[2],"race")){
   input_size=pack(SEDS_DT_FLIGHT_STATE,0,input,sizeof input);pause_enabled=1;
   pthread_t first,second,rx;assert(!pthread_create(&first,NULL,initialize,NULL));
   pthread_mutex_lock(&gate);while(!paused)pthread_cond_wait(&changed,&gate);assert(g_router.r==NULL&&g_router.created==0&&allocations==1);pthread_mutex_unlock(&gate);

@@ -19,6 +19,7 @@ typedef struct {
     uint32_t flight_state;
     uint32_t detail;
     uint32_t reason; /* Written last; zero means no recorded local trigger. */
+    uint64_t original_network_utc; /* Prior actual SDK sample, or explicit unknown0. */
 } safety_abort_diagnostic_t;
 
 extern volatile safety_abort_diagnostic_t g_safety_first_abort;
@@ -27,7 +28,7 @@ static inline void safety_record_first_abort(uint32_t reason, uint64_t now_ms,
                                              uint64_t heartbeat_ms,
                                              uint32_t flight_state,
                                              uint32_t detail,
-                                             uint32_t already_aborted)
+                                             uint32_t already_aborted, uint64_t original_network_utc)
 {
     /* Called only by the safety thread. Snapshot remains immutable afterward. */
     if (already_aborted || g_safety_first_abort.reason != SAFETY_ABORT_NONE)
@@ -36,6 +37,7 @@ static inline void safety_record_first_abort(uint32_t reason, uint64_t now_ms,
     g_safety_first_abort.last_heartbeat_ms = heartbeat_ms;
     g_safety_first_abort.flight_state = flight_state;
     g_safety_first_abort.detail = detail;
+    g_safety_first_abort.original_network_utc = original_network_utc;
     g_safety_first_abort.reason = reason;
 }
 #endif

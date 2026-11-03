@@ -47,7 +47,9 @@ def function(source, name):
     return source[match.start():end]
 
 
-def assemble(root):
+MOCK_HEADERS['persistent_store.h'] += '\n#include <stdbool.h>\nint persistent_store_try_set(uint32_t,const void*,size_t,bool*);\n'
+
+def _assemble_original(root):
     root = Path(root)
     source = (root / 'Core/Src/telemetry.c').read_text()
     hook_name = 'fchooks.c' if (root / 'Core/Src/fchooks.c').is_file() else 'telemetry_hooks.c'
@@ -98,3 +100,7 @@ def assemble(root):
     if '@@' in program:
         raise AssertionError('Unresolved production-source fixture token')
     return program
+
+
+def assemble(root):
+    return '#include <stdbool.h>\nstatic bool store_busy;\n' + _assemble_original(root) + '\nint persistent_store_try_set(uint32_t k,const void*p,size_t n,bool*b){*b=store_busy;if(store_busy)return LAUNCHCORE_PERSIST_STORAGE_ERROR;return persistent_store_set(k,p,n);}\n'

@@ -23,13 +23,17 @@ typedef uint32_t ULONG;
 #define TX_TIMER_TICKS_PER_SECOND 1000U
 #define SEDS_DT_ABORT 9
 #define SEDS_OK 0
-volatile safety_abort_diagnostic_t g_safety_first_abort;
+typedef struct {uint64_t original_utc;uint32_t reason,epoch,lease;} thread_comm_safety_report_t;
+static thread_comm_safety_report_t pending={.epoch=1};static uint32_t serial,active;
+static uint8_t thread_comm_safety_report_claim(thread_comm_safety_report_t*out){if(!pending.reason||active)return 0;*out=pending;out->lease=++serial;active=out->lease;return 1;}
+static void thread_comm_safety_report_finish(uint32_t lease,uint8_t retained){assert(active==lease);active=0;if(retained)pending.reason=0;}
+
 static ULONG ticks;
 static unsigned calls;
 static int result = -1;
 static ULONG tx_time_get(void) { return ticks; }
-static int log_telemetry_string_asynchronous(int type, const char *reason) {
-    assert(type == SEDS_DT_ABORT);
+static int log_telemetry_string_asynchronous_at(int type, const char *reason, uint64_t original_utc) {
+    assert(type == SEDS_DT_ABORT && original_utc == 9000);
     assert(strstr(reason, "heartbeat timeout") != 0);
     calls++;
     return result;
@@ -38,7 +42,8 @@ static int log_telemetry_string_asynchronous(int type, const char *reason) {
 int main(void) {
     /* A received abort has no locally recorded trigger: no echo. */
     telemetry_report_safety_abort(); assert(calls == 0);
-    g_safety_first_abort.reason = SAFETY_ABORT_HEARTBEAT;
+    pending.original_utc = 9000;
+    pending.reason = SAFETY_ABORT_HEARTBEAT;
     ticks = UINT32_MAX - 500;
     telemetry_report_safety_abort(); assert(calls == 1);
     ticks += 999;

@@ -8,6 +8,7 @@
 #define ABORT_MAGIC UINT32_C(0x41425254)
 /* Launch inhibition owns backup registers 28/29; abort owns 30/31. */
 static uint8_t launch_latched;
+static uint8_t launch_verified;
 static uint8_t latched;
 static uint8_t backup_ready;
 
@@ -26,6 +27,7 @@ static uint8_t enable_backup_writes(void)
 
 void board_abort_latch_init(void)
 {
+    launch_verified = 0U;
     (void)enable_backup_writes();
     if (!backup_ready) {
         launch_latched = 1U;
@@ -34,6 +36,8 @@ void board_abort_latch_init(void)
     }
     /* A torn marker write also remains aborted until power is removed. */
     launch_latched = (TAMP->BKP28R != 0U || TAMP->BKP29R != 0U);
+    launch_verified = TAMP->BKP28R == UINT32_C(0x4c41554e) &&
+        TAMP->BKP29R == ~UINT32_C(0x4c41554e);
     latched = (TAMP->BKP30R != 0U || TAMP->BKP31R != 0U);
 }
 
@@ -80,6 +84,7 @@ uint8_t board_launch_latch_set_verified(void)
         board_abort_latch_set();
         return 0U;
     }
+    launch_verified = 1U;
     return 1U;
 }
 /* Compatibility helper; physical admissions use the checked API. */
@@ -90,6 +95,10 @@ void board_launch_latch_set(void)
 uint8_t board_launch_latch_is_set(void)
 {
     return launch_latched;
+}
+uint8_t board_launch_latch_was_verified(void)
+{
+    return launch_verified;
 }
 
 /* Called only by explicit, authenticated recovery after the control owner has
@@ -104,6 +113,7 @@ uint8_t board_abort_latch_clear_for_recovery(void)
     __DSB();
     if (TAMP->BKP28R != 0U || TAMP->BKP29R != 0U ||
         TAMP->BKP30R != 0U || TAMP->BKP31R != 0U) return 0U;
+    launch_verified = 0U;
     launch_latched = 0U;
     latched = 0U;
     return 1U;

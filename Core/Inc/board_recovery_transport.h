@@ -3,6 +3,7 @@
 #include "sedsnet.h"
 #include "sedsnet_config.h"
 void board_recovery_transport_set_router(SedsRouter *router);
+uint8_t board_recovery_manual_stop_source_allowed(SedsRouter*router,const SedsPacketView*packet);
 SedsResult board_recovery_handle(SedsRouter *router,const SedsPacketView *packet,
                                 uint32_t local_endpoint,uint32_t uptime_ms);
 /* Application replay floor; SDK stays generic. No current-time/RNG claim. */
@@ -10,3 +11,6 @@ uint8_t board_recovery_command_is_stale(const SedsPacketView *packet);
 uint8_t board_recovery_managed_update_allowed(const SedsPacketView *packet);
 uint8_t board_recovery_automatic_is_stale(const SedsPacketView *packet);
 #endif
+
+/* Validated floor publication OUTSIDE owner locks. IO/mutex failure is not stale ACK. */
+SedsResult board_recovery_sync_command_cutoff(void);

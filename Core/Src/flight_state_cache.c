@@ -158,16 +158,17 @@ static SedsResult persist_update(const SedsPacketView *packet, void *user)
     g_flight_state_cache_updates++;
     if (!changed) return SEDS_OK;
 
+    bool busy=false;
     if (!g_persist_ready ||
-        persistent_store_set(FLIGHT_STATE_PERSIST_KEY, &state,
-                             sizeof(state)) != LAUNCHCORE_PERSIST_OK)
+        persistent_store_try_set(FLIGHT_STATE_PERSIST_KEY, &state,
+                             sizeof(state),&busy) != LAUNCHCORE_PERSIST_OK)
     {
         /* Preserve the existing volatile apply-before-persist policy, but
          * retire the SDK cache so an identical reliable retry re-enters this
          * callback instead of being accepted without retrying durability.
          * g_network_value_seen is unchanged: no extra polling traffic. */
         (void)clear_managed_cache();
-        g_flight_state_cache_errors++;
+        if(!busy)g_flight_state_cache_errors++;
         return SEDS_HANDLER_ERROR;
     }
     g_persisted_state = state;

@@ -84,6 +84,10 @@ int main(int argc,char**argv){
  puts(argv[1]);return 0;
 }
 '''
+# Runtime FSTATE persistence now uses the nonwaiting wrapper. The existing
+# fault/retry harness retains its exact write model through that boundary.
+HEADERS['persistent_store.h'] += '\n#include <stdbool.h>\nint persistent_store_try_set(uint32_t,const void*,size_t,bool*);\n'
+HARNESS += '\nint persistent_store_try_set(uint32_t k,const void*p,size_t n,bool*b){*b=false;return persistent_store_set(k,p,n);}\n'
 class CacheRegistrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

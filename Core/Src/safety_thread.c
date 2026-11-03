@@ -1,3 +1,4 @@
+#include "telemetry_event_clock.h"
 #include "board_watchdog.h"
 // safety_thread.c
 #include "VB-Threads.h"
@@ -8,7 +9,7 @@
 #include "tx_api.h"
 #include "safety_diagnostics.h"
 
-volatile safety_abort_diagnostic_t g_safety_first_abort;
+
 
 TX_THREAD safety_thread;
 
@@ -36,17 +37,14 @@ static uint64_t safety_now_ms(void)
 
 static void safety_request_abort(uint32_t reason, const char *message)
 {
-    (void)message; /* Network thread reports the recorded first cause. */
+    (void)message; /* Network thread reports the current owner-tagged local cause. */
     const uint64_t failure_ms = safety_now_ms();
     const uint64_t heartbeat_ms = thread_comm_get_groundstation_heartbeat_ms();
     const uint8_t flight_state = thread_comm_get_flight_state();
     const uint32_t continuity = HAL_GPIO_ReadPin(Continuity_GPIO_Port, Continuity_Pin);
-    const uint32_t abort_before = thread_comm_get_abort();
-    const uint8_t claimed = reason == SAFETY_ABORT_HEARTBEAT
-        ? thread_comm_request_heartbeat_abort() : thread_comm_request_automatic_abort();
-    if (claimed == 0U) return;
-    safety_record_first_abort(reason, failure_ms, heartbeat_ms, flight_state,
-                              continuity, abort_before);
+    const uint64_t origin_utc = telemetry_event_clock_snapshot();
+    if (!thread_comm_request_local_abort(reason, failure_ms, heartbeat_ms, flight_state,
+        continuity, origin_utc, reason == SAFETY_ABORT_HEARTBEAT)) return;
     /* The retained Abort flag is consumed by every control-owner loop.
      * A redundant queued Abort could outlive verified recovery and relatch. */
 }

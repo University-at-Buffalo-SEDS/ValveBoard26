@@ -38,59 +38,24 @@ int main(void) {
                            input=code, text=True, check=True)
             subprocess.run([exe], check=True)
 
-    def test_production_publish_acceptance_and_retry_failure(self):
-        source = (ROOT / "Core/Src/telemetry.c").read_text()
-        function='\n'.join(actual_function(source,n)for n in ('telemetry_publish_umbilical_status_locked','telemetry_publish_umbilical_status'))
-        declaration = re.search(r"typedef struct \{.*?\} ValveStatusDiagnostic;", source, re.S).group()
-        code = r"""
-#include <assert.h>
-#include <stdint.h>
-#define TELEMETRY_ENABLED
-#define SEDS_OK 0
-#define SEDS_ERR -1
-#define SEDS_BAD_ARG -2
-#define SEDS_DT_UMBILICAL_STATUS 42
-#define SEDS_EK_UNSIGNED 0
-typedef int SedsResult;
-static struct { void *r; } g_router = {(void *)1};
-static unsigned tick=100, sends, sleeps;
-static int failures;
-static unsigned tx_time_get(void) { return tick; }
-static void tx_thread_sleep(unsigned n) { sleeps+=n; tick+=n; }
-static int init_telemetry_router(void) { return -1; }
-static int seds_router_log_typed(void *r, int ty, const uint8_t *p,
-                                 unsigned n, unsigned size, int kind) {
-  (void)r; (void)kind; assert(ty==42 && n==2 && size==1 && p[1]<=1);
-  sends++; if(failures>0) {failures--; return -7;} return 0;
+    def test_deferred_is_not_acceptance_and_real_refusal_remains_counted(self):
+        from status_submit_fixture import run
+        run(r"""
+int main(void){
+ SedsResult result=999;
+ fixture_get_failure=1;
+ assert(telemetry_submit_umbilical_status(2,1,&result)==TELEMETRY_STATUS_REFUSED&&result==SEDS_BAD_ARG&&!sdk_calls);
+ fixture_get_failure=0;g_router.r=0;g_router.created=0;
+ assert(telemetry_submit_umbilical_status(2,1,&result)==TELEMETRY_STATUS_DEFERRED&&result==SEDS_IO&&!sdk_calls&&!clock_reads);
+ g_router.r=(void*)1;g_router.created=1;utc=0;
+ assert(telemetry_submit_umbilical_status(2,1,&result)==TELEMETRY_STATUS_DEFERRED&&!sdk_calls&&!g_sim_umbilical_status_fail&&!g_valve_status_publish[2].calls);
+ utc=1000;change_clock_after_read=2000;
+ assert(telemetry_publish_umbilical_status(2,1)==0&&last_stamp==1000&&utc==2000);
+ change_clock_after_read=0;sdk_result=-7;
+ unsigned before=sdk_calls;assert(telemetry_publish_umbilical_status(2,0)==-7&&sdk_calls==before+1);
+ assert(g_valve_status_publish[2].calls==2&&g_valve_status_publish[2].failed==1&&g_sim_umbilical_status_fail==1&&g_valve_status_publish[2].last_result==-7&&g_valve_status_publish[2].last_state==0);
+ sdk_result=0;assert(telemetry_publish_umbilical_status(255,1)==0);
+ fixture_put_failure=1;assert(telemetry_publish_umbilical_status(1,0)==SEDS_ERR);fixture_put_failure=0;
+ return 0;
 }
-""" + declaration + """
-volatile ValveStatusDiagnostic g_valve_status_publish[7];
-""" +'\nstatic unsigned checked_depth;\nstatic void telemetry_lock(void){assert(!checked_depth);++checked_depth;}\nstatic void telemetry_unlock(void){assert(checked_depth==1);--checked_depth;}\n'+checked_hooks(ROOT)+"\n"+ function + r"""
-int main(void) {
-  fixture_get_failure=1;assert(telemetry_publish_umbilical_status(2,1)==SEDS_BAD_ARG&&!sends&&!g_valve_status_publish[2].calls);fixture_get_failure=0;
-  assert(telemetry_publish_umbilical_status(2,1)==0);
-  assert(g_valve_status_publish[2].accepted==1);
-  assert(g_valve_status_publish[2].last_state==1);
-  failures=3;
-  assert(telemetry_publish_umbilical_status(2,0)==-7);
-  assert(sends==4 && sleeps==3);
-  assert(g_valve_status_publish[2].calls==2);
-  assert(g_valve_status_publish[2].failed==1);
-  assert(g_valve_status_publish[2].last_state==0);
-  assert(g_valve_status_publish[2].last_result==-7);
-  assert(g_valve_status_publish[2].last_tick==103);
-  failures=1;
-  assert(telemetry_publish_umbilical_status(1,0)==0);
-  assert(g_valve_status_publish[1].accepted==1);
-  assert(g_valve_status_publish[1].failed==0);
-  assert(telemetry_publish_umbilical_status(255,0)==0);
-  g_router.r=0;
-  assert(telemetry_publish_umbilical_status(2,0)==-1);
-  assert(g_valve_status_publish[2].failed==2);
-}
-"""
-        with tempfile.TemporaryDirectory() as tmp:
-            exe = str(pathlib.Path(tmp) / "status")
-            subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
-                            "-x", "c", "-", "-o", exe], input=code, text=True, check=True)
-            subprocess.run([exe], check=True)
+""")

@@ -61,6 +61,17 @@ SedsResult log_error_syncronous(const char *fmt, ...);
 SedsResult telemetry_poll_timesync(void);
 SedsResult telemetry_announce_discovery(void);
 SedsResult telemetry_poll_discovery(void);
+/* Submission is local retained ownership, never a remote/applied receipt. */
+typedef enum {
+    TELEMETRY_STATUS_DEFERRED,
+    TELEMETRY_STATUS_ACCEPTED_LOCAL,
+    TELEMETRY_STATUS_REFUSED
+} TelemetryStatusSubmit;
+TelemetryStatusSubmit telemetry_submit_umbilical_status(uint8_t cmd_id, uint8_t on,
+                                                       SedsResult *result);
+typedef uint8_t (*TelemetryStatusSnapshot)(uint8_t id, uint8_t *state);
+TelemetryStatusSubmit telemetry_submit_umbilical_snapshot(uint8_t cmd_id,
+    TelemetryStatusSnapshot snapshot, SedsResult *result);
 SedsResult telemetry_publish_umbilical_status(uint8_t cmd_id, uint8_t on);
 SedsResult telemetry_send_actuator_command(uint8_t cmd_id);
 SedsResult telemetry_send_actuator_command_at(uint8_t cmd_id, uint64_t timestamp_ms);
@@ -79,6 +90,9 @@ uint8_t telemetry_unix_is_valid(void);
 
 
 void telemetry_set_unix_time_ms(uint64_t unix_ms);
+
+/* Local automatic cause: immutable prior-observed UTC, zero stays unknown. */
+SedsResult log_telemetry_string_asynchronous_at(SedsDataType type, const char *text, uint64_t original_utc);
 
 void die(const char *fmt, ...);
 

@@ -29,7 +29,35 @@ launchcore_persist_status_t persistent_store_init(void);
 launchcore_persist_status_t persistent_store_get(uint32_t,void*,size_t*);
 launchcore_persist_status_t persistent_store_set(uint32_t,const void*,size_t);
 '''
-HARNESS=r'''
+HARNESS=r'''#include <stdbool.h>
+#include <stdint.h>
+bool persistent_store_controls_ready(void){return true;}
+bool persistent_store_completed_boundary_ready(void){return false;}
+/* Legacy-owner unit boundary: no commissioning is in flight in these tests.
+ * Real BRPC integration is covered separately with the actual journal. */
+bool persistent_store_bootstrap_pending(void){return false;}
+bool persistent_store_bootstrap_metadata_ready(void){return true;}
+void persistent_store_hold_bootstrap(void){}
+bool persistent_store_publish_bootstrap_complete(void){return false;}
+
+#include "board_bootstrap_storage.h"
+#include "board_recovery_boot.h"
+#include "bootstrap_owner.h"
+uint64_t board_bootstrap_storage_query_generation(void){return board_recovery_boot_current();}
+bool board_bootstrap_storage_pending(void){return false;}
+bool board_bootstrap_storage_uncertain_first(void){return false;}
+bool board_bootstrap_storage_query_healthy(void){return false;}
+bool board_bootstrap_storage_note_query(const BoardRecoveryRequest*r,uint64_t t,uint64_t g,uint32_t e){(void)r;(void)t;(void)g;(void)e;return false;}
+bool board_bootstrap_storage_admit_second_leg(const BoardRecoveryRequest*r,uint64_t t){(void)r;(void)t;return false;}
+int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*r,uint64_t t,uint64_t n,uint32_t e,void*c,BootstrapReply reply,BootstrapNow now){(void)r;(void)t;(void)n;(void)e;(void)c;(void)reply;(void)now;return 7;}
+unsigned long tx_time_get(void){return 123;}
+
+#include <stdint.h>
+bool persistent_store_recovery_ready(void){return true;}
+bool persistent_store_classify_absent_floor(uint64_t expected){(void)expected;return false;}
+bool persistent_store_commit_absent_floor(const uint8_t value[16]){(void)value;return false;}
+
+
 #include "main.h"
 #include "persistent_store.h"
 #include "thread_comm.h"
@@ -49,7 +77,7 @@ static unsigned floor_writes,state_writes,barrier_calls;static uint8_t backup_fa
 static uint64_t now=10000;static uint8_t response[40];
 struct Record{uint32_t key;uint32_t length;uint8_t bytes[16];};
 struct Image{struct TampFake backup;struct Record records[3];};
-static struct Image image={.records={{0x46535445,1,{1}},{0x42524745,8,{41}},{0x4252464c,0,{0}}}};
+static struct Image image={.records={{0x46535445,1,{1}},{0x42524745,8,{41}},{0x4252464c,16,{[0]=1,[8]=1}}}};
 static SedsResult(*update_callback)(const SedsPacketView*,void*);
 static struct Record*record(uint32_t key){for(unsigned i=0;i<3;i++)if(image.records[i].key==key)return &image.records[i];assert(0);return NULL;}
 static void save_crash(void){image.backup=test_tamp;FILE*f=fopen(image_path,"wb");assert(f&&fwrite(&image,sizeof image,1,f)==1&&fclose(f)==0);_Exit(42);}
@@ -130,14 +158,14 @@ int main(int argc,char**argv){
 class DurableRecoveryTests(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
-  cls.tmp=tempfile.TemporaryDirectory(prefix='recovery-durable-');p=Path(cls.tmp.name)
-  for name,text in [('main.h',MAIN),('persistent_store.h',PERSIST)]:(p/name).write_text(text)
-  tree=ast.parse((ROOT/'tests/test_board_recovery_owner.py').read_text())
-  tx=next(n.args[0].value for n in ast.walk(tree)if isinstance(n,ast.Call)and isinstance(n.func,ast.Attribute)and n.func.attr=='write_text'and n.args and isinstance(n.args[0],ast.Constant)and isinstance(n.args[0].value,str)and 'typedef struct{UINT locked;}TX_MUTEX'in n.args[0].value)
-  (p/'tx_api.h').write_text(tx);(p/'harness.c').write_text(HARNESS);cls.exe=p/'test';cls.image=p/'power-cut.bin'
-  sdk=Path(os.environ['SEDSNET_TEST_SOURCE']);ab=ROOT.name=='ActuatorBoard26'
-  modules=['board_abort_latch.c','thread_comm.c','board_recovery_wire.c','board_recovery_boot.c','board_recovery_floor.c','board_recovery_transport.c','flight_state_cache.c']
-  subprocess.run(['cc','-DTELEMETRY_ENABLED=1','-DSAFE_MASK='+('0'if ab else'6'),'-DRECOVERY_ENDPOINT='+('2000'if ab else'2001'),'-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I'+str(p),'-I'+str(ROOT/'Core/Inc'),'-I'+str(sdk/'C-Headers'),*[str(ROOT/'Core/Src'/m)for m in modules],str(p/'harness.c'),'-o',str(cls.exe)],check=True)
+  cls.tmp=tempfile.TemporaryDirectory(prefix='recovery-durable-journal-');p=Path(cls.tmp.name);fixtures=ROOT/'tests/fixtures/durable_recovery'
+  from test_no_telemetry import cached_source
+  cls.exe=p/'test';cls.image=p/'power-cut.bin';sdk=Path(os.environ['SEDSNET_TEST_SOURCE']);lc=cached_source('sedslaunchcore','SDK_FREE_LAUNCHCORE_SOURCE')
+  if lc is None:raise RuntimeError('Configure firmware once to cache LaunchCore, or set SDK_FREE_LAUNCHCORE_SOURCE to the matching published source')
+  assert 'launchcore_persist_get_strict' in (lc/'bootloader/include/launchcore/persist.h').read_text()
+  modules=['board_abort_latch.c','thread_comm.c','board_recovery_wire.c','board_recovery_boot.c','board_recovery_transport.c','flight_state_cache.c','persistent_store.c','board_bootstrap_storage.c','bootstrap_marker.c']
+  if ROOT.name=='ActuatorBoard26':modules+=['fill_settings.c']
+  subprocess.run(['cc','-DEXPECTED_CAP=32','-DTELEMETRY_ENABLED=1','-DSAFE_MASK='+('0'if ROOT.name=='ActuatorBoard26'else'6'),'-DRECOVERY_ENDPOINT='+('2000'if ROOT.name=='ActuatorBoard26'else'2001'),'-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I'+str(fixtures),'-I'+str(ROOT/'Core/Inc'),'-I'+str(ROOT/'Core/Src'),'-I'+str(sdk/'C-Headers'),'-I'+str(lc/'bootloader/include'),*[str(ROOT/'Core/Src'/name)for name in modules],str(ROOT/'Bootloader/storage_dispatch.c'),str(lc/'bootloader/src/persist.c'),str(lc/'bootloader/src/crc32.c'),str(fixtures/'harness.c'),'-o',str(cls.exe)],check=True)
  @classmethod
  def tearDownClass(cls):cls.tmp.cleanup()
  def case(self,name,expected=0):
@@ -145,6 +173,8 @@ class DurableRecoveryTests(unittest.TestCase):
   self.assertEqual(result.returncode,expected,result.stdout+result.stderr)
  def test_successful_nonaborted_startup_uses_barrier_then_owner_clear(self):self.case('success')
  def test_backup_failure_never_writes_flash_same_nonce_no_retry_new_nonce_repairs(self):self.case('backup_repair')
+ def test_cache_refusal_same_nonce_no_retry_fresh_intent_recovers(self):self.case('cache_retry')
+ def test_flash_refusal_same_nonce_no_retry_fresh_intent_recovers(self):self.case('floor_retry')
  def test_manual_stop_during_floor_or_state_nvm_cancels_owner(self):
   for name in ['abort_floor','abort_state']:
    with self.subTest(name=name):self.case(name)

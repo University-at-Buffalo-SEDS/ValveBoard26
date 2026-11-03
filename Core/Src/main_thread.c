@@ -1,3 +1,4 @@
+#include "persistent_store_health.h"
 #include "board_watchdog.h"
 // main_thread.c
 #include "VB-Threads.h"
@@ -8,6 +9,7 @@
 #include "main.h"
 #include "thread_comm.h"
 #include "board_recovery.h"
+#include "board_bootstrap_storage.h"
 #include "solenoid_driver.h"
 #include "servo_driver.h"
 #include <stdbool.h>
@@ -33,6 +35,7 @@ static uint8_t g_pilot_valve_state = 0U;
 static uint8_t g_no_servo_open_state = 0U;
 static uint8_t g_nitrous_servo_open_state = 0U;
 static uint8_t g_launch_sequence_active = 0U;
+static uint32_t g_launch_manual_epoch;
 static uint8_t g_launch_sequence_actuator_started = 0U;
 static uint8_t g_launch_sequence_pilot_opened = 0U;
 static uint8_t g_launch_sequence_completed = 0U;
@@ -122,12 +125,7 @@ static void nitrous_valve_open(void)
     (void)publish_umbilical_status(CMD_DUMP_OPEN, g_nitrous_servo_open_state);
 }
 
-static void nitrous_valve_close(void)
-{
-    dump_servo_close();
-    g_nitrous_servo_open_state = 0U;
-    (void)publish_umbilical_status(CMD_DUMP_OPEN, g_nitrous_servo_open_state);
-}
+
 
 static void normally_open_valve_open(void)
 {
@@ -136,11 +134,16 @@ static void normally_open_valve_open(void)
     (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
 }
 
-static void normally_open_valve_close(void)
+
+
+/* Called under actual shared state owner. Register-only/driver bounded writes. */
+static void manual_stop_apply_locked(void)
 {
-    no_servo_close();
-    g_no_servo_open_state = 0U;
-    (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
+    g_launch_sequence_active=0U;g_launch_sequence_actuator_started=0U;
+    g_launch_sequence_pilot_opened=0U;g_launch_sequence_pilot_open_ticks=0U;
+    no_servo_open();dump_servo_open();solenoidOff(&pilot_solenoid);
+    g_no_servo_open_state=g_nitrous_servo_open_state=1U;g_pilot_valve_state=0U;
+    g_sim_pilot_valve_state=0U;
 }
 
 static void main_thread_force_outputs_safe_off(void)
@@ -164,7 +167,21 @@ static void main_thread_force_outputs_safe_off(void)
     g_pilot_valve_state = 0U;
 }
 
-static void start_launch_sequence(void)
+typedef struct{uint32_t epoch;ULONG now;uint8_t started;} LaunchStart;
+static void start_launch_sequence_locked(void*context){
+ LaunchStart*q=context;if(g_launch_sequence_active)return;
+ g_launch_manual_epoch=q->epoch;
+    g_launch_sequence_active = 1U;
+    g_launch_sequence_actuator_started = 1U;
+    g_launch_sequence_pilot_opened = 0U;
+    g_launch_sequence_completed = 0U;
+    g_launch_sequence_start_ticks=q->now;
+    g_launch_sequence_pilot_open_ticks = 0U;
+    g_launch_sequence_last_pilot_status_ticks = 0U;
+    g_launch_sequence_start_count++;
+ q->started=1U;
+}
+static void start_launch_sequence(uint32_t command_epoch)
 {
     if (g_launch_sequence_active != 0U)
     {
@@ -175,14 +192,8 @@ static void start_launch_sequence(void)
      * A failed durable latch never becomes a successful physical start. */
     if (thread_comm_set_flight_state(VALVE_FLIGHT_STATE_LAUNCH) != TX_SUCCESS) return;
 
-    g_launch_sequence_active = 1U;
-    g_launch_sequence_actuator_started = 1U;
-    g_launch_sequence_pilot_opened = 0U;
-    g_launch_sequence_completed = 0U;
-    g_launch_sequence_start_ticks = tx_time_get();
-    g_launch_sequence_pilot_open_ticks = 0U;
-    g_launch_sequence_last_pilot_status_ticks = 0U;
-    g_launch_sequence_start_count++;
+    LaunchStart request={command_epoch,tx_time_get(),0U};
+    if(!thread_comm_manual_effect_owned(0U,command_epoch,start_launch_sequence_locked,&request)||!request.started)return;
 #ifdef TELEMETRY_ENABLED
     uint64_t launch_timestamp_ms = thread_comm_get_launch_command_timestamp_ms();
     if (launch_timestamp_ms == 0ULL)
@@ -209,21 +220,23 @@ static void start_launch_sequence(void)
 
 static void service_launch_sequence_request(void)
 {
-    uint64_t launch_timestamp_ms = 0ULL;
+    uint64_t launch_timestamp_ms = 0ULL;uint32_t command_epoch=0U;
 
     if (thread_comm_get_abort() != 0U ||
-        thread_comm_take_launch_sequence_request(&launch_timestamp_ms) == 0U)
+        thread_comm_take_launch_sequence_request_owned(&launch_timestamp_ms,&command_epoch) == 0U)
     {
         return;
     }
 
     if (thread_comm_set_flight_state(VALVE_FLIGHT_STATE_LAUNCH) != TX_SUCCESS) return;
     (void)thread_comm_set_launch_command_timestamp_ms(launch_timestamp_ms);
-    start_launch_sequence();
+    start_launch_sequence(command_epoch);
 }
 
-static void service_launch_sequence(void)
+static void apply_automatic_valve(uint8_t command);
+static void service_launch_sequence_locked(void*context)
 {
+    uint8_t*events=context;
     if (g_launch_sequence_active == 0U)
     {
         return;
@@ -240,7 +253,7 @@ static void service_launch_sequence(void)
     if ((g_launch_sequence_pilot_opened == 0U) && (elapsed >= pilot_open_ticks))
     {
         g_launch_sequence_pilot_attempt_count++;
-        pilot_valve_on();
+        apply_automatic_valve(CMD_PILOT_OPEN);*events|=1U;
         g_launch_sequence_pilot_opened = 1U;
         g_launch_sequence_pilot_open_ticks = now;
         g_launch_sequence_last_pilot_status_ticks = now;
@@ -250,7 +263,7 @@ static void service_launch_sequence(void)
         ((ULONG)(now - g_launch_sequence_last_pilot_status_ticks) >=
          LAUNCH_SEQUENCE_PILOT_STATUS_PERIOD_TICKS))
     {
-        (void)publish_umbilical_status(CMD_PILOT_OPEN, 1U);
+        *events|=1U;
         g_launch_sequence_last_pilot_status_ticks = now;
     }
 
@@ -258,14 +271,20 @@ static void service_launch_sequence(void)
         ((ULONG)(now - g_launch_sequence_pilot_open_ticks) >=
          pilot_open_duration_ticks))
     {
-        pilot_valve_off();
+        apply_automatic_valve(CMD_PILOT_CLOSE);*events|=1U;
         g_launch_sequence_active = 0U;
         g_launch_sequence_pilot_opened = 0U;
         g_launch_sequence_pilot_open_ticks = 0U;
         g_launch_sequence_completed = 1U;
         g_launch_sequence_finish_count++;
-        (void)publish_umbilical_status(CMD_SEQUENCE, 0U);
+        *events|=2U;
     }
+}
+static void service_launch_sequence(void){
+ uint8_t events=0U;
+ (void)thread_comm_manual_effect_owned(0U,g_launch_manual_epoch,service_launch_sequence_locked,&events);
+ if(events&1U)(void)publish_umbilical_status(CMD_PILOT_OPEN,g_pilot_valve_state);
+ if(events&2U)(void)publish_umbilical_status(CMD_SEQUENCE,g_launch_sequence_active);
 }
 
 /* No SDK/status publication while the shared launch-state mutex is held. */
@@ -290,13 +309,19 @@ static void apply_automatic_valve(uint8_t command)
     }
 }
 
-static void handle_command(thread_comm_msg_t cmd){
+static void apply_manual_valve_locked(void*context){apply_automatic_valve(*(const uint8_t*)context);}
+static void handle_command(thread_comm_msg_t cmd,uint32_t command_epoch){
+    if (!persistent_store_controls_ready() && cmd != CMD_ABORT) {
+        main_thread_force_outputs_safe_off();
+        return;
+    }
+
     if (g_aborted)
     {
         return;
     }
     if ((cmd & THREAD_COMM_AUTOMATIC_TAG) != 0U) {
-        if (thread_comm_apply_automatic(cmd, apply_automatic_valve) != 0U) {
+        if (thread_comm_apply_automatic_owned(cmd,command_epoch,apply_automatic_valve) != 0U) {
             const uint8_t command = (uint8_t)(cmd & ~THREAD_COMM_AUTOMATIC_TAG);
             g_sim_valve_commands_executed++;
             g_sim_last_valve_command = command;
@@ -314,33 +339,19 @@ static void handle_command(thread_comm_msg_t cmd){
     g_sim_last_valve_command = (uint32_t)cmd;
     g_sim_last_valve_command_ms = ((uint64_t)tx_time_get() * 1000ULL) /
                                   TX_TIMER_TICKS_PER_SECOND;
-    switch (cmd) {
-    case CMD_PILOT_OPEN:
-        pilot_valve_on();
-        break;
-    case CMD_PILOT_CLOSE:
-        pilot_valve_off();
-        break;
-    case CMD_DUMP_CLOSE:
-        nitrous_valve_close();
-        break;
-    case CMD_DUMP_OPEN:
-        nitrous_valve_open();
-        break;
-    case CMD_NORMALLY_OPEN_CLOSE:
-        normally_open_valve_close();
-        break;
-    case CMD_NORMALLY_OPEN_OPEN:
-        normally_open_valve_open();
-        break;
-    case CMD_SEQUENCE:
-        start_launch_sequence();
-        break;
-    case CMD_ABORT:
-        (void)thread_comm_set_abort(1U);
-        break;
-    default:
-        break;
+    const uint8_t valve=(uint8_t)cmd;
+    if(cmd==CMD_PILOT_OPEN||cmd==CMD_PILOT_CLOSE||cmd==CMD_DUMP_OPEN||cmd==CMD_DUMP_CLOSE||cmd==CMD_NORMALLY_OPEN_OPEN||cmd==CMD_NORMALLY_OPEN_CLOSE){
+      if(thread_comm_manual_effect_owned(0U,command_epoch,apply_manual_valve_locked,(void*)&valve)){
+        if(cmd==CMD_PILOT_OPEN||cmd==CMD_PILOT_CLOSE)(void)publish_umbilical_status(CMD_PILOT_OPEN,g_pilot_valve_state);
+        else if(cmd==CMD_DUMP_OPEN||cmd==CMD_DUMP_CLOSE)(void)publish_umbilical_status(CMD_DUMP_OPEN,g_nitrous_servo_open_state);
+        else (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN,g_no_servo_open_state);
+      }
+      return;
+    }
+    switch(cmd){
+    case CMD_SEQUENCE:start_launch_sequence(command_epoch);break;
+    case CMD_ABORT:(void)thread_comm_request_manual_abort();break;
+    default:break;
     }
 }
 
@@ -392,6 +403,27 @@ static uint8_t recovery_read_outputs(uint32_t *mask)
     return BOARD_RECOVERY_OUTPUTS_VALID | (value == 6U ? BOARD_RECOVERY_SAFE_OUTPUTS : 0U) |
         (g_aborted != 0U && g_launch_sequence_active == 0U ? BOARD_RECOVERY_OWNER_STOPPED : 0U);
 }
+
+/* Called by main status publication under the nonwaiting shared state owner.
+ * Only read registers/RAM; the telemetry owner releases state before SDK work. */
+static uint8_t current_status_read_locked(uint8_t id, uint8_t *state)
+{
+    uint32_t outputs = 0U;
+    if (!state || (recovery_read_outputs(&outputs) & BOARD_RECOVERY_OUTPUTS_VALID) == 0U)
+        return 0U;
+    switch (id) {
+    case CMD_PILOT_OPEN: *state = (outputs & 1U) != 0U; break;
+    case CMD_NORMALLY_OPEN_OPEN: *state = (outputs & 2U) != 0U; break;
+    case CMD_DUMP_OPEN: *state = (outputs & 4U) != 0U; break;
+    case CMD_SEQUENCE: *state = g_launch_sequence_active != 0U; break;
+    default: return 0U;
+    }
+    return 1U;
+}
+static uint8_t current_status_snapshot(uint8_t id, uint8_t *state)
+{
+    return thread_comm_status_snapshot_try(id, state, current_status_read_locked) == 0;
+}
 static uint8_t recovery_prepare_outputs(uint8_t desired)
 {
     if (g_outputs_initialized == 0U) return 0U;
@@ -417,10 +449,16 @@ static void recovery_finish_owner(void)
     g_no_servo_open_state = g_nitrous_servo_open_state = 1U;
 }
 
+/* Executed only by the main control owner for an explicit staged first leg. */
+static uint8_t bootstrap_stop_owner(void) {
+ if(!recovery_prepare_outputs(0U))return 0U;
+ recovery_finish_owner();g_aborted=1U;return 1U;
+}
 void main_thread_entry(ULONG initial_input)
 {
     (void)initial_input;
 
+    (void)thread_comm_bind_manual_stop_apply(manual_stop_apply_locked);
     // Initialize pilot valve solenoid
     solenoidInit(&pilot_solenoid);
     
@@ -434,13 +472,17 @@ void main_thread_entry(ULONG initial_input)
     normally_open_valve_open();
     nitrous_valve_open();
     
-    thread_comm_msg_t msg;
+    thread_comm_msg_t msg;uint32_t command_epoch=0U;
     
     board_recovery_bind_owner(recovery_read_outputs, recovery_prepare_outputs, recovery_finish_owner);
+    (void)board_bootstrap_storage_bind_owner(bootstrap_stop_owner);
+    status_report_bind_snapshot(current_status_snapshot);
     publish_all_umbilical_statuses();
     for (;;) {
         board_watchdog_progress(BOARD_WATCHDOG_CONTROL);
         thread_comm_service_board_recovery();
+        board_bootstrap_storage_service();
+        if (!persistent_store_controls_ready()) main_thread_force_outputs_safe_off();
         service_launch_sequence_request();
 
         if (thread_comm_get_abort() != 0U)
@@ -470,9 +512,9 @@ void main_thread_entry(ULONG initial_input)
         while ((g_aborted != 1U) &&
                (thread_comm_get_abort() == 0U) &&
                (commands_drained < MAIN_THREAD_MAX_COMMANDS_PER_TICK) &&
-               (thread_comm_receive(&msg, TX_NO_WAIT) == TX_SUCCESS))
+               (thread_comm_receive_owned(&msg,&command_epoch) == TX_SUCCESS))
         {
-            handle_command(msg);
+            handle_command(msg,command_epoch);
             commands_drained++;
         }
 

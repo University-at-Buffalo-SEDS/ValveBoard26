@@ -69,19 +69,19 @@ int main(void) {
 
     def test_launch_cannot_clear_or_bypass_abort(self):
         source=(ROOT/'Core/Src/main_thread.c').read_text()
-        fn=source.split('static void service_launch_sequence_request(void)',1)[1].split('static void service_launch_sequence(void)',1)[0]
-        fn='static void service_launch_sequence_request(void)'+fn
+        from router_lifecycle_fixture import function
+        fn=function(source,'service_launch_sequence_request')
         stub=r"""
 #include <stdint.h>
 #include <assert.h>
 #define VALVE_FLIGHT_STATE_LAUNCH 6
 static unsigned aborted=1, starts, takes;
 static unsigned thread_comm_get_abort(void){return aborted;}
-static unsigned thread_comm_take_launch_sequence_request(uint64_t *stamp){takes++;*stamp=123;return 1;}
+static unsigned thread_comm_take_launch_sequence_request_owned(uint64_t *stamp,uint32_t *epoch){takes++;*stamp=123;*epoch=7;return 1;}
 #define TX_SUCCESS 0U
 static unsigned thread_comm_set_flight_state(unsigned state){(void)state;return TX_SUCCESS;}
 static void thread_comm_set_launch_command_timestamp_ms(uint64_t stamp){(void)stamp;}
-static void start_launch_sequence(void){starts++;}
+static void start_launch_sequence(uint32_t epoch){assert(epoch==7);starts++;}
 """
         main=r"""
 int main(void){

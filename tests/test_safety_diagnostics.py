@@ -28,15 +28,17 @@ static uint64_t now_ms, heartbeat, safety_heartbeat_missing_since_ms;
 static uint32_t aborted, allowed = 1, calls;
 static uint32_t safety_heartbeat_timeout_count;
 #define SAFETY_HEARTBEAT_TIMEOUT_MS 5000ULL
+static uint64_t telemetry_event_clock_snapshot(void){return 9000;}
 static uint64_t safety_now_ms(void) { return now_ms; }
 static uint64_t thread_comm_get_groundstation_heartbeat_ms(void) { return heartbeat; }
-static uint32_t thread_comm_get_abort(void) { return aborted; }
 static uint32_t thread_comm_abort_allowed(void) { return allowed; }
 static uint32_t thread_comm_heartbeat_abort_allowed(void) { return allowed; }
 static uint32_t thread_comm_get_flight_state(void) { return 3; }
 static uint32_t suppressed;
-static uint8_t thread_comm_request_automatic_abort(void) { if(aborted||suppressed)return 0;aborted=1;return 1; }
-static uint8_t thread_comm_request_heartbeat_abort(void) { return thread_comm_request_automatic_abort(); }
+static uint8_t thread_comm_request_local_abort(uint32_t reason,uint64_t at,uint64_t hb,uint32_t state,uint32_t detail,uint64_t utc,uint8_t heartbeat_only) {
+ (void)heartbeat_only;if(aborted||suppressed)return 0;aborted=1;calls++;
+ safety_record_first_abort(reason,at,hb,state,detail,0,utc);return 1;
+}
 """
         if valve:
             # Count retained Abort admission, not the removed redundant notification.
@@ -79,10 +81,10 @@ int main(void) {
     assert(g_safety_first_abort.last_heartbeat_ms==100);
     now_ms=9000; safety_check_heartbeat();
     assert(g_safety_first_abort.at_ms==5100);
-    safety_record_first_abort(SAFETY_ABORT_ADC_START, 9999, 0, 0, 9, 0);
+    safety_record_first_abort(SAFETY_ABORT_ADC_START, 9999, 0, 0, 9, 0, 12345);
     assert(g_safety_first_abort.reason==SAFETY_ABORT_HEARTBEAT);
     g_safety_first_abort=(safety_abort_diagnostic_t){0};
-    safety_record_first_abort(SAFETY_ABORT_ADC_START, 9999, 0, 0, 9, 1);
+    safety_record_first_abort(SAFETY_ABORT_ADC_START, 9999, 0, 0, 9, 1, 12345);
     assert(g_safety_first_abort.reason==0);
     aborted=0; heartbeat=0; now_ms=10000;
     safety_heartbeat_missing_since_ms=0;

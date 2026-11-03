@@ -110,16 +110,17 @@ class QualificationContractTests(unittest.TestCase):
         for name in ["main_stack_remaining", "data_acq_stack_remaining", "pressure_sd_stack_remaining"]:
             self.assertGreaterEqual(probes[name]["minimum"], 1024)
 
-    def test_both_valve_ack_states_have_a_bounded_immediate_retry(self):
-        root = Path(build.__file__).resolve().parent
-        telemetry = (root / "Core/Src/telemetry.c").read_text()
-        status = telemetry.split("SedsResult telemetry_publish_umbilical_status", 1)[1]
-        status = status.split("SedsResult telemetry_send_actuator_command", 1)[0]
-        self.assertIn("attempt < 3U", status)
-        self.assertIn("tx_thread_sleep(1U)", status)
-        self.assertIn("seds_router_log_typed", status)
-        self.assertNotIn("log_telemetry_asynchronous", status)
-        self.assertNotIn("if (on != 0U)", status)
+    def test_status_submission_is_single_retained_attempt_without_owner_sleep(self):
+        from router_lifecycle_fixture import function
+        telemetry = (Path(build.__file__).resolve().parent / "Core/Src/telemetry.c").read_text()
+        status = function(telemetry, "telemetry_publish_umbilical_snapshot_locked")
+        self.assertIn("seds_router_log_typed_ex", status)
+        self.assertIn("&observed_utc, true", status)
+        self.assertLess(status.index("const uint64_t observed_utc"), status.index("snapshot(cmd_id"))
+        self.assertLess(status.index("snapshot(cmd_id"), status.index("seds_router_log_typed_ex"))
+        self.assertIn("telemetry_unix_ms_locked", status)
+        self.assertNotIn("tx_thread_sleep", status)
+        self.assertNotIn("init_telemetry_router", status)
 
     def test_heartbeat_fail_safe_arms_only_after_a_link_is_established(self):
         root = Path(build.__file__).resolve().parent

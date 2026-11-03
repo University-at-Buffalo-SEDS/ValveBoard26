@@ -4,11 +4,28 @@ Actual latch/admission and VB owner functions; MMIO/ThreadX/output callbacks are
 host fixtures. This injects a fault, not evidence of a hardware incident.
 """
 from pathlib import Path
-import ast,subprocess,tempfile,unittest
+import ast,re,subprocess,tempfile,unittest
 from test_recovery_durable_barrier import MAIN
 from test_launch_abort_policy import function
 ROOT=Path(__file__).resolve().parents[1]
-HARNESS=r'''
+HARNESS=r'''#include <stdbool.h>
+#include <stdint.h>
+bool persistent_store_controls_ready(void){return true;}
+bool persistent_store_completed_boundary_ready(void){return false;}
+uint8_t board_recovery_manual_time_retired(uint64_t source){(void)source;return 0;}
+/* Legacy-owner unit boundary: no commissioning is in flight in these tests.
+ * Real BRPC integration is covered separately with the actual journal. */
+bool persistent_store_bootstrap_pending(void){return false;}
+bool persistent_store_bootstrap_metadata_ready(void){return true;}
+void persistent_store_hold_bootstrap(void){}
+bool persistent_store_publish_bootstrap_complete(void){return false;}
+
+#include <stdint.h>
+bool persistent_store_recovery_ready(void){return true;}
+bool persistent_store_classify_absent_floor(uint64_t expected){(void)expected;return false;}
+bool persistent_store_commit_absent_floor(const uint8_t value[16]){(void)value;return false;}
+
+
 #include "main.h"
 #include "thread_comm.h"
 #include "board_abort_latch.h"
@@ -77,7 +94,7 @@ int main(int argc,char**argv){
   assert(launch_request()==TX_SUCCESS);test_tamp.BKP28R=test_tamp.BKP29R=0;drop_launch=1;service_launch_sequence_request();
   assert(peer_sends==0&&status_sends==0&&!g_launch_sequence_active&&thread_comm_get_abort());return 0;
  }
- if(!strcmp(scenario,"direct_owner_bad")){drop_launch=1;start_launch_sequence();assert(!peer_sends&&!status_sends&&!g_launch_sequence_active&&thread_comm_get_abort());return 0;}
+ if(!strcmp(scenario,"direct_owner_bad")){drop_launch=1;start_launch_sequence(thread_comm_manual_epoch());assert(!peer_sends&&!status_sends&&!g_launch_sequence_active&&thread_comm_get_abort());return 0;}
  if(!strcmp(scenario,"stop_before_owner")){assert(launch_request()==0);before_lock=manual_stop;service_launch_sequence_request();assert(!peer_sends&&!g_launch_sequence_active&&thread_comm_get_abort());return 0;}
 #endif
  assert(!strcmp(scenario,"healthy"));assert(launch_request()==TX_SUCCESS);assert(board_launch_latch_is_set()&&!thread_comm_get_abort());
@@ -90,6 +107,11 @@ int main(int argc,char**argv){
  save(argv[2]);return 0;
 }
 '''
+def owner_source(owner):
+ # Preserve actual typed original-epoch context and bounded raw setup callback.
+ context=re.search(r'typedef struct\{[^\n]*\} LaunchStart;',owner).group(0)
+ return 'static uint32_t g_launch_manual_epoch;\n'+context+'\n'+'\n'.join(function(owner,name)for name in ['start_launch_sequence_locked','start_launch_sequence','service_launch_sequence_request'])
+
 class VerifiedLaunchTests(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
@@ -97,7 +119,7 @@ class VerifiedLaunchTests(unittest.TestCase):
   tree=ast.parse((ROOT/'tests/test_board_recovery_owner.py').read_text());tx=next(n.args[0].value for n in ast.walk(tree)if isinstance(n,ast.Call)and isinstance(n.func,ast.Attribute)and n.func.attr=='write_text'and n.args and isinstance(n.args[0],ast.Constant)and isinstance(n.args[0].value,str)and 'typedef struct{UINT locked;}TX_MUTEX'in n.args[0].value);(p/'tx_api.h').write_text(tx)
   cls.vb=ROOT.name=='ValveBoard26';code=HARNESS
   if cls.vb:
-   owner=(ROOT/'Core/Src/main_thread.c').read_text();code=code.replace('ACTUAL_OWNER',function(owner,'start_launch_sequence')+'\n'+function(owner,'service_launch_sequence_request'))
+   owner=(ROOT/'Core/Src/main_thread.c').read_text();code=code.replace('ACTUAL_OWNER',owner_source(owner))
   else:code=code.replace('ACTUAL_OWNER','')
   (p/'harness.c').write_text(code);cls.exe=p/'test';cls.image=p/'backup.bin'
   subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',*(['-DVB=1','-DTELEMETRY_ENABLED=1']if cls.vb else[]),'-I'+str(p),'-I'+str(ROOT/'Core/Inc'),str(ROOT/'Core/Src/board_abort_latch.c'),str(ROOT/'Core/Src/thread_comm.c'),str(p/'harness.c'),'-o',str(cls.exe)],check=True)

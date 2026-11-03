@@ -13,14 +13,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def function(source, name):
-    at = source.index(name + '(')
-    start = source.rfind('\n', 0, at) + 1
-    # These public callbacks have return type on the same line.
-    brace = source.index('{', at)
-    end, depth = brace + 1, 1
+    # Select a definition, not a forward declaration or earlier call site.
+    match=re.search(r'^[^\n;]*\b'+re.escape(name)+r'\([^;]*?\)\s*\{',source,re.M)
+    assert match,name
+    start=match.start();brace=source.index('{',start);end,depth=brace+1,1
     while depth:
-        depth += (source[end] == '{') - (source[end] == '}')
-        end += 1
+        depth+=(source[end]=='{')-(source[end]=='}');end+=1
     return source[start:end]
 
 
@@ -35,9 +33,28 @@ class LaunchAbortPolicyTests(unittest.TestCase):
         command_receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Valve_Command_handler')
         managed_receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Flight_State_handler')
         control_source=(ROOT/'Core/Src'/('main_task.c' if ab else 'main_thread.c')).read_text()
-        self.assertIn('thread_comm_apply_automatic(cmd, apply_automatic_valve)',control_source)
+        self.assertIn('thread_comm_apply_automatic_owned(cmd,command_epoch,apply_automatic_valve)',control_source)
+        self.assertIn('thread_comm_receive_owned(&msg,&command_epoch)',control_source)
+        self.assertIn('thread_comm_manual_effect_owned(',control_source)
         apply_source=function(control_source,'apply_automatic_valve')
         code = r'''
+#include <stdbool.h>
+#include <stdint.h>
+bool persistent_store_controls_ready(void){return true;}
+bool persistent_store_completed_boundary_ready(void){return false;}
+uint8_t board_recovery_manual_time_retired(uint64_t source){(void)source;return 0;}
+/* Legacy-owner unit boundary: no commissioning is in flight in these tests.
+ * Real BRPC integration is covered separately with the actual journal. */
+bool persistent_store_bootstrap_pending(void){return false;}
+bool persistent_store_bootstrap_metadata_ready(void){return true;}
+void persistent_store_hold_bootstrap(void){}
+bool persistent_store_publish_bootstrap_complete(void){return false;}
+
+#include <stdint.h>
+bool persistent_store_recovery_ready(void){return true;}
+bool persistent_store_classify_absent_floor(uint64_t expected){(void)expected;return false;}
+bool persistent_store_commit_absent_floor(const uint8_t value[16]){(void)value;return false;}
+
 #include <assert.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -70,13 +87,17 @@ UINT tx_semaphore_create(TX_SEMAPHORE*s,const char*n,ULONG c){(void)n;s->count=c
 UINT tx_semaphore_get(TX_SEMAPHORE*s,ULONG wait){if(wait==TX_NO_WAIT)no_wait_sends++;if(!s->count)return TX_NO_INSTANCE;s->count--;return TX_SUCCESS;}
 UINT tx_semaphore_put(TX_SEMAPHORE*s){s->count++;return TX_SUCCESS;}
 typedef int SedsResult;
+#define SEDS_IO -9
 #define SEDS_OK 0
+static SedsResult board_recovery_sync_command_cutoff(void){return SEDS_OK;}
 #define SEDS_BAD_ARG -1
 #define SEDS_ERR -2
 #define SEDS_HANDLER_ERROR -3
 typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;} SedsPacketView;
 static uint8_t board_recovery_command_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static uint8_t board_recovery_automatic_is_stale(const SedsPacketView*p){(void)p;return 0;}
+static struct{void*r;}g_router;
+static bool board_recovery_manual_stop_source_allowed(void*r,const SedsPacketView*p){(void)r;(void)p;return false;}
 static unsigned g_flight_state_handler_error_count,g_flight_state_handler_count,g_last_flight_state_packet;
 static unsigned g_command_queue_drop_count,g_sim_valve_commands_received,g_sim_valve_open_seen,g_sim_groundstation_confirmation_received;
 static int32_t seds_pkt_get_u8(const SedsPacketView*p,uint8_t*v,size_t n){assert(n==1);*v=p->payload[0];return 1;}
@@ -242,6 +263,8 @@ typedef struct{UINT locked;}TX_MUTEX;typedef struct{ULONG count;}TX_SEMAPHORE;ty
 #define TX_NO_WAIT 0U
 #define TX_WAIT_FOREVER 0xffffffffUL
 #define TX_INHERIT 1U
+#define TX_TIMER_TICKS_PER_SECOND 1000U
+unsigned long tx_time_get(void);
 UINT tx_mutex_create(TX_MUTEX*,const char*,UINT);UINT tx_mutex_get(TX_MUTEX*,ULONG);UINT tx_mutex_put(TX_MUTEX*);
 UINT tx_semaphore_create(TX_SEMAPHORE*,const char*,ULONG);UINT tx_semaphore_get(TX_SEMAPHORE*,ULONG);UINT tx_semaphore_put(TX_SEMAPHORE*);
 ''')

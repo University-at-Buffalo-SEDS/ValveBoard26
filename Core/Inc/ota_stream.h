@@ -2,9 +2,10 @@
 
 #include "sedsnet_config.h"
 #include <stdint.h>
+#include <stdbool.h>
 
 #define OTA_STREAM_PORT 4510U
-#define OTA_STREAM_MAX_CHUNK 112U
+#define OTA_STREAM_MAX_CHUNK 120U
 
 typedef enum {
   OTA_STREAM_OK = 0,
@@ -21,3 +22,7 @@ SedsResult ota_stream_init(SedsRouter *router);
 void ota_stream_poll(void);
 uint32_t ota_stream_max_patch_size(void);
 
+
+/* Only the actual telemetry task may register its runtime ownership. */
+bool ota_stream_register_owner(void);
+extern volatile uint32_t g_ota_service_errors,g_ota_cleanup_result;

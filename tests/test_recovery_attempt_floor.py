@@ -13,7 +13,22 @@ int persistent_store_init(void);
 int persistent_store_get(uint32_t,void*,size_t*);
 int persistent_store_set(uint32_t,const void*,size_t);
 '''
-HARNESS=r'''
+HARNESS=r'''#include <stdbool.h>
+#include <stdint.h>
+#include <stdint.h>
+bool persistent_store_controls_ready(void){return true;}
+bool persistent_store_completed_boundary_ready(void){return false;}
+/* Legacy-owner unit boundary: no commissioning is in flight in these tests.
+ * Real BRPC integration is covered separately with the actual journal. */
+bool persistent_store_bootstrap_pending(void){return false;}
+bool persistent_store_bootstrap_metadata_ready(void){return true;}
+void persistent_store_hold_bootstrap(void){}
+bool persistent_store_publish_bootstrap_complete(void){return false;}
+
+bool persistent_store_recovery_ready(void){return true;}
+bool persistent_store_classify_absent_floor(uint64_t expected){(void)expected;return false;}
+bool persistent_store_commit_absent_floor(const uint8_t value[16]){(void)value;return false;}
+
 #include "board_recovery_floor.h"
 #include "persistent_store.h"
 #include <assert.h>
@@ -99,6 +114,6 @@ class AttemptFloorTests(unittest.TestCase):
     def test_actual_uncertain_write_highwater_and_explicit_repair(self):
         with tempfile.TemporaryDirectory() as directory:
             p=Path(directory);(p/'persistent_store.h').write_text(HEADER);(p/'main.c').write_text(HARNESS);exe=p/'floor'
-            subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I',str(p),'-I',str(ROOT/'Core/Inc'),str(ROOT/'Core/Src/board_recovery_floor.c'),str(p/'main.c'),'-o',str(exe)],check=True)
+            subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I',str(p),'-I',str(ROOT/'Core/Inc'),str(ROOT/'Core/Src/board_recovery_floor.c'),str(p/'main.c'),str(ROOT/'Core/Src/board_recovery_wire.c'),'-o',str(exe)],check=True)
             for case in ['write_before','write_after','readback','mismatch','new_issuer','lower_new_issuer','interleaved_issuers']:
                 with self.subTest(case=case):subprocess.run([str(exe),case],check=True)

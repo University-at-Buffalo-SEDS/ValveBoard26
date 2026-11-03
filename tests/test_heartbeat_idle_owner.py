@@ -13,7 +13,7 @@ class HeartbeatOwnerTests(unittest.TestCase):
   code+=r'''
   #include <string.h>
   #include "safety_diagnostics.h"
-  volatile safety_abort_diagnostic_t g_safety_first_abort;
+  
   static uint64_t now_ms=5100,safety_heartbeat_missing_since_ms;
   static uint32_t safety_heartbeat_timeout_count;
   static unsigned clock_reads;static unsigned interleave;
@@ -22,19 +22,15 @@ class HeartbeatOwnerTests(unittest.TestCase):
   #define Continuity_GPIO_Port ((void*)0)
   #define Continuity_Pin 1U
   static uint32_t HAL_GPIO_ReadPin(void*p,unsigned pin){(void)p;(void)pin;return 1;}
-  static uint8_t claim_with_interleave(void){
+  static uint64_t telemetry_event_clock_snapshot(void){
    clock_reads++;
    if(interleave==1)assert(thread_comm_set_flight_state(STATE_FLIGHT_STATE_IDLE)==0);
    if(interleave==2){board_launch_latch_set();assert(thread_comm_set_flight_state(STATE_FLIGHT_STATE_LAUNCH)==0);}
    if(interleave==3)assert(thread_comm_request_manual_abort()==0);
-   return ACTUAL_CLAIM();
+   return 9000;
   }
-  #define thread_comm_request_automatic_abort claim_with_interleave
-  #define thread_comm_request_heartbeat_abort claim_with_interleave
   REQUEST
   HEARTBEAT
-  #undef thread_comm_request_automatic_abort
-  #undef thread_comm_request_heartbeat_abort
   int main(int argc,char**argv){
    assert(argc==2);TX_BYTE_POOL pool={0};assert(thread_comm_init(&pool)==0);board_recovery_bind_owner(read_outputs,prepare,finish);assert(thread_comm_set_flight_state(STATE_FLIGHT_STATE_PREFILL)==0);assert(thread_comm_note_groundstation_heartbeat(100)==0);
    if(!strcmp(argv[1],"idle")){assert(thread_comm_set_flight_state(STATE_FLIGHT_STATE_IDLE)==0);}
@@ -45,7 +41,7 @@ class HeartbeatOwnerTests(unittest.TestCase):
    if(!strcmp(argv[1],"generic_idle")){assert(thread_comm_set_flight_state(STATE_FLIGHT_STATE_IDLE)==0);assert(thread_comm_request_automatic_abort()==1&&thread_comm_get_abort());return 0;}
    if(!strcmp(argv[1],"manual_idle")){assert(thread_comm_set_flight_state(STATE_FLIGHT_STATE_IDLE)==0);assert(thread_comm_request_manual_abort()==0&&thread_comm_get_abort());return 0;}
    safety_check_heartbeat();
-   if(!strcmp(argv[1],"active")){assert(thread_comm_get_abort()&&g_safety_first_abort.reason==SAFETY_ABORT_HEARTBEAT&&clock_reads==1);}
+   if(!strcmp(argv[1],"active")){assert(thread_comm_get_abort()&&g_safety_first_abort.reason==SAFETY_ABORT_HEARTBEAT&&g_safety_first_abort.original_network_utc==9000&&clock_reads==1);}
    else if(!strcmp(argv[1],"manual_stop")){assert(thread_comm_get_abort()&&g_thread_comm_recovery_epoch==2&&!g_safety_first_abort.reason);}
    else {assert(!thread_comm_get_abort()&&!g_safety_first_abort.reason);if(!strcmp(argv[1],"idle"))assert(!safety_heartbeat_timeout_count&&!clock_reads);}
    return 0;
@@ -53,7 +49,7 @@ class HeartbeatOwnerTests(unittest.TestCase):
   '''
   # The AB has no continuity peripheral read in this heartbeat path.
   if ab:code=code.replace('static uint32_t HAL_GPIO_ReadPin(void*p,unsigned pin){(void)p;(void)pin;return 1;}','')
-  code=code.replace('ACTUAL_CLAIM','thread_comm_request_heartbeat_abort'if'thread_comm_request_heartbeat_abort(void)'in owner else'thread_comm_request_automatic_abort').replace('STATE_FLIGHT_STATE_',state+'_FLIGHT_STATE_')
+  code=code.replace('STATE_FLIGHT_STATE_',state+'_FLIGHT_STATE_')
   code=re.sub(r'(?m)^[ \t]*REQUEST[ \t]*$',lambda _:function(safety,'safety_request_abort')if not ab else'',code)
   code=re.sub(r'(?m)^[ \t]*HEARTBEAT[ \t]*$',lambda _:function(safety,'safety_check_heartbeat'),code)
   cases=['idle','active','fill_to_idle','fill_to_launch','launch_latched','manual_stop','generic_idle','manual_idle'];rows=[]
