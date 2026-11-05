@@ -255,9 +255,14 @@ int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*r,uin
   else if(metadata_load_bool(&normal_eligible)&&!metadata_load_bool(&pending)&&generation&&generation!=UINT64_MAX&&r->expected_boot_generation==generation)kind=JOB_NORMAL;
   else if(metadata_load_bool(&pending)&&metadata_load_bool(&known_identity)&&(metadata_load_bool(&healthy_floor)||metadata_load_bool(&repairable_floor))&&armed&&query.generation==generation&&r->expected_boot_generation==query.generation&&source>history.first_time)kind=history.kind==1U?JOB_NORMAL:JOB_SECOND;
   if(kind){
-   query.valid=false;job.request=*r;job.source=source;job.context=context;job.reply=reply;job.now=now;job.result=BOARD_RECOVERY_RESULT_IO;job.kind=kind;job.phase=0;job.valid=true;job.waiting=true;job.dirty=false;
-   /* RAM exclusion is immediate, actual main-owned safe Stop precedes media. */
-   persistent_store_hold_bootstrap();result=-1;
+   /* Claim the RAM hold under the same state lock as Launch BEFORE changing
+    * this query/job. An already accepted Launch leaves all of them untouched. */
+   int32_t held=board_recovery_stage_storage_hold(r->expected_abort_epoch);
+   if(held!=0)result=held==-10?BOARD_RECOVERY_RESULT_STALE:BOARD_RECOVERY_RESULT_IO;
+   else {
+    query.valid=false;job.request=*r;job.source=source;job.context=context;job.reply=reply;job.now=now;job.result=BOARD_RECOVERY_RESULT_IO;job.kind=kind;job.phase=0;job.valid=true;job.waiting=true;job.dirty=false;
+    result=-1;
+   }
   }else result=BOARD_RECOVERY_RESULT_STALE;
  }
  return jobs_leave()?result:BOARD_RECOVERY_RESULT_IO;

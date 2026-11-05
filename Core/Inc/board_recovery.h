@@ -33,6 +33,9 @@ int32_t board_recovery_apply_safe(uint8_t desired_state,
                                 BoardRecoverySnapshot *out);
 
 /* Telemetry preparation barrier; no storage or SDK while this state lock is held. */
+/* RAM-only job admission, serialized against accepted Launch before any
+ * query/job mutation, storage hold or NVM work. 0=owned, negative=refused. */
+int32_t board_recovery_stage_storage_hold(uint32_t expected_epoch);
 int32_t board_recovery_begin_prepare(uint8_t desired_state, uint32_t expected_epoch);
 void board_recovery_cancel_prepare(uint8_t desired_state, uint32_t expected_epoch);
 

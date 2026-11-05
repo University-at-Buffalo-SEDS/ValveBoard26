@@ -78,6 +78,11 @@ static uint8_t launch_source_valid_locked(uint64_t source) {
 static uint8_t launch_identity_valid(const char*sender,uint32_t length) {
  return length<=THREAD_COMM_LAUNCH_SENDER_MAX && (length==0U || sender!=0);
 }
+/* Accepted continuity survives storage/cache/latch faults until explicit Stop.
+ * Recovery must not infer absence from secondary metadata or a backup read. */
+static bool launch_retained_for_recovery_locked(void) {
+ return g_accepted_launch.initial_verified && g_accepted_launch.phase!=LAUNCH_NONE;
+}
 static uint8_t launch_record_live_locked(void) {
  return g_thread_comm_recovery_epoch!=0U && g_thread_comm_recovery_epoch!=UINT32_MAX &&
   g_accepted_launch.phase!=LAUNCH_NONE && g_accepted_launch.initial_verified &&
@@ -1006,6 +1011,8 @@ int32_t board_recovery_begin_prepare(uint8_t desired_state, uint32_t expected_ep
         return -10;
     if (g_thread_comm_initialized == 0U ||
         tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER) != TX_SUCCESS) return -14;
+    if (launch_retained_for_recovery_locked())
+        return command_state_release() ? -10 : -9;
     if (g_command_admission_fault || !persistent_store_recovery_ready()) {if(!bootstrap_state_release())return -9;return -9;}
     int32_t result = -10;
     if (g_thread_comm_recovery_epoch == expected_epoch && g_recovery_pending == 0U && !g_bootstrap_finalizing &&
@@ -1152,6 +1159,19 @@ static bool bootstrap_state_release(void) {
  if(command_state_release())return true;
  persistent_store_hold_bootstrap();return false;
 }
+/* Called with jobs_mutex held. This lock order is jobs -> state; the hold
+ * changes only RAM atomics. Launch admission uses this same state owner and
+ * rejects held controls, so exactly one side of the boundary may win. */
+int32_t board_recovery_stage_storage_hold(uint32_t expected_epoch) {
+ if(!expected_epoch||expected_epoch==UINT32_MAX||!g_thread_comm_initialized)
+  return -10;
+ if(tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return -14;
+ int32_t result=-10;
+ if(expected_epoch==g_thread_comm_recovery_epoch&&!launch_retained_for_recovery_locked()) {
+  persistent_store_hold_bootstrap();result=0;
+ }
+ return command_state_release()?result:-9;
+}
 bool board_recovery_bind_bootstrap_owner(BootstrapOwnerComplete complete,uint8_t(*stop)(void)) {
  if(!complete||!stop||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER)!=TX_SUCCESS)return false;
  g_bootstrap_complete=complete;g_bootstrap_stop=stop;return bootstrap_state_release();
@@ -1159,6 +1179,7 @@ bool board_recovery_bind_bootstrap_owner(BootstrapOwnerComplete complete,uint8_t
 int32_t board_recovery_prepare_storage_only(uint32_t epoch) {
  if(!epoch||epoch==UINT32_MAX)return -10;
  if(!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER)!=TX_SUCCESS)return -14;
+ if(launch_retained_for_recovery_locked())return command_state_release()?-10:-9;
  int32_t result=-10;
  if(!g_command_admission_fault&&!g_bootstrap_finalizing&&!g_recovery_pending&&epoch==g_thread_comm_recovery_epoch&&g_bootstrap_stop&&g_recovery_read_outputs) {
   g_thread_comm_abort=1U;
@@ -1198,8 +1219,10 @@ bool board_recovery_bootstrap_publish_complete(uint32_t old_epoch,uint32_t new_e
  return valid&&released&&persistent_store_publish_bootstrap_complete();
 }
 void board_recovery_bootstrap_retain_stop(void) {
+ if(!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER)!=TX_SUCCESS){g_command_admission_fault=1U;return;}
+ /* An old job's terminal cleanup is not a fresh manual Stop. */
+ if(launch_retained_for_recovery_locked()){(void)command_state_release();return;}
  persistent_store_hold_bootstrap();
- if(!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER)!=TX_SUCCESS)return;
  g_bootstrap_finalizing=0U;g_bootstrap_binding.valid=0U;thread_comm_latch_abort_locked(0U);
  (void)board_abort_latch_prepare_recovery();(void)bootstrap_state_release();
 }

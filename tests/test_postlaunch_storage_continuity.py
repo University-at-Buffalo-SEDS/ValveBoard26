@@ -184,11 +184,17 @@ int main(int argc,char**argv){
  assert(thread_comm_publish_command_cutoff(5000)==TX_SUCCESS);
  assert(thread_comm_request_network_launch_original(10000,"GS",2)==TX_SUCCESS);
  const uint32_t accepted_epoch=thread_comm_manual_epoch();
- if(preparing){board_recovery_bind_owner(read_outputs,prepare_outputs,finish_recovery);assert(board_recovery_begin_prepare(0,accepted_epoch)==0);assert(!thread_comm_launch_continuity());}
+ if(preparing){
+  board_recovery_bind_owner(read_outputs,prepare_outputs,finish_recovery);
+  const struct TampFake before=test_tamp;
+  assert(board_recovery_begin_prepare(0,accepted_epoch)==-10);
+  assert(thread_comm_launch_continuity()&&thread_comm_manual_epoch()==accepted_epoch&&!thread_comm_get_abort());
+  assert(!physical_off&&!recovery_finishes&&!memcmp(&before,&test_tamp,sizeof before));
+ }
  storage_ready=false;const uint8_t stop=CMD_ABORT;
  SedsPacketView packet={.sender="GS",.sender_len=2,.timestamp=4000,.payload=&stop,.payload_len=1};
  uint32_t epoch=thread_comm_manual_epoch();assert(Valve_Command_handler(&packet,0)==SEDS_OK);
- assert(!physical_off&&thread_comm_get_abort()==preparing&&epoch==thread_comm_manual_epoch()&&!broadcasts&&!sync_calls);
+ assert(!physical_off&&!thread_comm_get_abort()&&thread_comm_launch_continuity()&&epoch==thread_comm_manual_epoch()&&!broadcasts&&!sync_calls);
  trusted=false;packet.timestamp=11000;assert(Valve_Command_handler(&packet,0)==SEDS_IO);assert(sync_calls==1&&!physical_off);
  trusted=true;assert(Valve_Command_handler(&packet,0)==SEDS_OK);
  assert(physical_off==1&&thread_comm_get_abort()&&thread_comm_manual_epoch()!=epoch&&broadcasts==1&&sync_calls==1);
