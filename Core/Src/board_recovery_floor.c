@@ -8,7 +8,7 @@
 /* A checked, nonblocking owner protects every cache field, including64-bit
  * values on CortexM4. No caller waits for this owner or calls SDK while held. */
 static atomic_flag floor_owner = ATOMIC_FLAG_INIT;
-static uint8_t floor_state; /*0 unloaded,1 unused legacy,2 verified,3 failed */
+static uint8_t floor_state; /*0 unloaded,1 healthy/no prior recovery,2 verified,3 failed */
 static uint64_t floor_timestamp;
 static uint64_t attempted_timestamp;
 static uint8_t enter_floor(void) {
@@ -27,6 +27,9 @@ static void load_floor_locked(void) {
  if(persistent_store_init()!=LAUNCHCORE_PERSIST_OK)return;
  uint8_t wire[16]={0U};size_t length=sizeof wire;
  launchcore_persist_status_t result=persistent_store_get(BOARD_RECOVERY_FLOOR_KEY,wire,&length);
+ /* The facade retains readiness only for strict healthy ABSENT metadata.
+  * A deleted/error floor revokes it, so it cannot become this initial state. */
+ if(result==LAUNCHCORE_PERSIST_NOT_FOUND&&persistent_store_controls_ready()){floor_state=1U;return;}
  if(result!=LAUNCHCORE_PERSIST_OK||length!=sizeof wire||decode_u64(wire)==0U||decode_u64(wire+8U)==0U)return;
  floor_timestamp=decode_u64(wire+8U);floor_state=2U;
 }
@@ -94,7 +97,7 @@ uint8_t board_recovery_floor_note_bootstrap_attempt(uint64_t source) {
 /* Explicit exclusive boot caller, before tasks and first restore. */
 uint8_t board_recovery_floor_prime_boot(void){
  if(!enter_floor())return 0U;
- load_floor_locked();uint8_t healthy=floor_state==2U;leave_floor();return healthy;
+ load_floor_locked();uint8_t healthy=floor_state==1U||floor_state==2U;leave_floor();return healthy;
 }
 /* QUERY-time bound only: no lazy media access, even on failed/ABSENT floors. */
 uint8_t board_recovery_floor_cached_cutoff(uint64_t*out){

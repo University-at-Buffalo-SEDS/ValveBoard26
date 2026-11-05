@@ -10,7 +10,8 @@ class RecoveryFloorTests(unittest.TestCase):
    source=r"""
 #include <stdbool.h>
 #include <stdint.h>
-bool persistent_store_controls_ready(void){return true;}
+static bool controls_ready=true;
+bool persistent_store_controls_ready(void){return controls_ready;}
 bool persistent_store_completed_boundary_ready(void){return false;}
 /* Legacy-owner unit boundary: no commissioning is in flight in these tests.
  * Real BRPC integration is covered separately with the actual journal. */
@@ -33,8 +34,10 @@ launchcore_persist_status_t persistent_store_get(uint32_t key,void*out,size_t*le
 launchcore_persist_status_t persistent_store_set(uint32_t key,const void*in,size_t length){assert(key==0x4252464c&&length==16);writes++;if(io)return LAUNCHCORE_PERSIST_STORAGE_ERROR;memcpy(storage,in,16);exists=1;stored_length=16;return LAUNCHCORE_PERSIST_OK;}
 PRODUCTION
 int main(void){
- assert(!board_recovery_command_time_allowed(0));assert(writes==0);
- assert(!board_recovery_floor_is_healthy()); /* Missing is inhibited, never commissioned implicitly. */
+ assert(board_recovery_command_time_allowed(0));assert(writes==0);
+ assert(board_recovery_floor_is_healthy()); /* Healthy ABSENT means no prior recovery floor. */
+ controls_ready=false;floor_state=0;assert(!board_recovery_command_time_allowed(0));assert(!board_recovery_floor_is_healthy());
+ controls_ready=true;floor_state=0;
  exists=1;storage[0]=1;storage[8]=1;floor_state=0; /* Explicitly commissioned healthy fixture. */
  assert(board_recovery_floor_commit(77,100));assert(writes==1);
  assert(!board_recovery_floor_commit(77,99)&&!board_recovery_floor_commit(77,100)&&writes==1);

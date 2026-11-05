@@ -79,7 +79,7 @@ static uint8_t cache_view_health(const MetadataView*v,uint64_t current){
  bool floor_ok=identity_ok&&!v->absent;
  metadata_store_bool(&known_identity, (identity_ok));
  if(identity_ok)metadata_store_bool(&uncertain_first, (false));
- metadata_store_bool(&healthy_floor, (floor_ok));metadata_store_bool(&repairable_floor, (identity_ok&&v->absent&&v->state==2));metadata_store_bool(&normal_eligible, (floor_ok&&v->state!=2));
+ metadata_store_bool(&healthy_floor, (floor_ok));metadata_store_bool(&repairable_floor, (identity_ok&&v->absent&&v->state==2));metadata_store_bool(&normal_eligible, (identity_ok&&v->state!=2));
  if(!current&&!v->identity&&(v->state==0||(v->state==2&&v->marker.kind==0&&v->marker.first_expected_generation==UINT64_MAX)))return v->virgin?BOOTSTRAP_VIRGIN:BOOTSTRAP_MISSING_GENERATION;
  return identity_ok&&v->absent&&v->state==0?BOOTSTRAP_MISSING_FLOOR:BOOTSTRAP_NONE;
 }
@@ -189,7 +189,7 @@ static BoardBootstrapResult write_transaction(const BoardRecoveryRequest*r,uint6
   valid=(identity_case||floor_case)&&source>view.time&&(view.state!=2||source>view.marker.first_time);
  }else{
   valid=valid&&view.identity&&view.generation==r->expected_boot_generation&&view.generation==current&&source>view.time;
-  if(valid)valid=kind==JOB_NORMAL?!view.absent&&(view.state!=2||view.marker.kind==1U):retained_valid&&retained.kind==0U&&(view.state==1||view.state==2)&&view.marker.kind==0U&&source>view.marker.first_time;
+  if(valid)valid=kind==JOB_NORMAL?(view.state!=2||view.marker.kind==1U):retained_valid&&retained.kind==0U&&(view.state==1||view.state==2)&&view.marker.kind==0U&&source>view.marker.first_time;
   if(valid&&kind==JOB_SECOND){
    /* The fresh intent authorizes new effects. Original tuple/version/kind and
     * desired remain immutable history; normalize lifecycle ONLY for equality. */
@@ -251,7 +251,6 @@ int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*r,uin
   bool armed=query.valid&&bootstrap_request_fresh(query.source,network_now)&&r->issuer_session==query.issuer&&r->expected_abort_epoch==query.epoch&&!same_tuple(r,&query);
   if(uncertain&&metadata_load_bool(&history_valid)&&history.kind==0&&history.first_expected_generation==UINT64_MAX&&r->desired_state==history.desired&&r->expected_boot_generation==UINT64_MAX&&armed&&!query.generation&&source>history.first_time)kind=JOB_RECONCILE;
   else if(!uncertain&&(eligible==BOOTSTRAP_VIRGIN||eligible==BOOTSTRAP_MISSING_GENERATION)&&!generation&&r->expected_boot_generation==UINT64_MAX)kind=JOB_FIRST;
-  else if(eligible==BOOTSTRAP_MISSING_FLOOR&&generation&&generation!=UINT64_MAX&&r->expected_boot_generation==generation)kind=JOB_FIRST;
   else if(metadata_load_bool(&normal_eligible)&&!metadata_load_bool(&pending)&&generation&&generation!=UINT64_MAX&&r->expected_boot_generation==generation)kind=JOB_NORMAL;
   else if(metadata_load_bool(&pending)&&metadata_load_bool(&known_identity)&&(metadata_load_bool(&healthy_floor)||metadata_load_bool(&repairable_floor))&&armed&&query.generation==generation&&r->expected_boot_generation==query.generation&&source>history.first_time)kind=history.kind==1U?JOB_NORMAL:JOB_SECOND;
   if(kind){

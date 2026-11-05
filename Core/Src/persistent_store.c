@@ -76,9 +76,11 @@ static launchcore_persist_status_t inspect(void)
     if (launchcore_storage_init() != LAUNCHCORE_STORAGE_OK) return LAUNCHCORE_PERSIST_STORAGE_ERROR;
     launchcore_persist_strict_info_t info;
     launchcore_persist_status_t status = launchcore_persist_probe_strict(&info);
-    if (status == LAUNCHCORE_PERSIST_OK && info.health != LAUNCHCORE_PERSIST_HEALTH_HEALTHY) {
+    if (status == LAUNCHCORE_PERSIST_OK &&
+        info.health != LAUNCHCORE_PERSIST_HEALTH_HEALTHY &&
+        info.health != LAUNCHCORE_PERSIST_HEALTH_VIRGIN) {
         revoke_controls();
-        return LAUNCHCORE_PERSIST_NOT_FOUND; /* Virgin is not implicit commissioning. */
+        return LAUNCHCORE_PERSIST_CORRUPT;
     }
     return status;
 }
@@ -98,9 +100,15 @@ static bool validate_controls_expected(const ControlExpectation*expected){
  uint64_t decoded_generation=bootstrap_read64(bytes);
  if(decoded_generation==0U||decoded_generation==UINT64_MAX||(expected&&decoded_generation!=expected->generation))return false;
  size=16U;
- if(get_checked(UINT32_C(0x4252464c),bytes,&size,&info)!=LAUNCHCORE_PERSIST_OK||size!=16U)return false;
- uint64_t decoded_issuer=bootstrap_read64(bytes),decoded_time=bootstrap_read64(bytes+8U);
- if(decoded_issuer==0U||decoded_time==0U||decoded_time==UINT64_MAX||(expected&&memcmp(bytes,expected->floor,16U)))return false;
+ const launchcore_persist_status_t floor_status=get_checked(UINT32_C(0x4252464c),bytes,&size,&info);
+ const bool no_prior_recovery=floor_status==LAUNCHCORE_PERSIST_NOT_FOUND&&
+     info.health==LAUNCHCORE_PERSIST_HEALTH_HEALTHY&&info.record==LAUNCHCORE_PERSIST_RECORD_ABSENT;
+ if(no_prior_recovery){if(expected)return false;}
+ else{
+  if(floor_status!=LAUNCHCORE_PERSIST_OK||size!=16U)return false;
+  uint64_t decoded_issuer=bootstrap_read64(bytes),decoded_time=bootstrap_read64(bytes+8U);
+  if(decoded_issuer==0U||decoded_time==0U||decoded_time==UINT64_MAX||(expected&&memcmp(bytes,expected->floor,16U)))return false;
+ }
  bool cold_complete=false;
  size=sizeof bytes;launchcore_persist_status_t status=get_checked(BOOTSTRAP_MARKER_KEY,bytes,&size,&info);
  if(status==LAUNCHCORE_PERSIST_NOT_FOUND&&info.health==LAUNCHCORE_PERSIST_HEALTH_HEALTHY&&info.record==LAUNCHCORE_PERSIST_RECORD_ABSENT){if(expected)return false;}
@@ -112,8 +120,35 @@ static bool validate_controls_expected(const ControlExpectation*expected){
  if(cold_complete&&metadata_load_bool(&controls_ready)&&!metadata_load_bool(&storage_faulted))bootstrap_complete_verified=2U;
  return true;
 }
-static void validate_controls(void){(void)validate_controls_expected(NULL);}
+static void validate_controls(void){if(!validate_controls_expected(NULL)){control_fault();++g_persistent_store_errors;}}
 bool persistent_store_controls_ready(void) { return metadata_load_bool(&controls_ready)&&!metadata_load_bool(&storage_faulted); }
+
+/* Normal exclusive boot establishes bookkeeping, not application recovery.
+ * Strict ABSENT permits first initialization; tombstones, ambiguous banks and
+ * corrupt records are never repaired or reclassified as new storage. */
+static launchcore_persist_status_t initialize_boot_identity(void)
+{
+    if (!persistent_store_enter()) return LAUNCHCORE_PERSIST_STORAGE_ERROR;
+    uint8_t identity[8]; size_t size=sizeof identity;
+    launchcore_persist_strict_info_t info;
+    launchcore_persist_status_t status=launchcore_persist_get_strict(UINT32_C(0x42524745),identity,&size,&info);
+    if(status==LAUNCHCORE_PERSIST_NOT_FOUND&&info.record==LAUNCHCORE_PERSIST_RECORD_ABSENT&&
+       (info.health==LAUNCHCORE_PERSIST_HEALTH_VIRGIN||info.health==LAUNCHCORE_PERSIST_HEALTH_HEALTHY)) {
+        const bool virgin=info.health==LAUNCHCORE_PERSIST_HEALTH_VIRGIN;
+        bootstrap_write64(identity,1U);
+        status=virgin?launchcore_persist_provision_virgin_strict(UINT32_C(0x42524745),identity,sizeof identity,&info):
+            launchcore_persist_set_strict(UINT32_C(0x42524745),identity,sizeof identity,&info);
+        if(status==LAUNCHCORE_PERSIST_OK) {
+            size=sizeof identity;
+            status=launchcore_persist_get_strict(UINT32_C(0x42524745),identity,&size,&info);
+        }
+    }
+    if(status==LAUNCHCORE_PERSIST_OK&&(size!=sizeof identity||bootstrap_read64(identity)==0U||bootstrap_read64(identity)==UINT64_MAX))
+        status=LAUNCHCORE_PERSIST_CORRUPT;
+    if(status==LAUNCHCORE_PERSIST_NOT_FOUND) status=LAUNCHCORE_PERSIST_CORRUPT;
+    if(status!=LAUNCHCORE_PERSIST_OK){control_fault();++g_persistent_store_errors;}
+    return result(status);
+}
 
 /* MAIN is the only caller, before any task/SDK/OTA owner exists. No ISR calls
  * any storage API. End this phase before creating application tasks. */
@@ -123,6 +158,7 @@ launchcore_persist_status_t persistent_store_boot_begin(void)
         return LAUNCHCORE_PERSIST_STORAGE_ERROR;
     phase = 1U;
     launchcore_persist_status_t status = persistent_store_init();
+    if (status == LAUNCHCORE_PERSIST_OK) status=initialize_boot_identity();
     if (status == LAUNCHCORE_PERSIST_OK) validate_controls();
     return status;
 }
@@ -147,9 +183,11 @@ launchcore_persist_status_t persistent_store_get(uint32_t key, void *value, size
     if (!persistent_store_enter()) return LAUNCHCORE_PERSIST_STORAGE_ERROR;
     launchcore_persist_strict_info_t info;
     launchcore_persist_status_t status = launchcore_persist_get_strict(key, value, size, &info);
-    if ((key == UINT32_C(0x42524745) || key == UINT32_C(0x4252464c) || key == BOOTSTRAP_MARKER_KEY) && status != LAUNCHCORE_PERSIST_OK) {
-        revoke_controls();
-    }
+    const bool ordinary_absent = status == LAUNCHCORE_PERSIST_NOT_FOUND &&
+        info.health == LAUNCHCORE_PERSIST_HEALTH_HEALTHY && info.record == LAUNCHCORE_PERSIST_RECORD_ABSENT &&
+        (key == UINT32_C(0x4252464c) || key == BOOTSTRAP_MARKER_KEY);
+    if ((key == UINT32_C(0x42524745) || key == UINT32_C(0x4252464c) || key == BOOTSTRAP_MARKER_KEY) &&
+        status != LAUNCHCORE_PERSIST_OK && !ordinary_absent) revoke_controls();
     return result(status);
 }
 static launchcore_persist_status_t set_owned(uint32_t key,const void*value,size_t size)
