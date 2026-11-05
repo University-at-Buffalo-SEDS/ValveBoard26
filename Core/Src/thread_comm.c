@@ -991,7 +991,8 @@ int32_t thread_comm_status_snapshot_try(uint8_t id, uint8_t *state,
         tx_mutex_get(&g_thread_comm_state_mutex, TX_NO_WAIT) != TX_SUCCESS) return -14;
     const uint8_t observed = read(id, state);
     if (!bootstrap_state_release()) return -9;
-    if (g_command_admission_fault || !persistent_store_controls_ready()) return -9;
+    /* Read-only GPIO/PWM observation is independent of command/storage
+     * admission. A failed current owner release still refuses publication. */
     return observed ? 0 : -10;
 }
 int32_t board_recovery_snapshot(BoardRecoverySnapshot *out)
