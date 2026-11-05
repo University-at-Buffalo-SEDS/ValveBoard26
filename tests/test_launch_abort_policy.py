@@ -31,6 +31,9 @@ class LaunchAbortPolicyTests(unittest.TestCase):
         shared = (ROOT / 'Core/Src/thread_comm.c').read_text()
         receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Abort_handler')
         command_receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Valve_Command_handler')
+        clock_adapter = "unsigned long tx_time_get(void){return 0;}\nstatic SedsResult seds_router_get_network_time_ms(void*r,uint64_t*out){(void)r;*out=1234;return SEDS_OK;}\n"
+        timed_helpers = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'launch_monotonic_tick')+'\n'+function((ROOT / 'Core/Src/telemetry.c').read_text(), 'admit_timed_launch')+'\n'
+
         managed_receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Flight_State_handler')
         control_source=(ROOT/'Core/Src'/('main_task.c' if ab else 'main_thread.c')).read_text()
         self.assertIn('thread_comm_apply_automatic_owned(cmd,command_epoch,apply_automatic_valve)',control_source)
@@ -96,13 +99,13 @@ static SedsResult board_recovery_sync_command_cutoff(void){return SEDS_OK;}
 typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;const char*sender;size_t sender_len;} SedsPacketView;
 static uint8_t board_recovery_command_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static uint8_t board_recovery_automatic_is_stale(const SedsPacketView*p){(void)p;return 0;}
-static struct{void*r;}g_router;
+static struct{void*r;}g_router={(void*)1};
 static bool board_recovery_manual_stop_source_allowed(void*r,const SedsPacketView*p){(void)r;(void)p;return false;}
 static unsigned g_flight_state_handler_error_count,g_flight_state_handler_count,g_last_flight_state_packet;
 static unsigned g_command_queue_drop_count,g_sim_valve_commands_received,g_sim_valve_open_seen,g_sim_groundstation_confirmation_received;
 static int32_t seds_pkt_get_u8(const SedsPacketView*p,uint8_t*v,size_t n){assert(n==1);*v=p->payload[0];return 1;}
 static int telemetry_broadcast_abort(const char*reason){(void)reason;return 0;}
-'''+receiver+'\n'+command_receiver+'\n'+managed_receiver+r'''
+'''+clock_adapter+timed_helpers+receiver+'\n'+command_receiver+'\n'+managed_receiver+r'''
 CONTROL_STUBS
 '''+apply_source+r'''
 static void reset_power(void){

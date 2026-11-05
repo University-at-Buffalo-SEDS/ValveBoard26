@@ -58,6 +58,7 @@ int telemetry_publish_flight_state_at(uint8_t state,uint64_t timestamp){assert(s
 int telemetry_send_actuator_command_at(uint8_t cmd,uint64_t timestamp){assert(cmd==14&&timestamp);peer_sends++;return 0;}
 int telemetry_send_actuator_command(uint8_t cmd){assert(cmd==14);peer_sends++;return 0;}
 static int publish_umbilical_status(uint8_t cmd,uint8_t state){assert(cmd==6&&state==1);status_sends++;return 0;}
+#define LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS 10000U
 ACTUAL_OWNER
 #endif
 static UINT launch_request(void){
@@ -111,7 +112,7 @@ int main(int argc,char**argv){
 def owner_source(owner):
  # Preserve actual typed original-epoch context and bounded raw setup callback.
  context=re.search(r'typedef struct\{[^\n]*\} LaunchStart;',owner).group(0)
- return 'static uint32_t g_launch_manual_epoch;\nstatic thread_comm_launch_owner_t g_launch_owner;\n'+context+'\n'+'\n'.join(function(owner,name)for name in ['start_launch_sequence_locked','start_launch_sequence','service_launch_sequence_request'])
+ return 'static uint32_t g_launch_manual_epoch;\nstatic thread_comm_launch_owner_t g_launch_owner;\n'+context+'\n'+'\n'.join(function(owner,name)for name in ['ms_to_ticks','start_launch_sequence_locked','start_launch_sequence','service_launch_sequence_request'])
 
 class VerifiedLaunchTests(unittest.TestCase):
  @classmethod

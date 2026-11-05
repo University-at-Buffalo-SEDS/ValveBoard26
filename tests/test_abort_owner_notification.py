@@ -24,6 +24,7 @@ static uint32_t g_sim_valve_commands_executed,g_sim_last_valve_command,g_sim_val
 static uint64_t g_sim_last_valve_command_ms;
 #define TX_TIMER_TICKS_PER_SECOND 1000U
 ULONG tx_time_get(void){return 100;}
+static uint32_t launch_monotonic_tick(void);
 static void apply_automatic_valve(uint8_t cmd){(void)cmd;}
 static void service_launch_sequence_request(void){}
 static void apply_manual_valve_locked(void*context){apply_automatic_valve(*(uint8_t*)context);}
@@ -36,7 +37,7 @@ static void recover_then_launch(void){
  assert(board_recovery_begin_prepare(0,snapshot.abort_epoch)==0);
  assert(board_recovery_apply_safe(0,snapshot.abort_epoch,&snapshot)==-14);
  board_recovery_execute_owned();assert(!thread_comm_get_abort());
- assert(thread_comm_request_launch_sequence(10000)==TX_SUCCESS);
+ assert(thread_comm_request_network_launch_original_at(10000,"GS",2U,10000U,launch_monotonic_tick(),launch_monotonic_tick)==TX_SUCCESS);
  assert(board_launch_latch_is_set());recoveries++;
 }
 static UINT paused_manual_abort(void){UINT result=thread_comm_request_manual_abort();assert(result==TX_SUCCESS);recover_then_launch();return result;}
@@ -50,6 +51,7 @@ typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;cons
 static uint8_t board_recovery_command_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static uint8_t board_recovery_automatic_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static struct{void*r;}g_router;
+static SedsResult seds_router_get_network_time_ms(void*router,uint64_t*now){(void)router;*now=10000U;return SEDS_OK;}
 static bool board_recovery_manual_stop_source_allowed(void*r,const SedsPacketView*p){(void)r;(void)p;return false;}
 static int32_t seds_pkt_get_u8(const SedsPacketView*p,uint8_t*out,size_t n){assert(n==1);*out=p->payload[0];return 1;}
 static int telemetry_broadcast_abort(const char*reason){assert(!strcmp(reason,"Valve board abort command"));return 0;}
@@ -87,7 +89,7 @@ int main(int argc,char**argv){
 '''
   control=(ROOT/'Core/Src/main_thread.c').read_text();telemetry=(ROOT/'Core/Src/telemetry.c').read_text();safety=(ROOT/'Core/Src/safety_thread.c').read_text()
   code='#include <assert.h>\nstatic void main_thread_force_outputs_safe_off(void){assert(0 && "unexpected store inhibition in healthy Abort fixture");}\n'+code
-  for key,value in [('ACTUAL_CONSUMER',function(control,'handle_command')),('ACTUAL_MANUAL',function(telemetry,'Abort_handler')),('ACTUAL_TYPED',function(telemetry,'Valve_Command_handler')),('ACTUAL_SAFETY',function(safety,'safety_request_abort'))]:code=code.replace(key,value)
+  for key,value in [('ACTUAL_CONSUMER',function(control,'handle_command')),('ACTUAL_MANUAL',function(telemetry,'Abort_handler')),('ACTUAL_TYPED',function(telemetry,'launch_monotonic_tick')+'\n'+function(telemetry,'admit_timed_launch')+'\n'+function(telemetry,'Valve_Command_handler')),('ACTUAL_SAFETY',function(safety,'safety_request_abort'))]:code=code.replace(key,value)
   with tempfile.TemporaryDirectory(prefix='abort-owner-notification-')as tmp:
    p=Path(tmp);(p/'tx_api.h').write_text(tx);(p/'test.c').write_text(code);binary=p/'test'
    subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I'+str(p),'-I'+str(ROOT/'Core/Inc'),str(p/'test.c'),'-o',str(binary)],check=True)

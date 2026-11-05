@@ -22,6 +22,7 @@ TX_THREAD main_thread;
 /* GSE requires actual valve-state reports fresher than two seconds. */
 #define UMBILICAL_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
 #define LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS 10000U
+_Static_assert(THREAD_COMM_LAUNCH_EFFECT_DELAY_MS == LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS,"Launch timeline delay drift");
 #define LAUNCH_SEQUENCE_PILOT_OPEN_DURATION_MS 1500U
 #define LAUNCH_SEQUENCE_PILOT_STATUS_PERIOD_TICKS \
     ((TX_TIMER_TICKS_PER_SECOND >= 10U) ? (TX_TIMER_TICKS_PER_SECOND / 10U) : 1U)
@@ -168,7 +169,7 @@ static void main_thread_force_outputs_safe_off(void)
     g_pilot_valve_state = 0U;
 }
 
-typedef struct{uint32_t epoch;ULONG now;uint8_t started;} LaunchStart;
+typedef struct{uint32_t epoch;uint32_t now;uint8_t started;} LaunchStart;
 static void start_launch_sequence_locked(void*context){
  LaunchStart*q=context;if(g_launch_sequence_active)return;
  g_launch_manual_epoch=q->epoch;
@@ -187,9 +188,9 @@ static void start_launch_sequence(thread_comm_launch_owner_t owner)
     if(g_launch_sequence_active)return;
     /* INITIAL verification and mailbox acceptance already established this
      * exact owner. A SECOND storage failure cannot invent a new Abort. */
-    LaunchStart request={owner.epoch,tx_time_get(),0U};
+    LaunchStart request={owner.epoch,(uint32_t)tx_time_get()+(uint32_t)ms_to_ticks(THREAD_COMM_LAUNCH_EFFECT_DELAY_MS),0U};
     g_launch_owner=owner;
-    if(!thread_comm_launch_begin_owned(&owner,start_launch_sequence_locked,&request)||!request.started)return;
+    if(!thread_comm_launch_begin_owned_deadline(&owner,start_launch_sequence_locked,&request,&request.now)||!request.started)return;
 #ifdef TELEMETRY_ENABLED
     const uint64_t launch_timestamp_ms=owner.source_utc;
     if(launch_timestamp_ms!=0ULL){
@@ -217,14 +218,14 @@ static void service_launch_sequence_locked(void*context)
     }
 
     const ULONG now = tx_time_get();
-    const ULONG elapsed = now - g_launch_sequence_start_ticks;
+    /* start_ticks is the immutable pilot deadline, not receipt time. */
+    const ULONG elapsed = (uint32_t)now - ((uint32_t)g_launch_sequence_start_ticks-(uint32_t)ms_to_ticks(LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS));
     g_launch_sequence_service_count++;
     g_launch_sequence_last_elapsed_ticks = elapsed;
-    const ULONG pilot_open_ticks = ms_to_ticks(LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS);
     const ULONG pilot_open_duration_ticks =
         ms_to_ticks(LAUNCH_SEQUENCE_PILOT_OPEN_DURATION_MS);
 
-    if ((g_launch_sequence_pilot_opened == 0U) && (elapsed >= pilot_open_ticks))
+    if ((g_launch_sequence_pilot_opened == 0U) && ((uint32_t)((uint32_t)now-(uint32_t)g_launch_sequence_start_ticks)<UINT32_C(0x80000000)))
     {
         g_launch_sequence_pilot_attempt_count++;
         apply_automatic_valve(CMD_PILOT_OPEN);*events|=1U;

@@ -62,7 +62,8 @@ enum {LAUNCH_NONE,LAUNCH_PENDING,LAUNCH_TAKEN,LAUNCH_RUNNING,LAUNCH_COMPLETED};
 static struct {
  thread_comm_launch_owner_t owner;
  char sender[THREAD_COMM_LAUNCH_SENDER_MAX];
- uint32_t sender_len,slot;
+ uint32_t sender_len,slot,deadline;
+ uint8_t deadline_valid;
  uint8_t phase,initial_verified;
 } g_accepted_launch;
 static uint32_t g_launch_serial;
@@ -114,12 +115,15 @@ uint8_t thread_comm_launch_claim(uint64_t source,uint32_t epoch,thread_comm_laun
  if(tx_mutex_put(&g_thread_comm_state_mutex)!=TX_SUCCESS)return 0U;
  return current;
 }
-uint8_t thread_comm_launch_begin_owned(const thread_comm_launch_owner_t*owner,void(*apply)(void*),void*context) {
+uint8_t thread_comm_launch_begin_owned_deadline(const thread_comm_launch_owner_t*owner,void(*apply)(void*),void*context,uint32_t*deadline) {
  if(!apply||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER)!=TX_SUCCESS)return 0U;
  uint8_t current=launch_token_current_locked(owner)&&g_accepted_launch.phase==LAUNCH_TAKEN;
- if(current){g_accepted_launch.phase=LAUNCH_RUNNING;g_thread_comm_flight_state=VALVE_FLIGHT_STATE_LAUNCH;apply(context);}
+ if(current){if(deadline&&g_accepted_launch.deadline_valid)*deadline=g_accepted_launch.deadline;g_accepted_launch.phase=LAUNCH_RUNNING;g_thread_comm_flight_state=VALVE_FLIGHT_STATE_LAUNCH;apply(context);}
  if(tx_mutex_put(&g_thread_comm_state_mutex)!=TX_SUCCESS)return 0U;
  return current;
+}
+uint8_t thread_comm_launch_begin_owned(const thread_comm_launch_owner_t*owner,void(*apply)(void*),void*context) {
+ return thread_comm_launch_begin_owned_deadline(owner,apply,context,0);
 }
 uint8_t thread_comm_launch_effect_owned(const thread_comm_launch_owner_t*owner,void(*apply)(void*),void*context) {
  if(!apply||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER)!=TX_SUCCESS)return 0U;
@@ -798,17 +802,42 @@ uint64_t thread_comm_get_launch_command_timestamp_ms(void)
     return timestamp_ms;
 }
 
-static UINT thread_comm_request_launch_sequence_impl(uint64_t source,uint8_t network,const char*sender,uint32_t length)
+/* Called only under the state owner. The supplied clock is the bounded
+ * ThreadX RAM tick getter, never SDK/network/storage work. The pair was read
+ * under the router owner with at most one tick between its two samples. */
+static uint8_t launch_deadline_locked(uint64_t source,uint64_t observed_utc,
+ uint32_t observed_tick,uint32_t(*monotonic_now)(void),uint32_t*out) {
+ const uint64_t frequency=TX_TIMER_TICKS_PER_SECOND;
+ if(!source||!observed_utc||observed_utc==UINT64_MAX||!monotonic_now||!out||!frequency)return 0U;
+ const uint32_t now=monotonic_now(),elapsed=now-observed_tick;
+ if(elapsed>=UINT32_C(0x80000000))return 0U;
+ const uint64_t elapsed_ms=((uint64_t)elapsed*1000U)/frequency;
+ if(elapsed_ms>6000U||observed_utc>UINT64_MAX-elapsed_ms)return 0U;
+ const uint64_t utc=observed_utc+elapsed_ms;
+ int64_t remaining=THREAD_COMM_LAUNCH_EFFECT_DELAY_MS;
+ if(utc>=source){uint64_t age=utc-source;if(age>5000U)return 0U;remaining-=(int64_t)age;}
+ else{uint64_t future=source-utc;if(future>1000U)return 0U;remaining+=(int64_t)future;}
+ /* Round a future deadline upward; a past deadline rounds toward now.
+  * Both remain within the signed 32-bit monotonic comparison horizon. */
+ const uint64_t magnitude=(uint64_t)(remaining<0?-remaining:remaining);
+ if(magnitude&&frequency>UINT64_MAX/magnitude)return 0U;
+ uint64_t ticks=magnitude*frequency;
+ if(remaining>=0){if(ticks>UINT64_MAX-999U)return 0U;ticks=(ticks+999U)/1000U;}else ticks/=1000U;
+ if(ticks>=UINT32_C(0x80000000))return 0U;
+ *out=remaining<0?now-(uint32_t)ticks:now+(uint32_t)ticks;return 1U;
+}
+
+static UINT thread_comm_request_launch_sequence_impl(uint64_t source,uint8_t network,const char*sender,uint32_t length,uint64_t observed_utc,uint32_t observed_tick,uint32_t(*monotonic_now)(void))
 {
  if(!launch_identity_valid(sender,length)||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return TX_MUTEX_ERROR;
- UINT status=TX_QUEUE_ERROR;uint8_t newly_staged=0U;
+ UINT status=TX_QUEUE_ERROR;uint8_t newly_staged=0U;uint32_t deadline=0U;
  if(g_accepted_launch.phase!=LAUNCH_NONE)status=launch_same_original_locked(source,sender,length)?TX_SUCCESS:TX_QUEUE_ERROR;
  else if(g_thread_comm_recovery_epoch!=0U&&g_thread_comm_recovery_epoch!=UINT32_MAX&&
    g_launch_serial<UINT32_MAX-1U&&!g_thread_comm_abort&&!g_recovery_pending&&!g_command_admission_fault&&
-   persistent_store_controls_ready()&&(!network||network_timestamp_allowed_locked(source))) {
+   persistent_store_controls_ready()&&(!network||(network_timestamp_allowed_locked(source)&&launch_deadline_locked(source,observed_utc,observed_tick,monotonic_now,&deadline)))) {
   if(safety_launch_inhibit_locked()) {
    g_thread_comm_launch_command_timestamp_ms=source;g_thread_comm_launch_sequence_pending=1U;
-   launch_accept_locked(source,sender,length,0U,g_launch_serial+1U);newly_staged=1U;status=TX_SUCCESS;
+   launch_accept_locked(source,sender,length,0U,g_launch_serial+1U);g_accepted_launch.deadline=deadline;g_accepted_launch.deadline_valid=network;newly_staged=1U;status=TX_SUCCESS;
   }
  }
  if(tx_mutex_put(&g_thread_comm_state_mutex)!=TX_SUCCESS){/* This call owns only its new candidate, never an earlier accepted one. */
@@ -816,9 +845,10 @@ static UINT thread_comm_request_launch_sequence_impl(uint64_t source,uint8_t net
   g_command_admission_fault=1U;return THREAD_COMM_COMMIT_UNCERTAIN;}
  return status;
 }
-UINT thread_comm_request_launch_sequence(uint64_t source){return thread_comm_request_launch_sequence_impl(source,0U,0,0U);}
-UINT thread_comm_request_network_launch_sequence(uint64_t source){return thread_comm_request_launch_sequence_impl(source,1U,0,0U);}
-UINT thread_comm_request_network_launch_original(uint64_t source,const char*sender,uint32_t length){return thread_comm_request_launch_sequence_impl(source,1U,sender,length);}
+UINT thread_comm_request_launch_sequence(uint64_t source){return thread_comm_request_launch_sequence_impl(source,0U,0,0U,0U,0U,0);}
+UINT thread_comm_request_network_launch_sequence(uint64_t source){return thread_comm_request_launch_sequence_impl(source,1U,0,0U,0U,0U,0);}
+UINT thread_comm_request_network_launch_original(uint64_t source,const char*sender,uint32_t length){return thread_comm_request_launch_sequence_impl(source,1U,sender,length,0U,0U,0);}
+UINT thread_comm_request_network_launch_original_at(uint64_t source,const char*sender,uint32_t length,uint64_t utc,uint32_t tick,uint32_t(*now)(void)){return thread_comm_request_launch_sequence_impl(source,1U,sender,length,utc,tick,now);}
 uint8_t thread_comm_take_accepted_launch(thread_comm_launch_owner_t*out) {
  if(!out||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return 0U;
  uint8_t taken=g_thread_comm_launch_sequence_pending&&g_accepted_launch.phase==LAUNCH_PENDING&&launch_record_live_locked();

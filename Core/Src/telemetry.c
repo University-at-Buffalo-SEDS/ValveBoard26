@@ -233,6 +233,18 @@ static bool telemetry_unix_ms_to_utc(uint64_t unix_ms, int32_t *year, uint8_t *m
   }
 }
 
+/* Called only by the existing router handler owner; no second router lock.
+ * Pair quantization is bounded to one ThreadX tick. Accepted owners never
+ * consult this clock again and exact duplicates keep their first deadline. */
+static uint32_t launch_monotonic_tick(void){return (uint32_t)tx_time_get();}
+static UINT admit_timed_launch(const SedsPacketView*p) {
+ uint64_t utc=0U;const uint32_t before=launch_monotonic_tick();
+ if(!g_router.r||seds_router_get_network_time_ms(g_router.r,&utc)!=SEDS_OK)return TX_QUEUE_ERROR;
+ const uint32_t after=launch_monotonic_tick();
+ if((uint32_t)(after-before)>1U)return TX_QUEUE_ERROR;
+ return thread_comm_request_network_launch_original_at(p->timestamp,p->sender,(uint32_t)p->sender_len,utc,before,launch_monotonic_tick);
+}
+
 SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
 {
   /* Only a trusted exact network Stop of an already accepted Launch may
@@ -309,7 +321,7 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
 
   if (cmd_u8 == CMD_SEQUENCE)
   {
-    const UINT admitted=thread_comm_request_network_launch_original(pkt->timestamp,pkt->sender,(uint32_t)pkt->sender_len);
+    const UINT admitted=admit_timed_launch(pkt);
     if (admitted==THREAD_COMM_STALE_TIMESTAMP) return SEDS_OK;
     if (admitted != TX_SUCCESS)
     {

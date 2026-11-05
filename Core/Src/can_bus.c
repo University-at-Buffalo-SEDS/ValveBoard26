@@ -172,6 +172,16 @@ enum { CAN_BUS_FRAG_F_FIRST = 1u << 0, CAN_BUS_FRAG_F_LAST = 1u << 1 };
 #define CAN_BUS_RX_RING_DEPTH 64
 #endif
 
+/* Limit foreground RX work, not ISR ingress or offered traffic. A complete
+ * frame (including subscriber callbacks) finishes before the next budget check.
+ * Remaining frames and partial reassembly stay owned for the next NET turn. */
+#ifndef CAN_BUS_RX_SERVICE_BUDGET_MS
+#define CAN_BUS_RX_SERVICE_BUDGET_MS 16U
+#endif
+#if CAN_BUS_RX_SERVICE_BUDGET_MS < 1U
+#error "CAN_BUS_RX_SERVICE_BUDGET_MS must be positive"
+#endif
+
 typedef struct {
   uint32_t std_id; // 11-bit ID in lower bits (we only handle standard here)
   uint8_t len;     // payload bytes (0..64)
@@ -700,7 +710,13 @@ void can_bus_process_rx(void) {
 #endif
 
   can_bus_rx_frame_t f;
-  while (rb_pop(&f)) {
+  const uint32_t service_started_ms = HAL_GetTick();
+  /* A continuously replenished ring must return to SDK service and the
+   * network thread's sleep. Never pop a frame that this pass will not handle. */
+  for (uint32_t processed = 0; processed < CAN_BUS_RX_RING_DEPTH; ++processed) {
+    if ((uint32_t)(HAL_GetTick() - service_started_ms) >=
+        CAN_BUS_RX_SERVICE_BUDGET_MS || !rb_pop(&f))
+      break;
     handle_rx_frame(&f, now);
   }
 }
