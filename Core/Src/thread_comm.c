@@ -22,6 +22,13 @@ static void (*g_manual_stop_apply)(void);
  * queue/physical-owner admission. Never lowered by ordinary producers. */
 static uint64_t g_command_cutoff_ms;
 static _Atomic uint8_t g_command_admission_fault;
+/* Ordinary work may not turn a failed shared-owner release into success.
+ * No Stop, IO, rollback or accepted-Launch cancellation is introduced. */
+static bool command_state_release(void) {
+ if(tx_mutex_put(&g_thread_comm_state_mutex)==TX_SUCCESS)return true;
+ g_command_admission_fault=1U;return false;
+}
+
 static uint8_t g_thread_comm_abort = 0U;
 static uint32_t g_thread_comm_recovery_epoch = 1U;
 static uint8_t g_recovery_pending;
@@ -306,6 +313,11 @@ UINT thread_comm_init(TX_BYTE_POOL *byte_pool)
 static UINT thread_comm_commit_reserved_locked(thread_comm_msg_t msg,uint8_t*committed)
 {
  *committed=0U;UINT status;
+ if(g_command_admission_fault){
+  /* The caller's reserved permit was never a committed command. */
+  (void)tx_semaphore_put(&g_thread_comm_spaces_sem);return THREAD_COMM_COMMIT_UNCERTAIN;
+ }
+
  if(tx_mutex_get(&g_thread_comm_ring_mutex,TX_NO_WAIT)!=TX_SUCCESS)status=TX_MUTEX_ERROR;
  else{
   g_thread_comm_ring[g_thread_comm_head]=msg;g_thread_comm_head=thread_comm_ring_next(g_thread_comm_head);*committed=1U;
@@ -327,17 +339,22 @@ UINT thread_comm_send(thread_comm_msg_t msg,ULONG wait_option)
 {
  if(!g_thread_comm_initialized||!persistent_store_controls_ready())return TX_QUEUE_ERROR;
  if(tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return TX_MUTEX_ERROR;
+ if(g_command_admission_fault){
+  (void)command_state_release();return THREAD_COMM_COMMIT_UNCERTAIN;
+ }
  const uint32_t original_epoch=g_thread_comm_recovery_epoch;
- if(tx_mutex_put(&g_thread_comm_state_mutex)!=TX_SUCCESS)return TX_MUTEX_ERROR;
+ if(!command_state_release())return THREAD_COMM_COMMIT_UNCERTAIN;
  /* A potentially waiting local producer owns no state/ring mutex here. */
  UINT status=tx_semaphore_get(&g_thread_comm_spaces_sem,wait_option);
  if(status!=TX_SUCCESS)return status;
  if(tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS){(void)tx_semaphore_put(&g_thread_comm_spaces_sem);return TX_MUTEX_ERROR;}
  uint8_t committed=0U;
- if(!original_epoch||original_epoch==UINT32_MAX||original_epoch!=g_thread_comm_recovery_epoch||!persistent_store_controls_ready()){
+ if(g_command_admission_fault){
+  (void)tx_semaphore_put(&g_thread_comm_spaces_sem);status=THREAD_COMM_COMMIT_UNCERTAIN;
+ }else if(!original_epoch||original_epoch==UINT32_MAX||original_epoch!=g_thread_comm_recovery_epoch||!persistent_store_controls_ready()){
   (void)tx_semaphore_put(&g_thread_comm_spaces_sem);status=THREAD_COMM_STALE_TIMESTAMP;
  }else status=thread_comm_commit_reserved_locked(msg,&committed);
- if(tx_mutex_put(&g_thread_comm_state_mutex)!=TX_SUCCESS){g_command_admission_fault=1U;return committed?THREAD_COMM_COMMIT_UNCERTAIN:TX_MUTEX_ERROR;}
+ if(!command_state_release())return THREAD_COMM_COMMIT_UNCERTAIN;
  return status;
 }
 static uint8_t network_timestamp_allowed_locked(uint64_t timestamp_ms)
@@ -366,8 +383,7 @@ UINT thread_comm_admit_network(thread_comm_msg_t msg, uint64_t timestamp_ms)
     else if (g_thread_comm_abort || g_recovery_pending || !network_timestamp_allowed_locked(timestamp_ms))
         result = THREAD_COMM_STALE_TIMESTAMP;
     else result = thread_comm_send_owned_nowait(msg);
-    (void)tx_mutex_put(&g_thread_comm_state_mutex);
-    return result;
+    return command_state_release()?result:THREAD_COMM_COMMIT_UNCERTAIN;
 }
 
 static UINT thread_comm_send_urgent_locked(thread_comm_msg_t msg)
@@ -378,6 +394,8 @@ static UINT thread_comm_send_urgent_locked(thread_comm_msg_t msg)
     {
         return TX_QUEUE_ERROR;
     }
+
+    if(g_command_admission_fault)return THREAD_COMM_COMMIT_UNCERTAIN;
 
     status = tx_semaphore_get(&g_thread_comm_spaces_sem, TX_NO_WAIT);
     if (status != TX_SUCCESS)
@@ -391,19 +409,15 @@ static UINT thread_comm_send_urgent_locked(thread_comm_msg_t msg)
         status = tx_mutex_get(&g_thread_comm_ring_mutex, TX_NO_WAIT);
         if (status != TX_SUCCESS)
         {
-            (void)tx_semaphore_put(&g_thread_comm_items_sem);
+            if(tx_semaphore_put(&g_thread_comm_items_sem)!=TX_SUCCESS){g_command_admission_fault=1U;return THREAD_COMM_COMMIT_UNCERTAIN;}
             return status;
         }
 
         g_thread_comm_tail = thread_comm_ring_next(g_thread_comm_tail);
 
         status = tx_mutex_put(&g_thread_comm_ring_mutex);
-        if (status != TX_SUCCESS)
-        {
-            return status;
-        }
-
-        (void)tx_semaphore_put(&g_thread_comm_spaces_sem);
+        if(status!=TX_SUCCESS){g_command_admission_fault=1U;return THREAD_COMM_COMMIT_UNCERTAIN;}
+        if(tx_semaphore_put(&g_thread_comm_spaces_sem)!=TX_SUCCESS){g_command_admission_fault=1U;return THREAD_COMM_COMMIT_UNCERTAIN;}
 
         status = tx_semaphore_get(&g_thread_comm_spaces_sem, TX_NO_WAIT);
         if (status != TX_SUCCESS)
@@ -415,7 +429,7 @@ static UINT thread_comm_send_urgent_locked(thread_comm_msg_t msg)
     status = tx_mutex_get(&g_thread_comm_ring_mutex, TX_NO_WAIT);
     if (status != TX_SUCCESS)
     {
-        (void)tx_semaphore_put(&g_thread_comm_spaces_sem);
+        if(tx_semaphore_put(&g_thread_comm_spaces_sem)!=TX_SUCCESS){g_command_admission_fault=1U;return THREAD_COMM_COMMIT_UNCERTAIN;}
         return status;
     }
 
@@ -423,17 +437,14 @@ static UINT thread_comm_send_urgent_locked(thread_comm_msg_t msg)
     g_thread_comm_head = thread_comm_ring_next(g_thread_comm_head);
 
     status = tx_mutex_put(&g_thread_comm_ring_mutex);
-    if (status != TX_SUCCESS)
-    {
-        return status;
-    }
-
-    return tx_semaphore_put(&g_thread_comm_items_sem);
+    if(status==TX_SUCCESS)status=tx_semaphore_put(&g_thread_comm_items_sem);
+    if(status!=TX_SUCCESS){g_command_admission_fault=1U;return THREAD_COMM_COMMIT_UNCERTAIN;}
+    return TX_SUCCESS;
 }
 UINT thread_comm_send_urgent(thread_comm_msg_t msg){
  if(!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return TX_MUTEX_ERROR;
  UINT status=thread_comm_send_urgent_locked(msg);
- if(tx_mutex_put(&g_thread_comm_state_mutex)!=TX_SUCCESS){g_command_admission_fault=1U;return THREAD_COMM_COMMIT_UNCERTAIN;}
+ if(!command_state_release())return THREAD_COMM_COMMIT_UNCERTAIN;
  return status;
 }
 
@@ -446,6 +457,15 @@ UINT thread_comm_receive(thread_comm_msg_t *msg, ULONG wait_option)
         return TX_QUEUE_ERROR;
     }
 
+    if(g_command_admission_fault){
+        /* Only an actually latched Stop may retire old queue rows.
+         * Ordinary dispatch uses receive_owned; AB's existing accepted receipt
+         * is offered there without consuming the quarantined ring. */
+        if(tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return THREAD_COMM_COMMIT_UNCERTAIN;
+        const uint8_t retire=g_thread_comm_abort;
+        if(!command_state_release()||!retire)return THREAD_COMM_COMMIT_UNCERTAIN;
+    }
+
     status = tx_semaphore_get(&g_thread_comm_items_sem, wait_option);
     if (status != TX_SUCCESS)
     {
@@ -455,7 +475,7 @@ UINT thread_comm_receive(thread_comm_msg_t *msg, ULONG wait_option)
     status = tx_mutex_get(&g_thread_comm_ring_mutex, wait_option);
     if (status != TX_SUCCESS)
     {
-        (void)tx_semaphore_put(&g_thread_comm_items_sem);
+        if(tx_semaphore_put(&g_thread_comm_items_sem)!=TX_SUCCESS){g_command_admission_fault=1U;return THREAD_COMM_COMMIT_UNCERTAIN;}
         return status;
     }
 
@@ -463,12 +483,9 @@ UINT thread_comm_receive(thread_comm_msg_t *msg, ULONG wait_option)
     g_thread_comm_tail = thread_comm_ring_next(g_thread_comm_tail);
 
     status = tx_mutex_put(&g_thread_comm_ring_mutex);
-    if (status != TX_SUCCESS)
-    {
-        return status;
-    }
-
-    return tx_semaphore_put(&g_thread_comm_spaces_sem);
+    if(status==TX_SUCCESS)status=tx_semaphore_put(&g_thread_comm_spaces_sem);
+    if(status!=TX_SUCCESS){g_command_admission_fault=1U;return THREAD_COMM_COMMIT_UNCERTAIN;}
+    return TX_SUCCESS;
 }
 
 /* Only automatic producers use this atomic admission decision. Manual Abort
@@ -867,17 +884,19 @@ static UINT thread_comm_admit_automatic_impl(thread_comm_msg_t msg, uint64_t tim
         return TX_MUTEX_ERROR;
     }
     UINT status = TX_SUCCESS;
+    if(g_command_admission_fault){
+        (void)command_state_release();return THREAD_COMM_COMMIT_UNCERTAIN;
+    }
     if (network && (g_command_admission_fault || g_recovery_pending ||
                     !network_timestamp_allowed_locked(timestamp_ms))) {
         status = g_command_admission_fault ? THREAD_COMM_COMMIT_UNCERTAIN : THREAD_COMM_STALE_TIMESTAMP;
-        (void)tx_mutex_put(&g_thread_comm_state_mutex);return status;
+        return command_state_release()?status:THREAD_COMM_COMMIT_UNCERTAIN;
     }
     if (persistent_store_controls_ready() && board_launch_latch_is_set() == 0U && g_thread_comm_abort == 0U) {
         msg |= THREAD_COMM_AUTOMATIC_TAG;
         status = thread_comm_send_owned_nowait(msg);
     }
-    (void)tx_mutex_put(&g_thread_comm_state_mutex);
-    return status;
+    return command_state_release()?status:THREAD_COMM_COMMIT_UNCERTAIN;
 }
 
 UINT thread_comm_admit_automatic(thread_comm_msg_t msg) {
@@ -894,12 +913,11 @@ uint8_t thread_comm_apply_automatic(thread_comm_msg_t msg, void (*apply)(uint8_t
         !(command <= CMD_DUMP_CLOSE) || g_thread_comm_initialized == 0U ||
         tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER) != TX_SUCCESS) return 0U;
     uint8_t applied = 0U;
-    if (persistent_store_controls_ready() && board_launch_latch_is_set() == 0U && g_thread_comm_abort == 0U) {
+    if (!g_command_admission_fault && persistent_store_controls_ready() && board_launch_latch_is_set() == 0U && g_thread_comm_abort == 0U) {
         apply(command);
         applied = 1U;
     }
-    (void)tx_mutex_put(&g_thread_comm_state_mutex);
-    return applied;
+    return command_state_release()?applied:0U;
 }
 
 /* These hooks deliberately do not register a network command. The authorized
@@ -1101,8 +1119,8 @@ uint8_t board_recovery_boot_retry_is_safe(void)
 }
 
 static bool bootstrap_state_release(void) {
- if(tx_mutex_put(&g_thread_comm_state_mutex)==TX_SUCCESS)return true;
- g_command_admission_fault=1U;persistent_store_hold_bootstrap();return false;
+ if(command_state_release())return true;
+ persistent_store_hold_bootstrap();return false;
 }
 bool board_recovery_bind_bootstrap_owner(BootstrapOwnerComplete complete,uint8_t(*stop)(void)) {
  if(!complete||!stop||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER)!=TX_SUCCESS)return false;
@@ -1171,18 +1189,19 @@ UINT thread_comm_bind_manual_stop_apply(void (*apply)(void))
 uint8_t thread_comm_manual_effect(uint64_t source,void(*apply)(void*),void*context)
 {
     if(!apply||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER)!=TX_SUCCESS)return 0U;
-    /* No new readiness/metadata guard may abort an already accepted Launch. */
-    uint8_t allowed=!g_thread_comm_abort&&(source==0U||network_timestamp_allowed_locked(source));
+    /* Only ordinary work: accepted Launch uses its separate exact owner. */
+    uint8_t allowed=!g_command_admission_fault&&!g_thread_comm_abort&&(source==0U||network_timestamp_allowed_locked(source));
     if(allowed)apply(context);
-    (void)tx_mutex_put(&g_thread_comm_state_mutex);return allowed;
+    return command_state_release()?allowed:0U;
 }
 
 UINT thread_comm_receive_owned(thread_comm_msg_t*message,uint32_t*epoch)
 {
  if(!epoch||!message||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return TX_MUTEX_ERROR;
+ if(g_command_admission_fault){(void)command_state_release();return THREAD_COMM_COMMIT_UNCERTAIN;}
  UINT status=thread_comm_receive(message,TX_NO_WAIT);
  if(status==TX_SUCCESS)*epoch=g_thread_comm_recovery_epoch;
- (void)tx_mutex_put(&g_thread_comm_state_mutex);return status;
+ return command_state_release()?status:THREAD_COMM_COMMIT_UNCERTAIN;
 }
 uint32_t thread_comm_manual_epoch(void)
 {
@@ -1193,9 +1212,9 @@ uint32_t thread_comm_manual_epoch(void)
 uint8_t thread_comm_manual_effect_owned(uint64_t source,uint32_t epoch,void(*apply)(void*),void*context)
 {
  if(!apply||!epoch||epoch==UINT32_MAX||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER)!=TX_SUCCESS)return 0U;
- uint8_t allowed=epoch==g_thread_comm_recovery_epoch&&!g_thread_comm_abort&&(source==0U||network_timestamp_allowed_locked(source));
+ uint8_t allowed=!g_command_admission_fault&&epoch==g_thread_comm_recovery_epoch&&!g_thread_comm_abort&&(source==0U||network_timestamp_allowed_locked(source));
  if(allowed)apply(context);
- (void)tx_mutex_put(&g_thread_comm_state_mutex);return allowed;
+ return command_state_release()?allowed:0U;
 }
 
 uint8_t thread_comm_apply_automatic_owned(thread_comm_msg_t msg,uint32_t epoch,void (*apply)(uint8_t))
@@ -1206,12 +1225,11 @@ uint8_t thread_comm_apply_automatic_owned(thread_comm_msg_t msg,uint32_t epoch,v
         !(command <= CMD_DUMP_CLOSE) || g_thread_comm_initialized == 0U ||
         tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER) != TX_SUCCESS) return 0U;
     uint8_t applied = 0U;
-    if (epoch==g_thread_comm_recovery_epoch && persistent_store_controls_ready() && board_launch_latch_is_set() == 0U && g_thread_comm_abort == 0U) {
+    if (!g_command_admission_fault && epoch==g_thread_comm_recovery_epoch && persistent_store_controls_ready() && board_launch_latch_is_set() == 0U && g_thread_comm_abort == 0U) {
         apply(command);
         applied = 1U;
     }
-    (void)tx_mutex_put(&g_thread_comm_state_mutex);
-    return applied;
+    return command_state_release()?applied:0U;
 }
 
 uint8_t thread_comm_take_launch_sequence_request_owned(uint64_t *timestamp_ms,uint32_t*epoch) {
