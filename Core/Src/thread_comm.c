@@ -22,6 +22,8 @@ static void (*g_manual_stop_apply)(void);
  * queue/physical-owner admission. Never lowered by ordinary producers. */
 static uint64_t g_command_cutoff_ms;
 static _Atomic uint8_t g_command_admission_fault;
+/* A failed completion retirement release cannot reopen generic admission. */
+static uint8_t g_completed_retirement_fault;
 /* Ordinary work may not turn a failed shared-owner release into success.
  * No Stop, IO, rollback or accepted-Launch cancellation is introduced. */
 static bool command_state_release(void) {
@@ -1168,10 +1170,43 @@ int32_t board_recovery_stage_storage_hold(uint32_t expected_epoch) {
   return -10;
  if(tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return -14;
  int32_t result=-10;
- if(expected_epoch==g_thread_comm_recovery_epoch&&!launch_retained_for_recovery_locked()) {
+ if(g_completed_retirement_fault)result=-9;
+ else if(expected_epoch==g_thread_comm_recovery_epoch&&!launch_retained_for_recovery_locked()) {
   persistent_store_hold_bootstrap();result=0;
  }
  return command_state_release()?result:-9;
+}
+/* Completion has no remaining scheduled effects. Only a post-completion QUERY
+ * can create this proof; an old query cannot authorize a later Launch owner. */
+static bool completed_recovery_owner_locked(uint32_t epoch,uint64_t query_source) {
+ return epoch&&epoch!=UINT32_MAX&&epoch==g_thread_comm_recovery_epoch&&
+  g_accepted_launch.phase==LAUNCH_COMPLETED&&g_accepted_launch.initial_verified&&
+  g_accepted_launch.owner.epoch==epoch&&g_accepted_launch.owner.serial&&
+  g_accepted_launch.owner.source_utc&&query_source>g_accepted_launch.owner.source_utc&&
+  !g_thread_comm_abort&&!g_recovery_pending&&!g_bootstrap_finalizing&&
+  !g_command_admission_fault&&persistent_store_controls_ready();
+}
+uint8_t board_recovery_completed_query(uint32_t epoch,uint64_t query_source,
+                                      BoardRecoveryCompletedLaunch*out) {
+ if(!out||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return 0U;
+ bool valid=completed_recovery_owner_locked(epoch,query_source);
+ if(valid)*out=(BoardRecoveryCompletedLaunch){g_accepted_launch.owner.source_utc,g_accepted_launch.owner.serial};
+ return command_state_release()&&valid;
+}
+int32_t board_recovery_stage_completed_hold(uint32_t epoch,uint64_t source,uint64_t query_source,
+                                          const BoardRecoveryCompletedLaunch*proof) {
+ if(!proof||!source||source<=query_source||!g_thread_comm_initialized)return -10;
+ if(tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return -14;
+ int32_t result=-10;
+ if(completed_recovery_owner_locked(epoch,query_source)&&
+    proof->source_utc==g_accepted_launch.owner.source_utc&&proof->serial==g_accepted_launch.owner.serial) {
+  /* Claim exactly this completed owner before mutating the query/job. The RAM
+   * hold prevents any new Launch until the existing durable recovery finishes.
+   * A release/storage fault keeps controls inhibited; no rollback/replay. */
+  persistent_store_hold_bootstrap();launch_revoke_locked();result=0;
+ }
+ if(!command_state_release()){g_completed_retirement_fault=1U;return -9;}
+ return result;
 }
 bool board_recovery_bind_bootstrap_owner(BootstrapOwnerComplete complete,uint8_t(*stop)(void)) {
  if(!complete||!stop||!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER)!=TX_SUCCESS)return false;

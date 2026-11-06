@@ -36,6 +36,14 @@ int32_t board_recovery_apply_safe(uint8_t desired_state,
 /* RAM-only job admission, serialized against accepted Launch before any
  * query/job mutation, storage hold or NVM work. 0=owned, negative=refused. */
 int32_t board_recovery_stage_storage_hold(uint32_t expected_epoch);
+/* RAM-only proof captured by an authorized fresh QUERY after completion.
+ * The transport binds issuer/nonce/boot/epoch; this owner binds actual Launch. */
+typedef struct { uint64_t source_utc; uint32_t serial; } BoardRecoveryCompletedLaunch;
+uint8_t board_recovery_completed_query(uint32_t expected_epoch, uint64_t query_source,
+                                      BoardRecoveryCompletedLaunch *out);
+int32_t board_recovery_stage_completed_hold(uint32_t expected_epoch, uint64_t source,
+                                          uint64_t query_source,
+                                          const BoardRecoveryCompletedLaunch *proof);
 int32_t board_recovery_begin_prepare(uint8_t desired_state, uint32_t expected_epoch);
 void board_recovery_cancel_prepare(uint8_t desired_state, uint32_t expected_epoch);
 

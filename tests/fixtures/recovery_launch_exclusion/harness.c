@@ -187,6 +187,7 @@ static void seed_control(const char*which){
 
 
 static unsigned audit_hold_calls,audit_effects;
+static bool completed_fail_hold_release;
 static bool audit_arm_hold,audit_arm_stage,audit_rejected_hold,audit_after_publish,audit_terminal_ready;
 static unsigned audit_terminal_holds,audit_terminal_writes;
 static struct TampFake audit_terminal_backup,audit_interleave_backup;
@@ -205,6 +206,7 @@ void audit_hold_bootstrap(void){
  if(audit_arm_hold){audit_arm_hold=false;audit_foreign=true;UINT status=audit_accept_launch();audit_foreign=false;
   audit_rejected_hold=status!=TX_SUCCESS;if(status==TX_SUCCESS)audit_interleave_backup=test_tamp;fprintf(stderr,"HOLD_RACE state_owned=%u Launch_result=%u accepted=%u\n",state_mutex->locked,status,thread_comm_launch_continuity());}
  audit_hold_calls++;persistent_store_hold_bootstrap();
+ if(completed_fail_hold_release){completed_fail_hold_release=false;fail_state_put=true;}
 }
 #if AUDIT_HAS_CLAIM
 int32_t audit_stage_storage_hold(uint32_t epoch){
@@ -225,7 +227,6 @@ int32_t audit_apply_safe(uint8_t desired,uint32_t epoch,BoardRecoverySnapshot*ou
  return result;
 }
 size_t audit_job_copy(uint8_t*out,size_t capacity);
-
 int main(int argc,char**argv){
  assert(argc>=3);scenario=argv[1];image_path=argv[2];
  bool reboot=!strcmp(scenario,"reboot");
@@ -242,6 +243,64 @@ int main(int argc,char**argv){
  BoardRecoveryRequest q={.operation=BOARD_RECOVERY_QUERY,.nonce=1,.issuer_session=77};query_req(r,&q,10000);
 
 
+ if(!strncmp(scenario,"completed_",10)){
+  assert(persistent_store_controls_ready());assert(thread_comm_set_flight_state(1)==TX_SUCCESS);
+  BoardRecoverySnapshot original;assert(board_recovery_snapshot(&original)==0);
+  BoardRecoveryRequest recover={.operation=BOARD_RECOVERY_RECOVER,.desired_state=0,.nonce=771,.expected_boot_generation=board_recovery_boot_current(),.expected_abort_epoch=original.abort_epoch,.issuer_session=77};
+  assert(audit_accept_launch()==TX_SUCCESS);
+  const char*launch_phase=argc>3?argv[3]:"completed";audit_launch_phase(launch_phase);
+  now=10006;ticks=1;
+  bool noquery=!strcmp(scenario,"completed_no_query")||!strcmp(scenario,"completed_prelaunch_query");
+  if(!noquery){q.nonce=33;query_req(r,&q,10004);}
+  uint8_t before_job[512],after_job[512];size_t job_bytes=audit_job_copy(before_job,sizeof before_job);
+  unsigned writes=media_writes,reads=read_calls,effects=audit_effects,holds=audit_hold_calls;
+  uint64_t source=10005;
+  if(!strcmp(scenario,"completed_wrong_issuer"))recover.issuer_session=88;
+  if(!strcmp(scenario,"completed_wrong_boot"))recover.expected_boot_generation++;
+  if(!strcmp(scenario,"completed_wrong_epoch"))recover.expected_abort_epoch++;
+  if(!strcmp(scenario,"completed_query_nonce"))recover.nonce=q.nonce;
+  if(!strcmp(scenario,"completed_old_source"))source=10001;
+  if(!strcmp(scenario,"completed_query_source"))source=10004;
+  if(!strcmp(scenario,"completed_expired_query"))now=15005;
+  if(!strcmp(scenario,"completed_stop_race"))assert(thread_comm_request_manual_abort()==TX_SUCCESS);
+  if(!strcmp(scenario,"completed_release_fault"))completed_fail_hold_release=true;
+  send_req(r,&recover,source);
+  if(!strcmp(scenario,"completed_release_fault")){
+   fail_state_put=false;
+   assert(!persistent_store_controls_ready()&&!thread_comm_launch_continuity());
+   assert(media_writes==writes&&read_calls==reads&&audit_effects==effects);
+   assert(audit_job_copy(after_job,sizeof after_job)==job_bytes&&!memcmp(before_job,after_job,job_bytes));
+   recover.nonce=772;send_req(r,&recover,10001);main_service();
+   assert(media_writes==writes&&read_calls==reads&&!persistent_store_controls_ready());
+   assert(audit_job_copy(after_job,sizeof after_job)==job_bytes&&!memcmp(before_job,after_job,job_bytes));
+   puts("COMPLETED_RELEASE_FAULT oldprepare cannot consumequery/job orwriteNVM PASS");return 0;
+  }
+  bool success=!strcmp(scenario,"completed_success")||!strcmp(scenario,"completed_media_fault")||!strcmp(scenario,"completed_new_launch_replay");
+  if(!success){
+   assert(media_writes==writes&&read_calls==reads&&audit_effects==effects&&audit_hold_calls==holds);
+   assert(audit_job_copy(after_job,sizeof after_job)==job_bytes&&!memcmp(before_job,after_job,job_bytes));
+   if(strcmp(scenario,"completed_stop_race"))assert(thread_comm_launch_continuity()&&persistent_store_controls_ready());
+   puts("COMPLETED_INVALID_CONTEXT leavesLaunch/query/job/NVMunchanged PASS");return 0;
+  }
+  assert(!persistent_store_controls_ready()&&!thread_comm_launch_continuity()&&media_writes==writes&&read_calls==reads);
+  if(!strcmp(scenario,"completed_media_fault"))native_floor_fault=true;
+  begin_phase(3);main_service();end_phase();
+  if(!strcmp(scenario,"completed_media_fault")){
+   assert(!persistent_store_controls_ready()&&thread_comm_get_abort()&&!finished);
+   unsigned failed_writes=media_writes;recover.nonce=772;send_req(r,&recover,10001);main_service();
+   assert(media_writes==failed_writes&&!persistent_store_controls_ready());puts("COMPLETED_MEDIA_FAULT retainsStop/nooldreplay PASS");return 0;
+  }
+  send_req(r,&recover,source);
+  BoardRecoverySnapshot final;assert(board_recovery_snapshot(&final)==0);
+  assert(response[1]==BOARD_RECOVERY_RESULT_OK&&final.actual_state==0&&!thread_comm_get_abort()&&persistent_store_controls_ready()&&final.abort_epoch==original.abort_epoch+1U&&finished==1);
+  writes=media_writes;send_req(r,&recover,source);main_service();assert(media_writes==writes&&finished==1);
+  if(!strcmp(scenario,"completed_new_launch_replay")){
+   assert(thread_comm_request_network_launch_original_at(10008,"GS",2,10008,(uint32_t)ticks,audit_tick)==TX_SUCCESS);audit_launch_phase("completed");now=10010;
+   send_req(r,&recover,source);recover.nonce=772;recover.expected_abort_epoch=final.abort_epoch;send_req(r,&recover,10009);main_service();
+   assert(thread_comm_launch_continuity()&&media_writes==writes&&finished==1);
+  }
+  puts("COMPLETED_NEW_QUERY freshNORMALrecover completeswithoutpowercycle/noLaunchreplay PASS");return 0;
+ }
  if(!strncmp(scenario,"audit_",6)){
   assert(persistent_store_controls_ready());assert(thread_comm_set_flight_state(1)==TX_SUCCESS);
   BoardRecoverySnapshot original;assert(board_recovery_snapshot(&original)==0);

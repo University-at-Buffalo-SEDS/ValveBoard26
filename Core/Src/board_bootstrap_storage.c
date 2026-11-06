@@ -24,15 +24,16 @@ static TX_MUTEX jobs_mutex;
 static bool reply_waiting;static uint32_t reply_started;
 static struct {BoardRecoveryRequest request;uint64_t source;void*context;BootstrapReply reply;BootstrapNow now;uint8_t result,kind,phase;bool valid,waiting,dirty;}job;
 /* These query fields have ONE serialized SDK transport owner; main never writes. */
-typedef struct {uint64_t nonce,issuer,source,generation;uint32_t epoch;bool valid;} BootstrapQuery;
+typedef struct {uint64_t nonce,issuer,source,generation;uint32_t epoch;bool valid;BoardRecoveryCompletedLaunch completed;} BootstrapQuery;
 static BootstrapQuery query;
 /* These are native object representations, never wire images. All tuple
  * ranges lie within their whole objects and consist of two unsigned u64s. */
 #define PAIR_FIELD(type,field,offset,width) _Static_assert(offsetof(type,field)==offset&&sizeof(((type*)0)->field)==width,"native tuple field layout")
-PAIR_FIELD(BootstrapQuery,nonce,0U,8U);PAIR_FIELD(BootstrapQuery,issuer,8U,8U);PAIR_FIELD(BootstrapQuery,source,16U,8U);PAIR_FIELD(BootstrapQuery,generation,24U,8U);PAIR_FIELD(BootstrapQuery,epoch,32U,4U);PAIR_FIELD(BootstrapQuery,valid,36U,1U);
+PAIR_FIELD(BootstrapQuery,nonce,0U,8U);PAIR_FIELD(BootstrapQuery,issuer,8U,8U);PAIR_FIELD(BootstrapQuery,source,16U,8U);PAIR_FIELD(BootstrapQuery,generation,24U,8U);PAIR_FIELD(BootstrapQuery,epoch,32U,4U);PAIR_FIELD(BootstrapQuery,valid,36U,1U);PAIR_FIELD(BootstrapQuery,completed,40U,16U);
+PAIR_FIELD(BoardRecoveryCompletedLaunch,source_utc,0U,8U);PAIR_FIELD(BoardRecoveryCompletedLaunch,serial,8U,4U);
 PAIR_FIELD(BootstrapMarker,state,0U,1U);PAIR_FIELD(BootstrapMarker,desired,1U,1U);PAIR_FIELD(BootstrapMarker,version,2U,1U);PAIR_FIELD(BootstrapMarker,kind,3U,1U);PAIR_FIELD(BootstrapMarker,first_epoch,4U,4U);PAIR_FIELD(BootstrapMarker,first_time,8U,8U);PAIR_FIELD(BootstrapMarker,first_nonce,16U,8U);PAIR_FIELD(BootstrapMarker,first_issuer,24U,8U);PAIR_FIELD(BootstrapMarker,first_expected_generation,32U,8U);
 _Static_assert(offsetof(BoardRecoveryRequest,nonce)==0U&&offsetof(BoardRecoveryRequest,issuer_session)==8U&&16U<=sizeof(BoardRecoveryRequest),"request tuple within whole object");
-_Static_assert(sizeof(BootstrapQuery)==40U&&16U<=sizeof(BootstrapQuery),"query tuple within whole object");
+_Static_assert(sizeof(BootstrapQuery)==56U&&16U<=sizeof(BootstrapQuery),"query tuple within whole object");
 _Static_assert(sizeof(BootstrapMarker)==40U&&offsetof(BootstrapMarker,first_nonce)+16U<=sizeof(BootstrapMarker),"history tuple within whole object");
 #undef PAIR_FIELD
 static __attribute__((noinline,noclone)) bool same_tuple(const void*a,const void*b){return memcmp(a,b,16U)==0;}
@@ -110,14 +111,23 @@ uint64_t board_bootstrap_storage_query_generation(void){
 bool board_bootstrap_storage_pending(void){return metadata_load_bool(&pending);}
 bool board_bootstrap_storage_query_healthy(void){return metadata_load_bool(&runtime_ready)&&metadata_load_bool(&pending)&&metadata_load_bool(&known_identity)&&metadata_load_bool(&healthy_floor)&&!metadata_load_bool(&floor_publication_pending)&&persistent_store_bootstrap_metadata_ready()&&!persistent_store_bootstrap_faulted();}
 static bool note_query_locked(const BoardRecoveryRequest*r,uint64_t source,uint64_t generation,uint32_t epoch){
- if(!metadata_load_bool(&pending))return true;
+ if(!metadata_load_bool(&pending)) {
+  BoardRecoveryCompletedLaunch completed={0};
+  if(!metadata_load_bool(&runtime_ready)||!metadata_load_bool(&normal_eligible)||job.waiting||
+     !r||r->operation!=BOARD_RECOVERY_QUERY||!r->nonce||!r->issuer_session||
+     !generation||generation==UINT64_MAX||generation!=board_recovery_boot_current()||
+     persistent_store_bootstrap_faulted()||
+     !board_recovery_completed_query(epoch,source,&completed))return false;
+  query.nonce=r->nonce;query.issuer=r->issuer_session;query.source=source;
+  query.generation=generation;query.epoch=epoch;query.completed=completed;query.valid=true;return true;
+ }
  uint64_t cutoff=0U;if(!board_recovery_floor_cached_cutoff(&cutoff)||source<=cutoff)return false;
  bool uncertain=board_bootstrap_storage_uncertain_first();
  if(!metadata_load_bool(&runtime_ready)||!r||r->operation!=BOARD_RECOVERY_QUERY||!r->nonce||!r->issuer_session||source<=history.first_time||same_tuple(r,(const uint8_t*)&history+offsetof(BootstrapMarker,first_nonce))||(!uncertain&&(!metadata_load_bool(&known_identity)||(!metadata_load_bool(&healthy_floor)&&!metadata_load_bool(&repairable_floor))||!generation||generation==UINT64_MAX||generation!=board_recovery_boot_current()))||persistent_store_bootstrap_faulted())return false;
  BoardRecoverySnapshot live={0};(void)board_recovery_snapshot(&live);
  uint8_t required=BOARD_RECOVERY_SUPPORTED|BOARD_RECOVERY_OUTPUTS_VALID|BOARD_RECOVERY_SAFE_OUTPUTS|BOARD_RECOVERY_ABORT_LATCHED;
  if(!epoch||epoch==UINT32_MAX||epoch!=live.abort_epoch||(live.flags&required)!=required||!board_recovery_boot_retry_is_safe())return false;
- query.nonce=r->nonce;query.issuer=r->issuer_session;query.source=source;query.generation=generation;query.epoch=epoch;query.valid=true;return true;
+ query.nonce=r->nonce;query.issuer=r->issuer_session;query.source=source;query.generation=generation;query.epoch=epoch;query.completed=(BoardRecoveryCompletedLaunch){0};query.valid=true;return true;
 }
 bool board_bootstrap_storage_note_query(const BoardRecoveryRequest*r,uint64_t source,uint64_t generation,uint32_t epoch){
  if(!jobs_enter())return false;
@@ -257,6 +267,15 @@ int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*r,uin
    /* Claim the RAM hold under the same state lock as Launch BEFORE changing
     * this query/job. An already accepted Launch leaves all of them untouched. */
    int32_t held=board_recovery_stage_storage_hold(r->expected_abort_epoch);
+   /* Only NORMAL and only a QUERY observed after this exact completed owner.
+    * Existing bootstrap legs and every active/prelaunch recovery retain the
+    * old exclusion. A new issuer, nonce replay, stale query or boot cannot use
+    * another review's completion proof. No source timestamp is renewed. */
+   if(held==-10&&kind==JOB_NORMAL&&!metadata_load_bool(&pending)&&
+      metadata_load_bool(&normal_eligible)&&armed&&query.completed.serial&&
+      query.generation==generation&&r->expected_boot_generation==query.generation&&
+      source>query.source&&query.source>query.completed.source_utc)
+    held=board_recovery_stage_completed_hold(r->expected_abort_epoch,source,query.source,&query.completed);
    if(held!=0)result=held==-10?BOARD_RECOVERY_RESULT_STALE:BOARD_RECOVERY_RESULT_IO;
    else {
     query.valid=false;job.request=*r;job.source=source;job.context=context;job.reply=reply;job.now=now;job.result=BOARD_RECOVERY_RESULT_IO;job.kind=kind;job.phase=0;job.valid=true;job.waiting=true;job.dirty=false;

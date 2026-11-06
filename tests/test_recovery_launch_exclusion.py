@@ -43,4 +43,14 @@ class RecoveryLaunchExclusionTests(unittest.TestCase):
  def test_busy_atomic_stage_never_holds_or_installs_job(self):
   self.assertTrue(self.has_claim,"Current firmware must expose atomic stage claim")
   self.case("audit_claim_busy")
+ def test_completed_fresh_normal_query_recovers_without_power_cycle(self):
+  self.case("completed_success","completed")
+ def test_completed_context_and_active_phases_stay_excluded(self):
+  for phase in ["pending","taken","running"]:
+   with self.subTest(phase=phase):self.case("completed_active",phase)
+  for name in ["no_query","prelaunch_query","wrong_issuer","wrong_boot","wrong_epoch","query_nonce","old_source","query_source","expired_query","stop_race"]:
+   with self.subTest(name=name):self.case("completed_"+name,"completed")
+ def test_completed_failure_and_new_launch_replay_fences(self):
+  for name in ["release_fault","media_fault","new_launch_replay"]:
+   with self.subTest(name=name):self.case("completed_"+name,"completed")
 if __name__=="__main__":unittest.main()

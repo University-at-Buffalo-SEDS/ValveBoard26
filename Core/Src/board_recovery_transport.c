@@ -79,12 +79,13 @@ static SedsResult handle_serialized(SedsRouter*router,const SedsPacketView*packe
   else if(board_bootstrap_storage_pending()) {
    uint8_t required=BOARD_RECOVERY_ABORT_LATCHED|BOARD_RECOVERY_SAFE_OUTPUTS|BOARD_RECOVERY_OUTPUTS_VALID|BOARD_RECOVERY_SUPPORTED;
    result=board_bootstrap_storage_query_healthy()&&(snapshot.flags&required)==required?BOARD_RECOVERY_RESULT_OK:BOARD_RECOVERY_RESULT_IO;
-   /* This getter reads the SDK's RAM clock, never sends a time request. Old
-    * queued QUERY may receive a reply but cannot arm a second recovery leg. */
-   uint64_t now=bootstrap_now(router);
-   if(bootstrap_request_fresh(packet->timestamp,now))
-    (void)board_bootstrap_storage_note_query(&request,packet->timestamp,generation,snapshot.abort_epoch);
   }
+  /* RAM clock only. Normal completed recovery needs a fresh QUERY too; active
+   * Launch cannot arm it, and an old queued query never gains a renewed UTC. */
+  uint64_t now=bootstrap_now(router);
+  if((result==BOARD_RECOVERY_RESULT_OK||board_bootstrap_storage_pending())&&
+     bootstrap_request_fresh(packet->timestamp,now))
+   (void)board_bootstrap_storage_note_query(&request,packet->timestamp,generation,snapshot.abort_epoch);
   return send_status(router,result,&request,generation,&snapshot,uptime_ms);
  }
  uint64_t now=bootstrap_now(router);
