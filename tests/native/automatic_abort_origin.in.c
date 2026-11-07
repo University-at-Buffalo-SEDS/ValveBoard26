@@ -34,7 +34,7 @@ static char captured[256];static struct{void*r;}g_router={(void*)1};static void*
 static int init_telemetry_router(void){return 0;}
 static inline uint8_t telemetry_link_recently_active(void){return 1;}
 static SedsResult seds_router_log_string_ex(void*r,SedsDataType t,const char*s,size_t n,const uint64_t*stamp,int q){assert(r&&t==SEDS_DT_ABORT&&q);++attempts;if(failures){--failures;return SEDS_IO;}assert(n<sizeof captured);memcpy(captured,s,n);captured[n]=0;captured_stamp=stamp?*stamp:now_utc;return 0;}
-typedef struct{const uint8_t*payload;size_t payload_len;uint64_t timestamp;}SedsPacketView;
+typedef struct{const uint8_t*payload;size_t payload_len;uint64_t timestamp;uint32_t ty;}SedsPacketView;
 static uint8_t board_recovery_command_time_allowed(uint64_t t){return cutoff==0||t>cutoff;}
 static uint8_t board_recovery_floor_active(void){return cutoff!=0;}
 static int seds_router_get_network_time_ms(void*r,uint64_t*out){assert(r);*out=now_utc;return 0;}
@@ -101,7 +101,13 @@ int main(int argc,char**argv){assert(argc==2);const char*test=argv[1];
  if(!strcmp(test,"launch"))g_thread_comm_flight_state=7;
  telemetry_report_safety_abort();assert(attempts==before_recovery);
  /* Already-retained packets are not recalled; receiver retirement still wins. */
- SedsPacketView p={(const uint8_t*)captured,strlen(captured),captured_stamp};
+ SedsPacketView p={.payload=(const uint8_t*)captured,.payload_len=strlen(captured),.timestamp=captured_stamp,.ty=SEDS_DT_ABORT};
+ /* Other endpoint-fanout types cannot mutate the Abort owner or consume data. */
+ const uint32_t unrelated[]={0U,7U,17U,256715704U,UINT32_MAX};
+ for(unsigned i=0;i<sizeof unrelated/sizeof unrelated[0];++i){
+  p.ty=unrelated[i];assert(Abort_handler(&p,0)==SEDS_OK);assert(stops==0&&!g_thread_comm_abort);
+ }
+ p.ty=SEDS_DT_ABORT;
  assert(Abort_handler(&p,0)==0);unsigned expected=!strcmp(test,"fresh");assert(stops==expected);
  p.payload=(const uint8_t*)"SEDS_MANUAL_ABORT_V1:";p.payload_len=21;assert(Abort_handler(&p,0)==0&&stops==expected+1);
  printf("{\"case\":\"%s\",\"frozen_origin\":%llu,\"new_operation_stops\":%u,\"manual_Stop_preserved\":true}\n",test,(unsigned long long)captured_stamp,expected);

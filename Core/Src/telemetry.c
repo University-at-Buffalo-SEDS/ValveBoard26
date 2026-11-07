@@ -342,6 +342,9 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
 
 SedsResult Abort_handler(const SedsPacketView *pkt, void *user)
 {
+  /* Endpoint fanout may also deliver SDK diagnostics or other data types.
+   * Only this handler's actual command contract can mutate board state. */
+  if (pkt != NULL && pkt->ty != SEDS_DT_ABORT) return SEDS_OK;
   /* Preserve operator Abort, but identify delayed automatic requests so an
    * old prelaunch retry cannot terminate a subsequently admitted launch. */
   static const char automatic_prefix[] = "SEDS_AUTO_ABORT_V1:";
@@ -372,6 +375,9 @@ SedsResult Abort_handler(const SedsPacketView *pkt, void *user)
 
 SedsResult Flight_State_handler(const SedsPacketView *pkt, void *user)
 {
+  /* Endpoint fanout may also deliver SDK diagnostics or other data types.
+   * Only this handler's actual command contract can mutate board state. */
+  if (pkt != NULL && pkt->ty != SEDS_DT_FLIGHT_STATE) return SEDS_OK;
   if (pkt != NULL && board_recovery_sync_command_cutoff()!=SEDS_OK) return SEDS_IO;
   /* Explicit recovery installs a persisted replay floor before clearing abort. */
   if (pkt != NULL && board_recovery_command_is_stale(pkt)) return SEDS_HANDLER_ERROR;
@@ -457,6 +463,7 @@ static SedsResult control_packet_handler(const SedsPacketView *packet, void *use
 
   if (packet != NULL && packet->ty == SEDS_DT_HEARTBEAT)
     return Heartbeat_handler(packet, user);
+  if (packet != NULL && packet->ty != SEDS_DT_VALVE_COMMAND) return SEDS_OK;
   return Valve_Command_handler(packet, user);
 }
 

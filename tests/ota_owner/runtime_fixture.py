@@ -60,7 +60,7 @@ PREFIX
  if(!strcmp(argv[1],"busy_stop")){
   pthread_t worker;assert(!pthread_mutex_lock(&gate));io_block=true;assert(!pthread_mutex_unlock(&gate));assert(!pthread_create(&worker,NULL,writer,NULL));assert(!pthread_mutex_lock(&gate));deadline_wait(&io_entered);assert(!pthread_mutex_unlock(&gate));
   uint8_t q[]={1,8,0,0,0};request(q,sizeof q);ota_stream_poll();assert(work.phase==WORK_REQUEST&&!begins&&!g_ota_service_errors);
-  const uint8_t bytes[]="SEDS_MANUAL_ABORT_V1:K";SedsPacketView packet={.payload=bytes,.payload_len=sizeof(bytes)-1,.sender=(const uint8_t*)"GS",.sender_len=2,.timestamp=501};assert(Abort_handler(&packet,NULL)==SEDS_OK&&output_mask()==STOP_MASK);ota_stream_poll();assert(terminal.phase==CLEAN_PENDING&&!begins);
+  const uint8_t bytes[]="SEDS_MANUAL_ABORT_V1:K";SedsPacketView packet={.ty=SEDS_DT_ABORT,.payload=bytes,.payload_len=sizeof(bytes)-1,.sender=(const uint8_t*)"GS",.sender_len=2,.timestamp=501};assert(Abort_handler(&packet,NULL)==SEDS_OK&&output_mask()==STOP_MASK);ota_stream_poll();assert(terminal.phase==CLEAN_PENDING&&!begins);
   assert(!pthread_mutex_lock(&gate));io_release=true;assert(!pthread_cond_broadcast(&condition));assert(!pthread_mutex_unlock(&gate));assert(!pthread_join(worker,NULL));ota_stream_poll();assert(terminal.phase==CLEAN_NONE&&!begins);puts("NEW GREEN: actual callback+poll never wait on NVM; following validated StopGPIO precedes release");return 0;
  }
  if(!strcmp(argv[1],"recovery_after_launch")){assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_LAUNCH)==TX_SUCCESS);uint8_t q=6;request(&q,1);step_reply();assert(last_reply[1]==OTA_STREAM_BAD_STATE&&!resets&&!state.reset_requested&&!thread_comm_get_abort());return 0;}

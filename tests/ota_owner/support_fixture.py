@@ -177,6 +177,7 @@ typedef int SedsResult;
 #define SEDS_BAD_ARG -2
 #define SEDS_HANDLER_ERROR -3
 #define SEDS_DT_FLIGHT_STATE 256715704U
+#define SEDS_DT_ABORT 135612662U
 #define FLIGHT_STATE_PERSIST_KEY 0x46535445U
 #define FLIGHT_STATE_MAX_VALUE 15U
 static SedsRouter router;static struct{SedsRouter*r;}g_router={&router};
@@ -218,7 +219,7 @@ static void*receiver(void*unused){(void)unused;
   assert(status==SEDS_OK);
 #endif
  }
-const uint8_t bytes[]="SEDS_MANUAL_ABORT_V1:K";SedsPacketView packet={.payload=bytes,.payload_len=sizeof(bytes)-1,.sender=(const uint8_t*)"GS",.sender_len=2,.timestamp=stop_source};assert(Abort_handler(&packet,NULL)==SEDS_OK);assert(!pthread_mutex_lock(&gate));receiver_done=true;assert(!pthread_cond_broadcast(&condition));assert(!pthread_mutex_unlock(&gate));return NULL;}
+const uint8_t bytes[]="SEDS_MANUAL_ABORT_V1:K";SedsPacketView packet={.ty=SEDS_DT_ABORT,.payload=bytes,.payload_len=sizeof(bytes)-1,.sender=(const uint8_t*)"GS",.sender_len=2,.timestamp=stop_source};assert(Abort_handler(&packet,NULL)==SEDS_OK);assert(!pthread_mutex_lock(&gate));receiver_done=true;assert(!pthread_cond_broadcast(&condition));assert(!pthread_mutex_unlock(&gate));return NULL;}
 BOARD_EFFECTS
 #ifdef CANDIDATE
 static uint8_t queue_recovery_read(uint32_t*mask){assert(state_depth);*mask=output_mask();return BOARD_RECOVERY_OUTPUTS_VALID|(*mask==STOP_MASK?BOARD_RECOVERY_SAFE_OUTPUTS:0U);}

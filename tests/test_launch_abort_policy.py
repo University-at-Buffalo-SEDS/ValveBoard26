@@ -92,11 +92,14 @@ UINT tx_semaphore_put(TX_SEMAPHORE*s){s->count++;return TX_SUCCESS;}
 typedef int SedsResult;
 #define SEDS_IO -9
 #define SEDS_OK 0
+#define SEDS_DT_ABORT 135612662U
+#define SEDS_DT_FLIGHT_STATE 256715704U
+#define SEDS_DT_VALVE_COMMAND 245583120U
 static SedsResult board_recovery_sync_command_cutoff(void){return SEDS_OK;}
 #define SEDS_BAD_ARG -1
 #define SEDS_ERR -2
 #define SEDS_HANDLER_ERROR -3
-typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;const char*sender;size_t sender_len;} SedsPacketView;
+typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;const char*sender;size_t sender_len;uint32_t ty;} SedsPacketView;
 static uint8_t board_recovery_command_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static uint8_t board_recovery_automatic_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static struct{void*r;}g_router={(void*)1};
@@ -136,7 +139,10 @@ int main(void){
  /* A managed global Aborted value has no manual emergency provenance. */
  reset_power();assert(thread_comm_set_flight_state(STATE_LAUNCH)==TX_SUCCESS);
  uint8_t managed_state=STATE_ABORTED;
- SedsPacketView managed_pkt={.payload=&managed_state,.payload_len=1};
+ SedsPacketView managed_pkt={.ty=SEDS_DT_FLIGHT_STATE,.payload=&managed_state,.payload_len=1};
+ managed_pkt.ty=SEDS_DT_ABORT;assert(Flight_State_handler(&managed_pkt,0)==SEDS_OK);
+ assert(g_flight_state_handler_count==0&&thread_comm_get_flight_state()==STATE_LAUNCH&&!thread_comm_get_abort());
+ managed_pkt.ty=SEDS_DT_FLIGHT_STATE;
  assert(Flight_State_handler(&managed_pkt,0)!=SEDS_OK);
  assert(thread_comm_get_flight_state()==STATE_LAUNCH&&!thread_comm_get_abort());
  /* Launch winning the state mutex must suppress the same managed update. */
@@ -146,7 +152,7 @@ int main(void){
  assert(thread_comm_get_flight_state()==STATE_LAUNCH&&!thread_comm_get_abort());
  /* Exact automatic marker is suppressed after launch, including delayed retry. */
  const uint8_t automatic[]="SEDS_AUTO_ABORT_V1:late heartbeat";
- SedsPacketView pkt={.payload=automatic,.payload_len=sizeof automatic-1};assert(Abort_handler(&pkt,0)==SEDS_OK);
+ SedsPacketView pkt={.ty=SEDS_DT_ABORT,.payload=automatic,.payload_len=sizeof automatic-1};assert(Abort_handler(&pkt,0)==SEDS_OK);
  assert(!thread_comm_get_abort());
  const uint8_t manual[]="operator abort";pkt.payload=manual;pkt.payload_len=sizeof manual-1;
  assert(Abort_handler(&pkt,0)==SEDS_OK&&thread_comm_get_abort());
@@ -166,7 +172,7 @@ int main(void){
  EXTRA
  reset_power();assert(thread_comm_set_flight_state(STATE_ARMED)==TX_SUCCESS);
  uint8_t marked[1]={AUTO_CMD|THREAD_COMM_AUTOMATIC_TAG};
- pkt=(SedsPacketView){.payload=marked,.payload_len=1,.timestamp=1234};
+ pkt=(SedsPacketView){.ty=SEDS_DT_VALVE_COMMAND,.payload=marked,.payload_len=1,.timestamp=1234};
  assert(Valve_Command_handler(&pkt,0)==SEDS_OK);
  thread_comm_msg_t received;assert(thread_comm_receive(&received,TX_NO_WAIT)==TX_SUCCESS);CHECK_RECEIVED
  assert(thread_comm_set_flight_state(STATE_LAUNCH)==TX_SUCCESS);

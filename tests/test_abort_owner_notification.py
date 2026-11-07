@@ -44,10 +44,11 @@ static UINT paused_manual_abort(void){UINT result=thread_comm_request_manual_abo
 typedef int SedsResult;
 #define SEDS_IO -9
 #define SEDS_OK 0
+#define SEDS_DT_ABORT 135612662U
 static SedsResult board_recovery_sync_command_cutoff(void){return SEDS_OK;}
 #define SEDS_BAD_ARG -1
 #define SEDS_HANDLER_ERROR -3
-typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;const char*sender;size_t sender_len;} SedsPacketView;
+typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;const char*sender;size_t sender_len;uint32_t ty;} SedsPacketView;
 static uint8_t board_recovery_command_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static uint8_t board_recovery_automatic_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static struct{void*r;}g_router;
@@ -71,7 +72,7 @@ ACTUAL_SAFETY
 int main(int argc,char**argv){
  assert(argc==2);TX_BYTE_POOL pool={0};assert(thread_comm_init(&pool)==0);
  board_recovery_bind_owner(read_outputs,prepare,finish);assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_IDLE)==TX_SUCCESS);
- const uint8_t command=CMD_ABORT;SedsPacketView packet={.payload=&command,.payload_len=1,.timestamp=100};
+ const uint8_t command=CMD_ABORT;SedsPacketView packet={.ty=SEDS_DT_ABORT,.payload=&command,.payload_len=1,.timestamp=100};
  /* Heartbeat is now intentionally inert in Idle. Preserve this original
   * late-after-claim recovery test in its supervised active prelaunch state. */
  if(!strcmp(argv[1],"automatic")){assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_PREFILL)==TX_SUCCESS);safety_request_abort(SAFETY_ABORT_HEARTBEAT,"first cause");}
