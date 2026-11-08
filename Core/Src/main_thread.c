@@ -12,6 +12,8 @@
 #include "board_bootstrap_storage.h"
 #include "solenoid_driver.h"
 #include "servo_driver.h"
+#include "overpressure.h"
+#include "telemetry_event_clock.h"
 #include <stdbool.h>
 
 TX_THREAD main_thread;
@@ -286,6 +288,103 @@ static void apply_automatic_valve(uint8_t command)
 }
 
 static void apply_manual_valve_locked(void*context){apply_automatic_valve(*(const uint8_t*)context);}
+
+/* ---- Board tank overpressure protection (control owner only) ---- */
+#define OVERPRESSURE_REPORT_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
+#define OVERPRESSURE_RETRY_TICKS ((TX_TIMER_TICKS_PER_SECOND >= 20U) ? (TX_TIMER_TICKS_PER_SECOND / 20U) : 1U)
+_Static_assert(TX_TIMER_TICKS_PER_SECOND <= 1000U && 1000U % TX_TIMER_TICKS_PER_SECOND == 0U, "wrapping ms clock");
+static overpressure_t g_overpressure;
+static ULONG g_overpressure_report_ticks;
+static uint8_t g_overpressure_pending; /* 1 report, 2 fault, 4 nitrogen close, 8 nitrous close */
+
+static void overpressure_relief_locked(void*context){
+    (void)context;apply_automatic_valve(CMD_DUMP_OPEN);apply_automatic_valve(CMD_NORMALLY_OPEN_OPEN);
+}
+static void overpressure_pilot_locked(void*context){apply_automatic_valve(*(const uint8_t*)context);}
+
+/* Publication outside the state owner; retried until the SDK accepts it. */
+static void overpressure_publish(void){
+#ifdef TELEMETRY_ENABLED
+    /* Supply closes go first and are not throttled behind reports. */
+    static const uint8_t supply[2]={CMD_NITROGEN_CLOSE,CMD_NITROUS_CLOSE};
+    for(uint8_t i=0U;i<2U;i++)
+        if((g_overpressure_pending&(4U<<i))&&telemetry_send_actuator_command((uint8_t)(supply[i]|THREAD_COMM_AUTOMATIC_TAG))==SEDS_OK)
+            g_overpressure_pending&=(uint8_t)~(4U<<i);
+    const ULONG now=tx_time_get();
+    /* Re-announce a live latch so GroundStation keeps refusing re-closes. */
+    if(g_overpressure.stage!=OVERPRESSURE_IDLE&&(ULONG)(now-g_overpressure_report_ticks)>=OVERPRESSURE_REPORT_PERIOD_TICKS)
+        g_overpressure_pending|=1U;
+    if((g_overpressure_pending&3U)==0U||(ULONG)(now-g_overpressure_report_ticks)<OVERPRESSURE_RETRY_TICKS)return;
+    g_overpressure_report_ticks=now;
+    char text[OVERPRESSURE_REPORT_MAX];
+    if(g_overpressure_pending&2U){
+        const uint8_t stale=g_overpressure.fault==OVERPRESSURE_FAULT_STALE;
+        (void)overpressure_format_report(text,sizeof text,stale?'S':'F',g_overpressure.fault_raw,g_overpressure.trips);
+        if(g_overpressure.fault==OVERPRESSURE_FAULT_NONE||log_telemetry_string_asynchronous(SEDS_DT_WARNING,text)==SEDS_OK)
+            g_overpressure_pending&=(uint8_t)~2U;
+    }
+    if(g_overpressure_pending&1U){
+        const float peak=g_overpressure.peak_psi;
+        (void)overpressure_format_report(text,sizeof text,overpressure_report_code(&g_overpressure),
+            peak>0.0f?(uint32_t)(peak+0.5f):0U,g_overpressure.trips);
+        if(log_telemetry_string_asynchronous(SEDS_DT_WARNING,text)==SEDS_OK)g_overpressure_pending&=(uint8_t)~1U;
+    }
+#endif
+}
+
+/* Runs every control loop, including while Abort is latched. Valve effects go
+ * through the shared state owner, which rechecks Launch exclusion atomically. */
+static void service_overpressure(void){
+    overpressure_sample_t sample;
+    data_acq_latest_pressure(&sample);
+    const ULONG ticks=tx_time_get();
+    const uint32_t now_ms=(uint32_t)ticks*(1000U/TX_TIMER_TICKS_PER_SECOND);
+    if(thread_comm_take_overpressure_ack()){
+        if(overpressure_acknowledge(&g_overpressure,now_ms)==OVERPRESSURE_ACK_CLEARED)
+            thread_comm_overpressure_release();
+        g_overpressure_pending|=1U; /* C when cleared, else the current latch. */
+    }
+    const uint8_t burn=g_launch_sequence_active!=0U||thread_comm_overpressure_excluded()!=0U;
+    const uint32_t act=overpressure_step(&g_overpressure,&sample,now_ms,burn);
+    if(act&OVERPRESSURE_ACT_RELIEF){
+        /* Dump and vent are the Abort safe state, so this also runs latched. */
+        if(thread_comm_overpressure_effect(THREAD_COMM_OVERPRESSURE_OWN_RELIEF,overpressure_relief_locked,0)){
+            (void)publish_umbilical_status(CMD_DUMP_OPEN,g_nitrous_servo_open_state);
+            (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN,g_no_servo_open_state);
+            g_overpressure_pending|=12U;
+        } else overpressure_demote(&g_overpressure);
+    }
+    if((act&OVERPRESSURE_ACT_PILOT_OPEN)&&g_overpressure.stage==OVERPRESSURE_PILOT){
+        static const uint8_t open=CMD_PILOT_OPEN;
+        if(thread_comm_overpressure_effect(THREAD_COMM_OVERPRESSURE_REFUSE_ABORT,overpressure_pilot_locked,(void*)&open))
+            (void)publish_umbilical_status(CMD_PILOT_OPEN,g_pilot_valve_state);
+        else if(thread_comm_get_abort()==0U)overpressure_demote(&g_overpressure);
+    }
+    /* An Abort (ours or anyone's) already closed the main valve. */
+    if(thread_comm_get_abort()!=0U&&overpressure_abort_observed(&g_overpressure))g_overpressure_pending|=1U;
+    if((act&OVERPRESSURE_ACT_PILOT_CLOSE)&&g_launch_sequence_active==0U){
+        static const uint8_t close=CMD_PILOT_CLOSE;
+        if(thread_comm_overpressure_effect(THREAD_COMM_OVERPRESSURE_ANY_STATE,overpressure_pilot_locked,(void*)&close))
+            (void)publish_umbilical_status(CMD_PILOT_OPEN,g_pilot_valve_state);
+    }
+    if(act&OVERPRESSURE_ACT_ABORT)
+        (void)thread_comm_request_overpressure_abort((uint64_t)now_ms,(uint32_t)(g_overpressure.peak_psi+0.5f),
+                                                     telemetry_event_clock_snapshot());
+    if(act&OVERPRESSURE_ACT_REPORT)g_overpressure_pending|=1U;
+    if(act&OVERPRESSURE_ACT_FAULT)g_overpressure_pending|=2U;
+    overpressure_publish();
+}
+
+/* Refused commands still confirm the actual valve state. */
+static uint8_t overpressure_refused(thread_comm_msg_t cmd){
+    if(!overpressure_refuses_command(&g_overpressure,(uint32_t)cmd))return 0U;
+    const uint8_t command=(uint8_t)(cmd&0x7FU);
+    if(command==CMD_PILOT_OPEN||command==CMD_PILOT_CLOSE)(void)publish_umbilical_status(CMD_PILOT_OPEN,g_pilot_valve_state);
+    else if(command==CMD_DUMP_CLOSE)(void)publish_umbilical_status(CMD_DUMP_OPEN,g_nitrous_servo_open_state);
+    else if(command==CMD_NORMALLY_OPEN_CLOSE)(void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN,g_no_servo_open_state);
+    g_overpressure_pending|=1U;
+    return 1U;
+}
 static void handle_command(thread_comm_msg_t cmd,uint32_t command_epoch){
     if(cmd==CMD_ABORT){(void)thread_comm_request_manual_abort();return;}
     if (!persistent_store_controls_ready()) {
@@ -297,6 +396,7 @@ static void handle_command(thread_comm_msg_t cmd,uint32_t command_epoch){
     {
         return;
     }
+    if (overpressure_refused(cmd)) return;
     if ((cmd & THREAD_COMM_AUTOMATIC_TAG) != 0U) {
         if (thread_comm_apply_automatic_owned(cmd,command_epoch,apply_automatic_valve) != 0U) {
             const uint8_t command = (uint8_t)(cmd & ~THREAD_COMM_AUTOMATIC_TAG);
@@ -460,6 +560,7 @@ void main_thread_entry(ULONG initial_input)
         thread_comm_service_board_recovery();
         board_bootstrap_storage_service();
         if (!persistent_store_controls_ready()&&!thread_comm_launch_continuity()) main_thread_force_outputs_safe_off();
+        service_overpressure();
         service_launch_sequence_request();
 
         if (thread_comm_get_abort() != 0U)

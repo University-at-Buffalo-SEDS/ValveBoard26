@@ -79,6 +79,8 @@ static void board_watchdog_progress(int tag){(void)tag;iterations++;assert(itera
 static void board_bootstrap_storage_service(void){}
 static void retry_pending_status_reports(void){}
 static void publish_all_umbilical_statuses(void){}
+/* Pressure stays nominal here; tests/test_overpressure.py owns that service. */
+static void service_overpressure(void){}
 """+context+'\n'+'\n'.join(function(main,n)for n in ['ms_to_ticks','manual_stop_apply_locked','main_thread_force_outputs_safe_off','start_launch_sequence_locked','start_launch_sequence','service_launch_sequence_request','apply_automatic_valve','service_launch_sequence_locked','service_launch_sequence'])+r"""
 static void abort_state(void){manual_stop_apply_locked();g_aborted=1;}
 static void service_abort_state(void){manual_stop_apply_locked();}

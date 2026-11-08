@@ -8,7 +8,8 @@ enum {
     SAFETY_ABORT_INITIAL_HEARTBEAT = 2,
     SAFETY_ABORT_CONTINUITY = 3,
     SAFETY_ABORT_LAUNCH_CONTINUITY = 4,
-    SAFETY_ABORT_ADC_START = 5
+    SAFETY_ABORT_ADC_START = 5,
+    SAFETY_ABORT_OVERPRESSURE = 6
 };
 
 /* Local monotonic milliseconds, not network time. First local safety trigger

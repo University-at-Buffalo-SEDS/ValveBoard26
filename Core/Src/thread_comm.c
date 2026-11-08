@@ -215,6 +215,75 @@ uint8_t thread_comm_request_local_abort(uint32_t reason, uint64_t at_ms,
     }
     return claimed;
 }
+/* Launch admitted, running or completed, or flight state Launch..Recovery:
+ * tank overpressure must not interfere with the burn. Called under the owner. */
+static uint8_t overpressure_burn_locked(void)
+{
+    return board_launch_latch_is_set() || g_safety_report_closing != 0U ||
+        g_accepted_launch.phase != LAUNCH_NONE ||
+        (g_thread_comm_flight_state >= VALVE_FLIGHT_STATE_LAUNCH &&
+         g_thread_comm_flight_state <= VALVE_FLIGHT_STATE_RECOVERY);
+}
+/* Set atomically with the first relief effect; refuses Launch admission until
+ * the operator acknowledges. Cleared only by that acknowledgement. */
+static uint8_t g_overpressure_relief_owned;
+static _Atomic uint8_t g_overpressure_ack_requested;
+uint8_t thread_comm_overpressure_excluded(void)
+{
+    if (!g_thread_comm_initialized ||
+        tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER) != TX_SUCCESS) return 1U;
+    const uint8_t burn = overpressure_burn_locked();
+    if (tx_mutex_put(&g_thread_comm_state_mutex) != TX_SUCCESS) g_command_admission_fault = 1U;
+    return burn;
+}
+uint8_t thread_comm_overpressure_effect(uint8_t flags, void (*apply)(void *), void *context)
+{
+    if (!apply || !g_thread_comm_initialized ||
+        tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER) != TX_SUCCESS) return 0U;
+    const uint8_t allowed = ((flags & THREAD_COMM_OVERPRESSURE_ANY_STATE) || !overpressure_burn_locked()) &&
+        (!(flags & THREAD_COMM_OVERPRESSURE_REFUSE_ABORT) || !g_thread_comm_abort);
+    if (allowed) {
+        if (flags & THREAD_COMM_OVERPRESSURE_OWN_RELIEF) g_overpressure_relief_owned = 1U;
+        apply(context);
+    }
+    if (tx_mutex_put(&g_thread_comm_state_mutex) != TX_SUCCESS) g_command_admission_fault = 1U;
+    return allowed;
+}
+void thread_comm_overpressure_release(void)
+{
+    if (!g_thread_comm_initialized ||
+        tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER) != TX_SUCCESS) return;
+    g_overpressure_relief_owned = 0U;
+    if (tx_mutex_put(&g_thread_comm_state_mutex) != TX_SUCCESS) g_command_admission_fault = 1U;
+}
+/* Same local Abort owner and report as the safety thread, including Startup:
+ * a tank at the abort pressure is never a commissioning artifact. */
+uint8_t thread_comm_request_overpressure_abort(uint64_t at_ms, uint32_t detail, uint64_t original_utc)
+{
+    if (!g_thread_comm_initialized ||
+        tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER) != TX_SUCCESS) return 0U;
+    uint8_t claimed = 0U;
+    if (!g_thread_comm_abort && !overpressure_burn_locked()) {
+        thread_comm_latch_abort_locked(0U);
+        safety_record_first_abort(SAFETY_ABORT_OVERPRESSURE, at_ms, g_thread_comm_groundstation_heartbeat_ms,
+                                  g_thread_comm_flight_state, detail, 0U, original_utc);
+        g_safety_report = (thread_comm_safety_report_t){.original_utc=original_utc,
+            .reason=SAFETY_ABORT_OVERPRESSURE, .epoch=g_thread_comm_recovery_epoch};
+        claimed = 1U;
+    }
+    if (tx_mutex_put(&g_thread_comm_state_mutex) != TX_SUCCESS) {
+        g_command_admission_fault = 1U;return 0U;
+    }
+    return claimed;
+}
+void thread_comm_note_overpressure_ack(void)
+{
+    atomic_store_explicit(&g_overpressure_ack_requested, 1U, memory_order_release);
+}
+uint8_t thread_comm_take_overpressure_ack(void)
+{
+    return atomic_exchange_explicit(&g_overpressure_ack_requested, 0U, memory_order_acq_rel);
+}
 uint8_t thread_comm_safety_report_claim(thread_comm_safety_report_t *out)
 {
     if (!out || !g_thread_comm_initialized ||
@@ -310,6 +379,7 @@ UINT thread_comm_init(TX_BYTE_POOL *byte_pool)
     g_safety_report = (thread_comm_safety_report_t){0};
     g_safety_report_inflight_lease = g_safety_report_inflight_cause = g_safety_report_last_lease = 0U;
     g_safety_report_closing = 0U;
+    g_overpressure_relief_owned = 0U;
     /* Queue initialization never reconstructs a physical operation from backup. */
     launch_revoke_locked();
     g_accepted_launch.initial_verified=0U;
@@ -841,7 +911,7 @@ static UINT thread_comm_request_launch_sequence_impl(uint64_t source,uint8_t net
  if(g_accepted_launch.phase!=LAUNCH_NONE)status=launch_same_original_locked(source,sender,length)?TX_SUCCESS:TX_QUEUE_ERROR;
  else if(g_thread_comm_recovery_epoch!=0U&&g_thread_comm_recovery_epoch!=UINT32_MAX&&
    g_launch_serial<UINT32_MAX-1U&&!g_thread_comm_abort&&!g_recovery_pending&&!g_command_admission_fault&&
-   persistent_store_controls_ready()&&(!network||(network_timestamp_allowed_locked(source)&&launch_deadline_locked(source,observed_utc,observed_tick,monotonic_now,&deadline)))) {
+   !g_overpressure_relief_owned&&persistent_store_controls_ready()&&(!network||(network_timestamp_allowed_locked(source)&&launch_deadline_locked(source,observed_utc,observed_tick,monotonic_now,&deadline)))) {
   if(safety_launch_inhibit_locked()) {
    g_thread_comm_launch_command_timestamp_ms=source;g_thread_comm_launch_sequence_pending=1U;
    launch_accept_locked(source,sender,length,0U,g_launch_serial+1U);g_accepted_launch.deadline=deadline;g_accepted_launch.deadline_valid=network;newly_staged=1U;status=TX_SUCCESS;

@@ -271,6 +271,13 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
    * getter runs under that lock. Refusal/IO is not a stale-command receipt. */
   if (pkt != NULL && board_recovery_sync_command_cutoff()!=SEDS_OK) return SEDS_IO;
   if (pkt != NULL && board_recovery_command_is_stale(pkt)) return SEDS_OK;
+  /* Overpressure acknowledgement bypasses queue admission so it also works
+   * while Abort is latched; the control owner validates it and moves nothing. */
+  if (pkt != NULL && pkt->payload != NULL && pkt->payload_len == 1U &&
+      pkt->payload[0] == CMD_OVERPRESSURE_ACK) {
+    thread_comm_note_overpressure_ack();
+    return SEDS_OK;
+  }
 
   (void)user;
 

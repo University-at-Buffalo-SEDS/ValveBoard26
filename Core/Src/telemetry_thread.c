@@ -68,6 +68,7 @@ static void telemetry_report_safety_abort(void)
     case SAFETY_ABORT_CONTINUITY: reason = "continuity lost"; break;
     case SAFETY_ABORT_LAUNCH_CONTINUITY: reason = "launch continuity timeout"; break;
     case SAFETY_ABORT_ADC_START: reason = "ADC start failed"; break;
+    case SAFETY_ABORT_OVERPRESSURE: reason = "tank overpressure"; break;
     default: reason = "local"; break;
     }
     static const char prefix[] = "SEDS_AUTO_ABORT_V1:";
@@ -77,6 +78,7 @@ static void telemetry_report_safety_abort(void)
     _Static_assert(sizeof(prefix) + sizeof("continuity lost") - 1U <= sizeof(report), "automatic report buffer must hold every exact reason");
     _Static_assert(sizeof(prefix) + sizeof("launch continuity timeout") - 1U <= sizeof(report), "automatic report buffer must hold every exact reason");
     _Static_assert(sizeof(prefix) + sizeof("ADC start failed") - 1U <= sizeof(report), "automatic report buffer must hold every exact reason");
+    _Static_assert(sizeof(prefix) + sizeof("tank overpressure") - 1U <= sizeof(report), "automatic report buffer must hold every exact reason");
     _Static_assert(sizeof(prefix) + sizeof("local") - 1U <= sizeof(report), "automatic report buffer must hold every exact reason");
     unsigned used = 0U;
     for (; used < sizeof(prefix) - 1U; ++used) report[used] = prefix[used];

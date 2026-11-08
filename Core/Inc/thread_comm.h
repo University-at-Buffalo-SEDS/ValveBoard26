@@ -168,6 +168,18 @@ uint8_t thread_comm_safety_report_claim(thread_comm_safety_report_t *out);
 void thread_comm_safety_report_finish(uint32_t lease, uint8_t retained);
 void thread_comm_service_safety_publication(void);
 
+/* Board tank overpressure protection (main control thread only). The effect
+ * callback runs under the state owner: bounded GPIO/timer/RAM work only. */
+#define THREAD_COMM_OVERPRESSURE_OWN_RELIEF 1U   /* refuse Launch admission until acknowledged */
+#define THREAD_COMM_OVERPRESSURE_REFUSE_ABORT 2U /* no effect while Abort is latched */
+#define THREAD_COMM_OVERPRESSURE_ANY_STATE 4U    /* ignore the Launch exclusion */
+uint8_t thread_comm_overpressure_excluded(void);
+uint8_t thread_comm_overpressure_effect(uint8_t flags, void (*apply)(void *), void *context);
+void thread_comm_overpressure_release(void);
+uint8_t thread_comm_request_overpressure_abort(uint64_t at_ms, uint32_t detail, uint64_t original_utc);
+void thread_comm_note_overpressure_ack(void);
+uint8_t thread_comm_take_overpressure_ack(void);
+
 /* Link loss excludes Idle; other automatic safety rules remain unchanged. */
 uint8_t thread_comm_request_heartbeat_abort(void);
 uint8_t thread_comm_heartbeat_abort_allowed(void);

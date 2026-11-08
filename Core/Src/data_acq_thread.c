@@ -20,6 +20,7 @@ TX_THREAD data_acq_thread;
 #define DATA_ACQ_POWER_RETRY_TICKS (5U * TX_TIMER_TICKS_PER_SECOND)
 #define DATA_ACQ_STARTUP_DELAY_TICKS (1U * TX_TIMER_TICKS_PER_SECOND)
 #define DATA_ACQ_PRESSURE_PERIOD_TICKS VALVE_PRESSURE_REPORT_TICKS
+_Static_assert(TX_TIMER_TICKS_PER_SECOND <= 1000U && 1000U % TX_TIMER_TICKS_PER_SECOND == 0U, "wrapping ms clock");
 
 static LTC2990_Handle_t ltc2990_voltage_handle;
 static LTC2990_Handle_t ltc2990_current_handle;
@@ -36,6 +37,9 @@ static ULONG data_acq_last_power_retry_ticks;
 static ULONG data_acq_last_pressure_ticks;
 static ULONG data_acq_thread_stack[DATA_ACQ_THREAD_STACK_SIZE / sizeof(ULONG)];
 
+/* Written only by this thread, read by the control owner. */
+static overpressure_sample_t data_acq_pressure_snapshot;
+
 static pressure_transducer_t fuel_tank_pressure = {
     .hadc = &hadc3,
     .trigger_timer = &htim3,
@@ -46,6 +50,14 @@ static pressure_transducer_t fuel_tank_pressure = {
     .max_pressure = PRESSURE_TRANSDUCER_MAX_PRESSURE,
     .timeout_ms = PRESSURE_TRANSDUCER_ADC_TIMEOUT_MS,
 };
+
+void data_acq_latest_pressure(overpressure_sample_t *out)
+{
+    TX_INTERRUPT_SAVE_AREA
+    TX_DISABLE
+    *out = data_acq_pressure_snapshot;
+    TX_RESTORE
+}
 
 void data_acq_get_latest_voltages(float voltages[4])
 {
@@ -125,6 +137,22 @@ static void data_acq_report_pressure(void)
     }
 
     if (pressureTransducerRead(&fuel_tank_pressure, &sample) == HAL_OK) {
+        /* The published psi, classified once: clamped/full-scale or
+         * miscalibrated conversions are faults, never tank pressure. */
+        const overpressure_sample_t snapshot = {
+            .seq = data_acq_pressure_snapshot.seq + 1U == 0U ? 1U : data_acq_pressure_snapshot.seq + 1U,
+            .at_ms = (uint32_t)now * (1000U / TX_TIMER_TICKS_PER_SECOND),
+            .raw_adc = sample.raw_adc,
+            .psi = sample.pressure,
+            .valid = overpressure_sample_valid(sample.raw_adc, sample.pressure,
+                                               fuel_tank_pressure.min_adc,
+                                               fuel_tank_pressure.max_adc,
+                                               fuel_tank_pressure.max_pressure),
+        };
+        TX_INTERRUPT_SAVE_AREA
+        TX_DISABLE
+        data_acq_pressure_snapshot = snapshot;
+        TX_RESTORE
 #ifdef TELEMETRY_ENABLED
         (void)log_telemetry_asynchronous(SEDS_DT_FUEL_TANK_PRESSURE, &sample.pressure, 1U,
                                          sizeof(sample.pressure));

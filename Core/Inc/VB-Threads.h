@@ -1,6 +1,7 @@
 #pragma once
 #include "telemetry.h"
 #include "tx_api.h"
+#include "overpressure.h"
 
 /* ------ Telemetry Thread ------ */
 extern TX_THREAD telemetry_thread;
@@ -16,6 +17,8 @@ extern TX_THREAD data_acq_thread;
 void data_acq_thread_entry(ULONG initial_input);
 UINT create_data_acq_thread(TX_BYTE_POOL *byte_pool);
 void data_acq_get_latest_voltages(float voltages[4]);
+/* Latest tank pressure acquisition for the control owner; never blocks. */
+void data_acq_latest_pressure(overpressure_sample_t *out);
 
 void safety_thread_entry(ULONG initial_input);
 UINT create_safety_thread(TX_BYTE_POOL *byte_pool);

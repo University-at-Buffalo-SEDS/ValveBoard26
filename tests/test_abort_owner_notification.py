@@ -29,6 +29,8 @@ static void apply_automatic_valve(uint8_t cmd){(void)cmd;}
 static void service_launch_sequence_request(void){}
 static void apply_manual_valve_locked(void*context){apply_automatic_valve(*(uint8_t*)context);}
 static int publish_umbilical_status(unsigned cmd,unsigned value){(void)cmd;(void)value;return 0;}
+/* No overpressure latch in these ownership cases (tests/test_overpressure.py). */
+static uint8_t overpressure_refused(thread_comm_msg_t cmd){(void)cmd;return 0;}
 ACTUAL_CONSUMER
 static unsigned recoveries;
 static void recover_then_launch(void){

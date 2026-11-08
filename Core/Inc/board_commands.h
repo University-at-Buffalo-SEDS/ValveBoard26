@@ -9,7 +9,12 @@ enum valve_commands {
     CMD_DUMP_CLOSE = 5,
     CMD_SEQUENCE = 6,
     CMD_ABORT = 7,
+    /* Operator acknowledgement of the board overpressure latch. Accepted
+     * only below the relief pressure; never moves a valve. */
+    CMD_OVERPRESSURE_ACK = 16,
 };
 enum actuator_commands {
+    CMD_NITROGEN_CLOSE = 12,
+    CMD_NITROUS_CLOSE = 13,
     CMD_IGNITER_SEQUENCE = 14,
 };

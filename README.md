@@ -53,6 +53,27 @@ Network definitions live in `config/sedsnet.json`; simulated hardware and
 limits live in `sim/board.json`.
 
 
+## Tank overpressure protection
+
+The board protects the tank without the GroundStation link, mirroring the
+GroundStation rules with fixed thresholds (`Core/Inc/overpressure.h`):
+
+- 2 consecutive fresh `FUEL_TANK_PRESSURE` samples at or above 850 psi open
+  Dump and Vent and send automatic Nitrogen/Nitrous close commands to the
+  Actuator Board.
+- At or above 950 psi PILOT also opens for 3 s; the board then closes PILOT
+  and takes its own Abort (`SEDS_AUTO_ABORT_V1:tank overpressure`).
+- From Launch admission, or flight state Launch onward, it only reports.
+- A clamped, full-scale or miscalibrated reading is a sensor fault: it is
+  reported and never trips. Repeated or stale samples never count.
+- The latch refuses closing Dump or Vent, opening PILOT and Launch admission
+  until `VALVE_COMMAND` 16 acknowledges it with a fresh reading below 850 psi.
+  Acknowledging moves no valve and also works while Abort is latched.
+
+Reports are `WARNING` text, re-sent every second while latched, for example
+`Valve Board overpressure relief: 912 psi [R3]` (stage code and trip number
+in brackets). GroundStation overpressure settings change only its own layer.
+
 ## Regenerating with STM32CubeMX
 
 Open the checked-in `.ioc` file and generate with the CMake toolchain. Keep user
