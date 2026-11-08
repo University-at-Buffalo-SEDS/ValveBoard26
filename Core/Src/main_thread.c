@@ -353,9 +353,12 @@ static void service_overpressure(void){
     const ULONG ticks=tx_time_get();
     const uint32_t now_ms=(uint32_t)ticks*(1000U/TX_TIMER_TICKS_PER_SECOND);
     if(thread_comm_take_overpressure_ack()){
-        if(overpressure_acknowledge(&g_overpressure,now_ms)==OVERPRESSURE_ACK_CLEARED)
-            thread_comm_overpressure_release();
-        g_overpressure_pending|=1U; /* C when cleared, else the current latch. */
+        const uint8_t ack=overpressure_acknowledge(&g_overpressure,now_ms);
+        if(ack==OVERPRESSURE_ACK_CLEARED)thread_comm_overpressure_release();
+        /* C when a latch was cleared, else the still-active latch. With nothing
+         * latched there is nothing to report: "acknowledged: 0 psi" read as an
+         * overpressure event to operators. */
+        if(ack!=OVERPRESSURE_ACK_NOT_LATCHED)g_overpressure_pending|=1U;
     }
     const uint8_t burn=g_launch_sequence_active!=0U||thread_comm_overpressure_excluded()!=0U;
     const uint32_t act=overpressure_step(&g_overpressure,&sample,now_ms,burn);

@@ -456,6 +456,14 @@ static void relief_case(void){
  assert(thread_comm_request_launch_sequence(42)==TX_SUCCESS);
 }
 
+static void ack_not_latched_case(void){
+ reset_power();assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_IDLE)==TX_SUCCESS);
+ run(0.0f,1200);const unsigned before=report_count;
+ /* An acknowledge with nothing latched is silent: no "acknowledged: 0 psi". */
+ thread_comm_note_overpressure_ack();run(0.0f,300);
+ assert(report_count==before&&!has_prefix("Valve Board overpressure acknowledged"));
+}
+
 static void ack_refused_case(void){
  reset_power();assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_IDLE)==TX_SUCCESS);
  run(900.0f,280);assert(overpressure_owns_valves(&g_overpressure));
@@ -606,6 +614,7 @@ int main(int argc,char**argv){
  else if(!strcmp(argv[1],"floating"))floating_case();
  else if(!strcmp(argv[1],"ramp"))ramp_case();
  else if(!strcmp(argv[1],"ack_refused"))ack_refused_case();
+ else if(!strcmp(argv[1],"ack_not_latched"))ack_not_latched_case();
  else if(!strcmp(argv[1],"pilot_abort"))pilot_abort_case();
  else if(!strcmp(argv[1],"direct_abort"))direct_abort_case();
  else if(!strcmp(argv[1],"already_aborted"))already_aborted_case();
@@ -669,6 +678,7 @@ class OverpressureTests(unittest.TestCase):
 
     def test_owner_relief_closes_supplies_and_blocks_launch_until_ack(self): self.run_case(self.owner, 'relief')
     def test_owner_ack_refused_while_high_or_stale(self): self.run_case(self.owner, 'ack_refused')
+    def test_owner_ack_with_nothing_latched_is_silent(self): self.run_case(self.owner, 'ack_not_latched')
     def test_owner_pilot_window_then_board_abort(self): self.run_case(self.owner, 'pilot_abort')
     def test_owner_direct_abort_pressure_from_startup(self): self.run_case(self.owner, 'direct_abort')
     def test_owner_already_aborted_never_opens_pilot(self): self.run_case(self.owner, 'already_aborted')
