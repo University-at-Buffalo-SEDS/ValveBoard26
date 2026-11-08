@@ -58,14 +58,22 @@ limits live in `sim/board.json`.
 The board protects the tank without the GroundStation link, mirroring the
 GroundStation rules with fixed thresholds (`Core/Inc/overpressure.h`):
 
-- 2 consecutive fresh `FUEL_TANK_PRESSURE` samples at or above 850 psi open
-  Dump and Vent and send automatic Nitrogen/Nitrous close commands to the
-  Actuator Board.
+- Fresh `FUEL_TANK_PRESSURE` readings continuously at or above 850 psi for
+  250 ms (acquisition timestamps, about 13 samples at 50 Hz) open Dump and Vent
+  and send automatic Nitrogen/Nitrous close commands to the Actuator Board.
+  Real tank pressure rises over seconds; a floating input or solenoid
+  switching glitch lasts tens of milliseconds and never trips.
 - At or above 950 psi PILOT also opens for 3 s; the board then closes PILOT
   and takes its own Abort (`SEDS_AUTO_ABORT_V1:tank overpressure`).
 - From Launch admission, or flight state Launch onward, it only reports.
 - A clamped, full-scale or miscalibrated reading is a sensor fault: it is
   reported and never trips. Repeated or stale samples never count.
+- A step of more than 150 psi per 20 ms (7500 psi/s) between readings is not
+  tank pressure (typically an unconnected, floating transducer input). It
+  resets the 250 ms timers and is reported as
+  `Valve Board overpressure sensor implausible or disconnected: 1038 psi [I0]`,
+  never as an overpressure. Readings count again only after 1 s with no further
+  implausible step, so a glitch that sits high cannot trip.
 - The latch refuses closing Dump or Vent, opening PILOT and Launch admission
   until `VALVE_COMMAND` 16 acknowledges it with a fresh reading below 850 psi.
   Acknowledging moves no valve and also works while Abort is latched.

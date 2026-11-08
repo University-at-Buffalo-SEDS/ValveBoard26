@@ -7,15 +7,27 @@
  * actions through the shared state owner.
  *
  * The values mirror the GroundStation defaults (overpressure_relief_psi,
- * overpressure_abort_psi, overpressure_pilot_ms, DEBOUNCE_SAMPLES, FRESH_MS).
+ * overpressure_abort_psi, overpressure_pilot_ms, SUSTAIN_MS, MAX_STEP_PSI,
+ * STEP_MS, SETTLE_MS, FRESH_MS).
  * They are fixed at compile time; GroundStation configuration only changes
  * the GroundStation layer, which can still act earlier but never disables
  * this one. */
 #define OVERPRESSURE_RELIEF_PSI 850.0f
 #define OVERPRESSURE_ABORT_PSI 950.0f
 #define OVERPRESSURE_PILOT_MS 3000U
-#define OVERPRESSURE_DEBOUNCE_SAMPLES 2U
 #define OVERPRESSURE_FRESH_MS 2000U
+/* A trip needs every counted reading at or above the threshold for this long,
+ * measured on acquisition timestamps (13 samples at 50 Hz). Tank pressure
+ * rises over seconds; a floating input or solenoid switching glitch lasts tens
+ * of milliseconds. A gap longer than this between readings restarts it. */
+#define OVERPRESSURE_SUSTAIN_MS 250U
+/* A step larger than MAX_STEP_PSI per STEP_MS (7500 psi/s) between consecutive
+ * readings is not tank pressure: it resets the trip timers and reports an
+ * implausible-sensor fault. Readings count again only after SETTLE_MS with no
+ * further implausible step, so a glitch that sits high cannot trip. */
+#define OVERPRESSURE_MAX_STEP_PSI 150.0f
+#define OVERPRESSURE_STEP_MS 20U
+#define OVERPRESSURE_SETTLE_MS 1000U
 /* 12-bit ADC rail. A sample at or above the calibrated full-scale code is a
  * clamped conversion, never a measurement. */
 #define OVERPRESSURE_ADC_MAX_CODE 4095U
@@ -48,7 +60,8 @@ enum {
 enum {
     OVERPRESSURE_FAULT_NONE = 0,
     OVERPRESSURE_FAULT_INVALID = 1,
-    OVERPRESSURE_FAULT_STALE = 2
+    OVERPRESSURE_FAULT_STALE = 2,
+    OVERPRESSURE_FAULT_IMPLAUSIBLE = 3 /* Unphysical step: unconnected/floating PT. */
 };
 
 enum {
@@ -64,12 +77,16 @@ typedef struct {
     uint32_t started_ms;
     uint32_t last_valid_ms;
     uint32_t pilot_open_ms;
-    uint32_t fault_raw;
+    uint32_t fault_raw;     /* Raw ADC (invalid) or rounded psi (implausible). */
+    uint32_t relief_since_ms;
+    uint32_t abort_since_ms;
+    uint32_t settle_from_ms;
     float last_valid_psi;
     float peak_psi;
     uint16_t trips;
-    uint8_t relief_streak;
-    uint8_t abort_streak;
+    uint8_t relief_streak;  /* At or above relief since relief_since_ms. */
+    uint8_t abort_streak;   /* At or above abort since abort_since_ms. */
+    uint8_t settling;       /* Implausible step seen less than SETTLE_MS ago. */
     uint8_t stage;
     uint8_t started;
     uint8_t have_valid;
@@ -98,7 +115,8 @@ char overpressure_report_code(const overpressure_t *op);
 /* Operator-readable WARNING text with a machine tag, for example
  * "Valve Board overpressure relief: 912 psi [R3]". The bracket holds the
  * stage code (R relief, P main valve open, A Abort, L launch alarm,
- * C acknowledged, F invalid sensor, S stale sensor) and the trip number.
+ * C acknowledged, F invalid sensor, S stale sensor, I implausible sensor)
+ * and the trip number.
  * GroundStation parses only the tag and the value. Returns the length. */
 uint32_t overpressure_format_report(char *out, uint32_t size, char code,
                                     uint32_t value, uint32_t trip);

@@ -303,7 +303,9 @@ static void apply_manual_valve_locked(void*context){apply_automatic_valve(*(cons
 #define OVERPRESSURE_RETRY_TICKS ((TX_TIMER_TICKS_PER_SECOND >= 20U) ? (TX_TIMER_TICKS_PER_SECOND / 20U) : 1U)
 _Static_assert(TX_TIMER_TICKS_PER_SECOND <= 1000U && 1000U % TX_TIMER_TICKS_PER_SECOND == 0U, "wrapping ms clock");
 static overpressure_t g_overpressure;
+#ifdef TELEMETRY_ENABLED
 static ULONG g_overpressure_report_ticks;
+#endif
 static uint8_t g_overpressure_pending; /* 1 report, 2 fault, 4 nitrogen close, 8 nitrous close, 16 AB abort */
 /* Automatic-tagged ACTUATOR_COMMAND: the Actuator Board enters its Abort safe state. */
 #define AB_OVERPRESSURE_ABORT 16U
@@ -329,8 +331,8 @@ static void overpressure_publish(void){
     g_overpressure_report_ticks=now;
     char text[OVERPRESSURE_REPORT_MAX];
     if(g_overpressure_pending&2U){
-        const uint8_t stale=g_overpressure.fault==OVERPRESSURE_FAULT_STALE;
-        (void)overpressure_format_report(text,sizeof text,stale?'S':'F',g_overpressure.fault_raw,g_overpressure.trips);
+        static const char fault_codes[]="FFSI";
+        (void)overpressure_format_report(text,sizeof text,fault_codes[g_overpressure.fault&3U],g_overpressure.fault_raw,g_overpressure.trips);
         if(g_overpressure.fault==OVERPRESSURE_FAULT_NONE||log_telemetry_string_asynchronous(SEDS_DT_WARNING,text)==SEDS_OK)
             g_overpressure_pending&=(uint8_t)~2U;
     }

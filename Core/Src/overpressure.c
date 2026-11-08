@@ -3,7 +3,9 @@
 
 _Static_assert(OVERPRESSURE_RELIEF_PSI < OVERPRESSURE_ABORT_PSI, "relief must precede abort");
 _Static_assert(OVERPRESSURE_PILOT_MS > 0U && OVERPRESSURE_PILOT_MS < 60000U, "bounded main-valve window");
-_Static_assert(OVERPRESSURE_DEBOUNCE_SAMPLES >= 2U, "a single sample never trips");
+_Static_assert(OVERPRESSURE_SUSTAIN_MS >= 100U && OVERPRESSURE_SUSTAIN_MS < OVERPRESSURE_FRESH_MS,
+               "a brief glitch never trips");
+_Static_assert(OVERPRESSURE_STEP_MS > 0U && OVERPRESSURE_MAX_STEP_PSI > 0.0f, "bounded plausible rate");
 
 uint8_t overpressure_sample_valid(uint32_t raw_adc, float psi, float min_adc,
                                   float max_adc, float max_psi)
@@ -18,9 +20,16 @@ uint8_t overpressure_sample_valid(uint32_t raw_adc, float psi, float min_adc,
             psi >= 0.0f && psi < max_psi) ? 1U : 0U;
 }
 
-static uint8_t bump(uint8_t streak, uint8_t over)
+/* True once the reading has stayed over the threshold for SUSTAIN_MS. */
+static uint8_t sustained(uint8_t *over, uint32_t *since, uint8_t now_over, uint32_t at_ms,
+                         uint8_t restart)
 {
-    return over ? (uint8_t)(streak < 255U ? streak + 1U : 255U) : 0U;
+    if (!now_over) return *over = 0U;
+    if (!*over || restart) {
+        *over = 1U;
+        *since = at_ms;
+    }
+    return (uint32_t)(at_ms - *since) >= OVERPRESSURE_SUSTAIN_MS;
 }
 
 static uint32_t enter_pilot(overpressure_t *op, uint32_t now_ms)
@@ -54,19 +63,42 @@ uint32_t overpressure_step(overpressure_t *op, const overpressure_sample_t *samp
                 }
             } else {
                 psi = sample->psi;
-                op->fault = OVERPRESSURE_FAULT_NONE;
+                const uint32_t gap = sample->at_ms - op->last_valid_ms;
+                const float step = psi - op->last_valid_psi;
+                const float limit = (float)(gap < OVERPRESSURE_STEP_MS ? OVERPRESSURE_STEP_MS : gap) *
+                                    (OVERPRESSURE_MAX_STEP_PSI / (float)OVERPRESSURE_STEP_MS);
+                const uint8_t restart = !op->have_valid || gap > OVERPRESSURE_SUSTAIN_MS;
+                if (op->have_valid && (step > limit || -step > limit)) {
+                    op->settling = 1U;
+                    op->settle_from_ms = sample->at_ms;
+                    if (op->fault != OVERPRESSURE_FAULT_IMPLAUSIBLE) {
+                        op->fault = OVERPRESSURE_FAULT_IMPLAUSIBLE;
+                        op->fault_raw = (uint32_t)(psi + 0.5f);
+                        act |= OVERPRESSURE_ACT_FAULT;
+                    }
+                } else if (op->settling &&
+                           (uint32_t)(sample->at_ms - op->settle_from_ms) >= OVERPRESSURE_SETTLE_MS) {
+                    op->settling = 0U;
+                }
                 op->have_valid = 1U;
                 op->last_valid_ms = sample->at_ms;
                 op->last_valid_psi = psi;
-                op->relief_streak = bump(op->relief_streak, psi >= OVERPRESSURE_RELIEF_PSI);
-                op->abort_streak = bump(op->abort_streak, psi >= OVERPRESSURE_ABORT_PSI);
-                if (op->stage != OVERPRESSURE_IDLE && psi > op->peak_psi) op->peak_psi = psi;
-                if (op->abort_streak >= OVERPRESSURE_DEBOUNCE_SAMPLES) level = 2U;
-                else if (op->relief_streak >= OVERPRESSURE_DEBOUNCE_SAMPLES) level = 1U;
+                if (op->settling) {
+                    op->relief_streak = op->abort_streak = 0U;
+                } else {
+                    op->fault = OVERPRESSURE_FAULT_NONE;
+                    const uint8_t at_relief = sustained(&op->relief_streak, &op->relief_since_ms,
+                                                     psi >= OVERPRESSURE_RELIEF_PSI, sample->at_ms, restart);
+                    const uint8_t at_abort = sustained(&op->abort_streak, &op->abort_since_ms,
+                                                    psi >= OVERPRESSURE_ABORT_PSI, sample->at_ms, restart);
+                    if (op->stage != OVERPRESSURE_IDLE && psi > op->peak_psi) op->peak_psi = psi;
+                    if (at_abort) level = 2U;
+                    else if (at_relief) level = 1U;
+                }
             }
         }
     }
-    if (op->fault == OVERPRESSURE_FAULT_NONE &&
+    if ((op->fault == OVERPRESSURE_FAULT_NONE || op->fault == OVERPRESSURE_FAULT_IMPLAUSIBLE) &&
         (uint32_t)(now_ms - (op->have_valid ? op->last_valid_ms : op->started_ms)) >
             OVERPRESSURE_FRESH_MS) {
         op->fault = OVERPRESSURE_FAULT_STALE;
@@ -188,6 +220,7 @@ uint32_t overpressure_format_report(char *out, uint32_t size, char code,
     case 'C': word = "acknowledged: "; break;
     case 'F': word = "sensor invalid, raw ADC "; break;
     case 'S': word = "sensor stale"; break;
+    case 'I': word = "sensor implausible or disconnected: "; break;
     default: word = "unknown: "; break;
     }
     if (!out || size == 0U) return 0U;
