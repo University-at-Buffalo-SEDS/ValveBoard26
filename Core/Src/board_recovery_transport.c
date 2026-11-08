@@ -53,7 +53,7 @@ uint8_t board_recovery_automatic_is_stale(const SedsPacketView *packet)
 static SedsResult send_status(SedsRouter*router,uint8_t result,const BoardRecoveryRequest*request,
                             uint64_t generation,const BoardRecoverySnapshot*snapshot,uint32_t uptime_ms) {
  uint8_t status[BOARD_RECOVERY_STATUS_SIZE];
- board_recovery_encode_status(status,result,snapshot->actual_state,(uint8_t)(snapshot->flags|BOARD_RECOVERY_VERIFIED_IMPLEMENTATION|BOARD_RECOVERY_MANUAL_UTC_IMPLEMENTATION),request,
+ board_recovery_encode_status(status,result,snapshot->actual_state,(uint8_t)(snapshot->flags|BOARD_RECOVERY_VERIFIED_IMPLEMENTATION|BOARD_RECOVERY_MANUAL_UTC_IMPLEMENTATION|BOARD_RECOVERY_RESYNC_IMPLEMENTATION),request,
   generation,snapshot->abort_epoch,uptime_ms,snapshot->actual_outputs_mask);
  return seds_router_log_queue_typed(router,SEDS_DT_BOARD_STATE_STATUS,status,sizeof status,sizeof(uint8_t),SEDS_EK_UNSIGNED);
 }

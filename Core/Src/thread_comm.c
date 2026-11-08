@@ -1075,7 +1075,7 @@ int32_t board_recovery_snapshot(BoardRecoverySnapshot *out)
  * application and lets a fresh abort invalidate the expected epoch during NVM. */
 int32_t board_recovery_begin_prepare(uint8_t desired_state, uint32_t expected_epoch)
 {
-    if (desired_state > 1U || expected_epoch == 0U || expected_epoch == UINT32_MAX)
+    if (desired_state > BOARD_RECOVERY_MAX_STATE || expected_epoch == 0U || expected_epoch == UINT32_MAX)
         return -10;
     if (g_thread_comm_initialized == 0U ||
         tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER) != TX_SUCCESS) return -14;
@@ -1083,8 +1083,9 @@ int32_t board_recovery_begin_prepare(uint8_t desired_state, uint32_t expected_ep
         return command_state_release() ? -10 : -9;
     if (g_command_admission_fault || !persistent_store_recovery_ready()) {if(!bootstrap_state_release())return -9;return -9;}
     int32_t result = -10;
+    /* Resync past Idle waits for the overpressure acknowledgement. */
     if (g_thread_comm_recovery_epoch == expected_epoch && g_recovery_pending == 0U && !g_bootstrap_finalizing &&
-        g_recovery_prepare != 0 && g_recovery_finish != 0 && g_recovery_read_outputs != 0) {
+        (desired_state <= 1U || !g_overpressure_relief_owned) && g_recovery_prepare != 0 && g_recovery_finish != 0 && g_recovery_read_outputs != 0) {
         /* Internal recovery barrier is not a NEW manual Stop: do not advance
          * epoch or broadcast ABORT. Failed backup verification keeps RAM safe
          * and returns before any floor/state flash can be attempted. */
@@ -1123,7 +1124,7 @@ void board_recovery_cancel_prepare(uint8_t desired_state, uint32_t expected_epoc
 int32_t board_recovery_apply_safe(uint8_t desired_state, uint32_t expected_abort_epoch,
                                 BoardRecoverySnapshot *out)
 {
-    if (out == 0 || desired_state > 1U || expected_abort_epoch == 0U ||
+    if (out == 0 || desired_state > BOARD_RECOVERY_MAX_STATE || expected_abort_epoch == 0U ||
         expected_abort_epoch == UINT32_MAX) return -10;
     if (g_thread_comm_initialized == 0U ||
         tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER) != TX_SUCCESS) return -14;
@@ -1294,7 +1295,7 @@ int32_t board_recovery_prepare_storage_only(uint32_t epoch) {
  bool released=bootstrap_state_release();return released?result:-14;
 }
 bool board_recovery_bind_bootstrap_request(uint64_t generation,uint32_t epoch,uint8_t desired,uint64_t issuer,uint64_t source) {
- if(!generation||generation==UINT64_MAX||!issuer||!source||source==UINT64_MAX||desired>1U||!epoch||epoch==UINT32_MAX)return false;
+ if(!generation||generation==UINT64_MAX||!issuer||!source||source==UINT64_MAX||desired>BOARD_RECOVERY_MAX_STATE||!epoch||epoch==UINT32_MAX)return false;
  if(!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER)!=TX_SUCCESS)return false;
  bool valid=persistent_store_bootstrap_pending()&&persistent_store_recovery_ready()&&g_bootstrap_complete&&
   !g_command_admission_fault&&!g_bootstrap_finalizing&&g_recovery_pending==2U&&g_recovery_expected_epoch==epoch&&g_recovery_desired==desired&&g_thread_comm_recovery_epoch==epoch;

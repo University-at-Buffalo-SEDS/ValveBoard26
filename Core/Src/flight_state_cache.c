@@ -6,6 +6,7 @@
 #endif
 
 #include "persistent_store.h"
+#include "board_recovery.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -97,7 +98,7 @@ uint8_t flight_state_cache_value(void)
  * Telemetry invokes this outside the state mutex, before any latch clear. */
 int32_t flight_state_cache_prepare_recovery(uint8_t desired_state)
 {
-    if (desired_state > 1U) return -10;
+    if (desired_state > BOARD_RECOVERY_MAX_STATE) return -10;
     uint8_t verified = UINT8_MAX;
     size_t size = sizeof(verified);
     if (persistent_store_init() != LAUNCHCORE_PERSIST_OK ||

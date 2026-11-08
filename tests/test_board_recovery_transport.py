@@ -7,3 +7,10 @@ class RecoveryTransportTests(unittest.TestCase):
   cls.setUpClass()
   try:cls().case('transport')
   finally:cls.tearDownClass()
+ def test_resync_carries_station_phase_without_moving_outputs(self):
+  cls=durable.DurableRecoveryTests
+  cls.setUpClass()
+  try:
+   for name in ('resync','resync_unsafe'):
+    with self.subTest(name=name):cls().case(name)
+  finally:cls.tearDownClass()

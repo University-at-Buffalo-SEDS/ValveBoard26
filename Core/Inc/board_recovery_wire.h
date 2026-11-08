@@ -13,7 +13,11 @@ void board_recovery_write_le64(uint8_t *p,uint64_t value);
 #define BOARD_RECOVERY_REQUEST_SIZE 32U
 #define BOARD_RECOVERY_STATUS_SIZE 40U
 #define BOARD_RECOVERY_VERSION 1U
-enum { BOARD_RECOVERY_QUERY=0U, BOARD_RECOVERY_RECOVER=1U };
+/* RESYNC carries the station's current phase, PreFill(2)..Armed(6), and decodes
+ * as RECOVER to that phase: same proof, safe-output, latch and epoch checks,
+ * and no output is written. Startup/Idle stay with RECOVER, whose paths drive
+ * or re-assert outputs; Launch onward is never recovered or aborted. */
+enum { BOARD_RECOVERY_QUERY=0U, BOARD_RECOVERY_RECOVER=1U, BOARD_RECOVERY_RESYNC=2U };
 enum { BOARD_RECOVERY_RESULT_OK=0U, BOARD_RECOVERY_RESULT_PENDING=1U,
  BOARD_RECOVERY_RESULT_UNSUPPORTED=2U, BOARD_RECOVERY_RESULT_UNAUTHORIZED=3U,
  BOARD_RECOVERY_RESULT_STALE=4U, BOARD_RECOVERY_RESULT_UNSAFE=5U,

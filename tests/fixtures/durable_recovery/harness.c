@@ -147,7 +147,8 @@ SedsResult flight_state_cache_apply_network_update(const SedsPacketView*p){retur
 static uint8_t read_outputs(uint32_t*out){assert(state_mutex->locked);*out=SAFE_MASK;
  if(barrier_calls){safe_readbacks++;last_safe_marker=barrier_calls;if(!strcmp(scenario,"group_read_fault"))fail_read=read_calls+1;}
  return BOARD_RECOVERY_OUTPUTS_VALID|(unsafe_outputs?0:BOARD_RECOVERY_SAFE_OUTPUTS)|(owner_stopped?BOARD_RECOVERY_OWNER_STOPPED:0);}
-static uint8_t prepare_outputs(uint8_t desired){assert(state_mutex->locked&&desired==0);return 1;}
+static uint8_t last_prepare=255;
+static uint8_t prepare_outputs(uint8_t desired){assert(state_mutex->locked&&desired<=BOARD_RECOVERY_MAX_STATE);last_prepare=desired;return 1;}
 static void finish_outputs(void){assert(state_mutex->locked&&(!store_mutex||!store_mutex->locked));finished++;completed_owner=true;}
 static void request(SedsRouter*r,uint8_t*body,uint64_t timestamp){uint32_t endpoint=RECOVERY_ENDPOINT;SedsPacketView p={.ty=200,.sender="GS",.sender_len=2,.endpoints=&endpoint,.num_endpoints=1,.payload=body,.payload_len=32,.timestamp=timestamp};assert(board_recovery_handle(r,&p,endpoint,123)==SEDS_OK);}
 
@@ -232,6 +233,48 @@ int main(int argc,char**argv){
   writes=media_writes;reads=read_calls;send_req(r,&req,10001);assert(response[1]==0&&writes==media_writes&&reads==read_calls);send_req(r,&req,10002);assert(response[1]==6&&writes==media_writes&&reads==read_calls);req.desired_state=1;send_req(r,&req,10001);assert(response[1]==6&&finished==1&&writes==media_writes);
   packet.timestamp=10001;assert(board_recovery_command_is_stale(&packet));packet.timestamp=10002;assert(!board_recovery_automatic_is_stale(&packet));packet.timestamp=12000;assert(board_recovery_command_is_stale(&packet));assert(board_recovery_automatic_is_stale(NULL));board_recovery_transport_set_router(NULL);packet.timestamp=10002;assert(board_recovery_command_is_stale(&packet));
   puts("actual transport auth/target/shape/time/epoch/original tuple/read-only Q and staged strict owner PASS");return 0;
+ }
+ if(!strcmp(scenario,"resync")||!strcmp(scenario,"resync_unsafe")){
+  /* The station is filling; this board rebooted or desynced and latched Abort.
+   * RESYNC carries the station phase and must never move an output. */
+  assert(response[3]&BOARD_RECOVERY_RESYNC_IMPLEMENTATION);
+  assert(thread_comm_request_manual_abort()==TX_SUCCESS&&thread_comm_get_abort());
+  q.nonce=3;now=10001;query_req(r,&q,10001);assert(response[1]==0&&(response[3]&BOARD_RECOVERY_ABORT_LATCHED)&&(response[3]&BOARD_RECOVERY_RESYNC_IMPLEMENTATION));
+  uint32_t epoch=(uint32_t)response[20]|(uint32_t)response[21]<<8|(uint32_t)response[22]<<16|(uint32_t)response[23]<<24;
+  uint64_t gen=board_recovery_boot_current();assert(gen&&gen!=UINT64_MAX&&response[2]==0);
+  BoardRecoveryRequest rs={.operation=BOARD_RECOVERY_RESYNC,.desired_state=BOARD_RECOVERY_MAX_STATE+1U,.nonce=4,.expected_boot_generation=gen,.expected_abort_epoch=epoch,.issuer_session=77};
+  unsigned reads=read_calls,writes=media_writes,old_responses=responses;uint32_t endpoint=RECOVERY_ENDPOINT;uint8_t body[32];
+  SedsPacketView packet={.ty=200,.sender="GS",.sender_len=2,.endpoints=&endpoint,.num_endpoints=1,.payload=body,.payload_len=32,.timestamp=10002};now=10002;
+  /* Launch onward, Startup, Idle and the commissioning sentinel never decode: no
+   * reply, storage access or state change. RECOVER keeps Startup/Idle only. */
+  static const uint8_t refused[]={0U,1U,7U,8U,13U,14U,15U,16U,255U};
+  for(unsigned i=0;i<sizeof refused;i++){rs.desired_state=refused[i];packet_body(body,&rs);assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);}
+  rs.desired_state=5;rs.expected_boot_generation=UINT64_MAX;packet_body(body,&rs);assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);
+  rs.expected_boot_generation=gen;rs.operation=BOARD_RECOVERY_RECOVER;packet_body(body,&rs);assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);
+  rs.operation=BOARD_RECOVERY_RESYNC;packet_body(body,&rs);body[1]=3;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);
+  assert(responses==old_responses&&reads==read_calls&&writes==media_writes&&thread_comm_get_abort()&&!finished&&last_prepare==255);
+  /* Stale context: the epoch from the readback before this Abort. */
+  rs.expected_abort_epoch=epoch-1U;send_req(r,&rs,10002);assert(response[1]==4&&thread_comm_get_abort()&&writes==media_writes&&!finished);
+  rs.expected_abort_epoch=epoch;
+  if(!strcmp(scenario,"resync_unsafe")){
+   unsafe_outputs=true;rs.nonce=5;now=10003;send_req(r,&rs,10003);main_service();send_req(r,&rs,10003);
+   BoardRecoverySnapshot after={0};(void)board_recovery_snapshot(&after);
+   assert(response[1]!=0&&response[1]!=1&&thread_comm_get_abort()&&!finished&&after.actual_state==0);
+   puts("RESYNC with unsafe outputs refused; Abort kept, nothing driven PASS");return 0;
+  }
+  rs.nonce=5;now=10003;send_req(r,&rs,10003);main_service();send_req(r,&rs,10003);
+  uint32_t outputs=(uint32_t)response[28]|(uint32_t)response[29]<<8|(uint32_t)response[30]<<16|(uint32_t)response[31]<<24;
+  uint32_t applied=(uint32_t)response[20]|(uint32_t)response[21]<<8|(uint32_t)response[22]<<16|(uint32_t)response[23]<<24;
+  assert(response[1]==0&&response[2]==5&&applied==epoch+1U&&!(response[3]&BOARD_RECOVERY_ABORT_LATCHED));
+  assert(outputs==SAFE_MASK&&(response[3]&BOARD_RECOVERY_SAFE_OUTPUTS)&&last_prepare==5&&finished==1&&!thread_comm_get_abort()&&thread_comm_get_flight_state()==5);
+  uint8_t fstate=255;size_t fsize=1;assert(persistent_store_get(0x46535445U,&fstate,&fsize)==LAUNCHCORE_PERSIST_OK&&fsize==1&&fstate==5);
+  /* The completed nonce cannot be replayed with a new time, and an exact
+   * duplicate only reports the finished result. */
+  writes=media_writes;send_req(r,&rs,10003);assert(response[1]==0&&finished==1&&writes==media_writes);
+  now=10004;send_req(r,&rs,10004);assert(response[1]==6&&finished==1&&writes==media_writes);
+  /* A RESYNC built from the pre-resync readback is stale now. */
+  rs.nonce=6;now=10005;send_req(r,&rs,10005);assert(response[1]==4&&finished==1&&writes==media_writes&&thread_comm_get_flight_state()==5);
+  puts("RESYNC to NitrousFill: proof/epoch checked, Abort cleared, outputs untouched, Launch onward refused PASS");return 0;
  }
  if(!strncmp(scenario,"seed_",5)&&strcmp(scenario,"seed_absent")){
   if(!strcmp(scenario,"seed_healthy")){assert(response[1]==0&&persistent_store_controls_ready());}

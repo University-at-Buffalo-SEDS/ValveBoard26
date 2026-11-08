@@ -1,6 +1,8 @@
 #ifndef BOARD_RECOVERY_H
 #define BOARD_RECOVERY_H
 #include <stdint.h>
+/* Highest recovery target: Armed. RECOVER uses 0..1, RESYNC 2..this. */
+#define BOARD_RECOVERY_MAX_STATE 6U
 /* Application protocol only. Wire encoding is explicit LE, never memcpy of this struct. */
 enum {
  BOARD_RECOVERY_ABORT_LATCHED=1u<<0,
@@ -11,7 +13,10 @@ enum {
  /* Hardened application transport; independent of readiness or output proof. */
  BOARD_RECOVERY_VERIFIED_IMPLEMENTATION=1u<<5,
  /* Exact known-UTC manual Stop retirement, independent of Ready/Applied. */
- BOARD_RECOVERY_MANUAL_UTC_IMPLEMENTATION=1u<<6
+ BOARD_RECOVERY_MANUAL_UTC_IMPLEMENTATION=1u<<6,
+ /* Status-only: accepts RESYNC to the station's phase without moving outputs.
+  * Never set in a snapshot, so it cannot alias the internal callback bit. */
+ BOARD_RECOVERY_RESYNC_IMPLEMENTATION=1u<<7
 };
 typedef struct {
  uint8_t actual_state;
@@ -22,7 +27,10 @@ typedef struct {
 } BoardRecoverySnapshot;
 /* SEDS_OK (0) or negative SedsResult. Snapshot must be a serialized actual readback. */
 int32_t board_recovery_snapshot(BoardRecoverySnapshot *out);
-/* Manual operator request only. Allowed desired_state: Startup(0), Idle(1).
+/* Manual operator request only. Allowed desired_state: Startup(0), Idle(1), or
+ * through RESYNC the station phase PreFill(2)..Armed(6). A RESYNC target never
+ * writes an output; outputs must already read safe. A latched overpressure
+ * relief refuses targets beyond Idle until the operator acknowledges it.
  * Under the board's state lock, validate expected_abort_epoch, check safe outputs,
  * purge queued commands, verify explicit persistent latch clear, update state and
  * advance epoch. A concurrent abort must invalidate this request. Never replay

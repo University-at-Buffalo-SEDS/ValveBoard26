@@ -37,7 +37,7 @@ _Static_assert(sizeof(BootstrapQuery)==56U&&16U<=sizeof(BootstrapQuery),"query t
 _Static_assert(sizeof(BootstrapMarker)==40U&&offsetof(BootstrapMarker,first_nonce)+16U<=sizeof(BootstrapMarker),"history tuple within whole object");
 #undef PAIR_FIELD
 static __attribute__((noinline,noclone)) bool same_tuple(const void*a,const void*b){return memcmp(a,b,16U)==0;}
-static __attribute__((noinline,noclone,cold)) bool recovery_shape(const BoardRecoveryRequest*r){return r->operation==BOARD_RECOVERY_RECOVER&&r->desired_state<=1U&&r->nonce&&r->issuer_session;}
+static __attribute__((noinline,noclone,cold)) bool recovery_shape(const BoardRecoveryRequest*r){return r->operation==BOARD_RECOVERY_RECOVER&&r->desired_state<=BOARD_RECOVERY_MAX_STATE&&r->nonce&&r->issuer_session;}
 static bool same_request(const BoardRecoveryRequest*a,const BoardRecoveryRequest*b){return memcmp(a,b,BOARD_RECOVERY_REQUEST_NATIVE_PREFIX_SIZE)==0;}
 static bool marker_request(const BoardRecoveryRequest*r,uint64_t source){return r->desired_state==history.desired&&r->expected_abort_epoch==history.first_epoch&&r->expected_boot_generation==history.first_expected_generation&&source==history.first_time;}
 static bool jobs_enter(void){if(!metadata_load_bool(&runtime_ready))return false;UINT status=tx_mutex_get(&jobs_mutex,TX_WAIT_FOREVER);if(status==TX_SUCCESS)return true;if(status!=TX_NOT_AVAILABLE&&status!=TX_WAIT_ABORTED)metadata_store_bool(&runtime_ready, (false));persistent_store_note_failure();return false;}
