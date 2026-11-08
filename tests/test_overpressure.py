@@ -308,7 +308,9 @@ static void relief_case(void){
  close_dump_vent_hw();run(820.0f,200);assert(!dump_hw&&!vent_hw&&!actuator_count&&!report_count);
  run(870.0f,45);
  assert(dump_hw&&vent_hw&&!pilot_hw&&!thread_comm_get_abort());
- assert(actuator_count==2&&actuator[0]==(CMD_NITROGEN_CLOSE|THREAD_COMM_AUTOMATIC_TAG)&&actuator[1]==(CMD_NITROUS_CLOSE|THREAD_COMM_AUTOMATIC_TAG));
+ assert(actuator_count==3&&actuator[0]==(CMD_NITROGEN_CLOSE|THREAD_COMM_AUTOMATIC_TAG)&&actuator[1]==(CMD_NITROUS_CLOSE|THREAD_COMM_AUTOMATIC_TAG));
+ /* The Actuator Board also enters its Abort safe state (AB command 16). */
+ assert(actuator[2]==(16U|THREAD_COMM_AUTOMATIC_TAG));
  assert(has("Valve Board overpressure relief: 870 psi [R1]"));
  /* Launch admission is refused while relief owns the valves. */
  assert(thread_comm_request_launch_sequence(42)!=TX_SUCCESS&&!board_launch_latch_is_set());
@@ -318,7 +320,7 @@ static void relief_case(void){
  assert(!overpressure_refused(CMD_DUMP_OPEN)&&!overpressure_refused(CMD_ABORT)&&!overpressure_refused(CMD_PILOT_CLOSE));
  /* Periodic re-announcement keeps the latch visible. */
  const unsigned before=report_count;run(300.0f,2100);assert(report_count>=before+2&&has("Valve Board overpressure relief: 870 psi [R1]"));
- assert(dump_hw&&vent_hw&&actuator_count==2);
+ assert(dump_hw&&vent_hw&&actuator_count==3);
  /* Acknowledge at low pressure: latch clears, nothing re-closes. */
  thread_comm_note_overpressure_ack();run(300.0f,60);assert(has("Valve Board overpressure acknowledged: 870 psi [C1]"));
  assert(dump_hw&&vent_hw&&!overpressure_owns_valves(&g_overpressure));
@@ -360,6 +362,8 @@ static void direct_abort_case(void){
  /* A step straight to 950 opens dump, vent and pilot in the same loop. */
  reset_power();assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_STARTUP)==TX_SUCCESS);
  close_dump_vent_hw();run(1000.0f,40);assert(dump_hw&&vent_hw&&pilot_hw);
+ /* AB Abort goes at once; only the VB's own Abort waits for the window. */
+ assert(actuator_count==3&&actuator[2]==(16U|THREAD_COMM_AUTOMATIC_TAG)&&!thread_comm_get_abort());
  run(1000.0f,3000);assert(!pilot_hw&&thread_comm_get_abort());
 }
 
@@ -367,7 +371,7 @@ static void already_aborted_case(void){
  reset_power();assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_IDLE)==TX_SUCCESS);
  assert(thread_comm_request_manual_abort()==TX_SUCCESS);
  run(1000.0f,40);assert(!pilot_hw&&dump_hw&&vent_hw&&g_overpressure.stage==OVERPRESSURE_ABORTED);
- assert(actuator_count==2);run(1000.0f,4000);assert(!pilot_hw);
+ assert(actuator_count==3);run(1000.0f,4000);assert(!pilot_hw);
 }
 
 static void manual_abort_in_window_case(void){
@@ -413,7 +417,7 @@ static void launch_exclusion_case(void){
 static void sdk_retry_case(void){
  reset_power();assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_IDLE)==TX_SUCCESS);
  sdk_reject=1;run(900.0f,100);assert(dump_hw&&vent_hw&&!actuator_count&&!report_count);
- sdk_reject=0;run(900.0f,60);assert(actuator_count==2&&has("Valve Board overpressure relief: 900 psi [R1]"));
+ sdk_reject=0;run(900.0f,60);assert(actuator_count==3&&actuator[2]==(16U|THREAD_COMM_AUTOMATIC_TAG)&&has("Valve Board overpressure relief: 900 psi [R1]"));
 }
 
 static void invalid_sensor_case(void){

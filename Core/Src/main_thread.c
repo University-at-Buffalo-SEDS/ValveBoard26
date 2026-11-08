@@ -304,7 +304,9 @@ static void apply_manual_valve_locked(void*context){apply_automatic_valve(*(cons
 _Static_assert(TX_TIMER_TICKS_PER_SECOND <= 1000U && 1000U % TX_TIMER_TICKS_PER_SECOND == 0U, "wrapping ms clock");
 static overpressure_t g_overpressure;
 static ULONG g_overpressure_report_ticks;
-static uint8_t g_overpressure_pending; /* 1 report, 2 fault, 4 nitrogen close, 8 nitrous close */
+static uint8_t g_overpressure_pending; /* 1 report, 2 fault, 4 nitrogen close, 8 nitrous close, 16 AB abort */
+/* Automatic-tagged ACTUATOR_COMMAND: the Actuator Board enters its Abort safe state. */
+#define AB_OVERPRESSURE_ABORT 16U
 
 static void overpressure_relief_locked(void*context){
     (void)context;apply_automatic_valve(CMD_DUMP_OPEN);apply_automatic_valve(CMD_NORMALLY_OPEN_OPEN);
@@ -315,8 +317,8 @@ static void overpressure_pilot_locked(void*context){apply_automatic_valve(*(cons
 static void overpressure_publish(void){
 #ifdef TELEMETRY_ENABLED
     /* Supply closes go first and are not throttled behind reports. */
-    static const uint8_t supply[2]={CMD_NITROGEN_CLOSE,CMD_NITROUS_CLOSE};
-    for(uint8_t i=0U;i<2U;i++)
+    static const uint8_t supply[3]={CMD_NITROGEN_CLOSE,CMD_NITROUS_CLOSE,AB_OVERPRESSURE_ABORT};
+    for(uint8_t i=0U;i<3U;i++)
         if((g_overpressure_pending&(4U<<i))&&telemetry_send_actuator_command((uint8_t)(supply[i]|THREAD_COMM_AUTOMATIC_TAG))==SEDS_OK)
             g_overpressure_pending&=(uint8_t)~(4U<<i);
     const ULONG now=tx_time_get();
@@ -360,7 +362,7 @@ static void service_overpressure(void){
         if(thread_comm_overpressure_effect(THREAD_COMM_OVERPRESSURE_OWN_RELIEF,overpressure_relief_locked,0)){
             (void)publish_umbilical_status(CMD_DUMP_OPEN,g_nitrous_servo_open_state);
             (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN,g_no_servo_open_state);
-            g_overpressure_pending|=12U;
+            g_overpressure_pending|=28U;
         } else overpressure_demote(&g_overpressure);
     }
     if((act&OVERPRESSURE_ACT_PILOT_OPEN)&&g_overpressure.stage==OVERPRESSURE_PILOT){
