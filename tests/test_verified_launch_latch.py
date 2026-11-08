@@ -1,5 +1,8 @@
 """Dropped backup writes must not authorize a physical launch sequence.
 
+They keep the RAM launch inhibit but never latch Abort: no automatic Abort
+after Launch.
+
 Actual latch/admission and VB owner functions; MMIO/ThreadX/output callbacks are
 host fixtures. This injects a fault, not evidence of a hardware incident.
 """
@@ -75,11 +78,12 @@ int main(int argc,char**argv){
  assert(argc==3);const char*scenario=argv[1];
  if(!strcmp(scenario,"reboot_bad")||!strcmp(scenario,"reboot_good"))load(argv[2]);
  board_abort_latch_init();TX_BYTE_POOL pool={0};assert(thread_comm_init(&pool)==0);
- if(!strcmp(scenario,"reboot_bad")){assert(thread_comm_get_abort());assert(launch_request()!=TX_SUCCESS);assert(thread_comm_request_automatic_abort()==0);return 0;}
+ if(!strcmp(scenario,"reboot_bad")){assert(!thread_comm_get_abort()&&!board_abort_latch_is_set()&&!board_launch_latch_is_set());return 0;}
  if(!strcmp(scenario,"reboot_good")){assert(board_launch_latch_is_set()&&!thread_comm_get_abort());assert(thread_comm_set_flight_state(6)==0);assert(thread_comm_request_automatic_abort()==0);manual_stop();assert(thread_comm_get_abort());return 0;}
  assert(!thread_comm_get_abort());assert(thread_comm_set_flight_state(6)==0);
  if(!strcmp(scenario,"request_bad")){
-  drop_launch=1;assert(launch_request()!=TX_SUCCESS);assert(thread_comm_get_abort()&&board_launch_latch_is_set());assert(test_tamp.BKP30R||test_tamp.BKP31R);
+  drop_launch=1;assert(launch_request()!=TX_SUCCESS);assert(!thread_comm_get_abort()&&board_launch_latch_is_set());assert(!test_tamp.BKP30R&&!test_tamp.BKP31R);
+  assert(thread_comm_request_automatic_abort()==0&&!thread_comm_get_abort());
 #ifdef VB
   uint64_t timestamp;assert(!thread_comm_take_launch_sequence_request(&timestamp));
 #else
@@ -88,8 +92,13 @@ int main(int argc,char**argv){
   save(argv[2]);return 0;
  }
  if(!strcmp(scenario,"stop_before_request")){before_lock=manual_stop;assert(launch_request()!=TX_SUCCESS&&thread_comm_get_abort());return 0;}
- if(!strcmp(scenario,"managed_bad")){drop_launch=1;assert(thread_comm_apply_managed_flight_state(7)!=TX_SUCCESS);assert(thread_comm_get_flight_state()==6&&thread_comm_get_abort());return 0;}
- if(!strcmp(scenario,"setter_bad")){drop_launch=1;assert(thread_comm_set_flight_state(7)!=TX_SUCCESS);assert(thread_comm_get_flight_state()==6&&thread_comm_get_abort());return 0;}
+ if(!strcmp(scenario,"managed_bad")){drop_launch=1;assert(thread_comm_apply_managed_flight_state(7)!=TX_SUCCESS);assert(thread_comm_get_flight_state()==6&&!thread_comm_get_abort()&&board_launch_latch_is_set());
+  /* The safety service retries without latching Abort, then verifies once writes work. */
+  thread_comm_service_safety_publication();assert(!thread_comm_get_abort()&&!board_launch_latch_was_verified());
+  assert(thread_comm_request_automatic_abort()==0&&!test_tamp.BKP30R&&!test_tamp.BKP31R);
+  drop_launch=0;thread_comm_service_safety_publication();assert(board_launch_latch_was_verified()&&!thread_comm_get_abort());
+  assert(thread_comm_apply_managed_flight_state(7)==TX_SUCCESS&&thread_comm_get_flight_state()==7);return 0;}
+ if(!strcmp(scenario,"setter_bad")){drop_launch=1;assert(thread_comm_set_flight_state(7)!=TX_SUCCESS);assert(thread_comm_get_flight_state()==6&&!thread_comm_get_abort()&&board_launch_latch_is_set());assert(!test_tamp.BKP30R&&!test_tamp.BKP31R);return 0;}
 #ifdef VB
  if(!strcmp(scenario,"owner_bad")){
   assert(launch_request()==TX_SUCCESS);test_tamp.BKP28R=test_tamp.BKP29R=0;drop_launch=1;service_launch_sequence_request();

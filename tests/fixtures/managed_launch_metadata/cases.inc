@@ -2,8 +2,8 @@
  if(!strcmp(scenario,"seed_metadata")){assert(launch_request()==TX_SUCCESS);assert(thread_comm_set_flight_state(7)==TX_SUCCESS);save(argv[2]);return 0;}
  if(!strcmp(scenario,"cold_metadata")||!strcmp(scenario,"torn_metadata")){
   assert(!board_launch_latch_was_verified());drop_launch=1;
-  assert(thread_comm_apply_managed_flight_state(7)!=TX_SUCCESS&&thread_comm_get_abort());
-  assert(launch_request()!=TX_SUCCESS);puts("PASS no completed-inhibition authority after backup-domain loss/torn marker; initial write failure remains safe-off");return 0;
+  assert(thread_comm_apply_managed_flight_state(7)!=TX_SUCCESS&&!thread_comm_get_abort()&&board_launch_latch_is_set());
+  assert(launch_request()!=TX_SUCCESS&&!thread_comm_get_abort());puts("PASS no completed-inhibition authority after backup-domain loss/torn marker; initial write failure keeps the RAM launch inhibit without Abort");return 0;
  }
  if(!strcmp(scenario,"warm_metadata")){
   assert(board_launch_latch_was_verified());unsigned before=dsb_writes;drop_launch=1;

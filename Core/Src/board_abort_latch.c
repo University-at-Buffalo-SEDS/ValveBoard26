@@ -30,8 +30,9 @@ void board_abort_latch_init(void)
     launch_verified = 0U;
     (void)enable_backup_writes();
     if (!backup_ready) {
+        /* Fail closed with the RAM launch inhibit only: the state may be after
+         * Launch, where no automatic Abort is allowed. */
         launch_latched = 1U;
-        latched = 1U; /* Fail closed, keeping the scheduler/network alive. */
         return;
     }
     /* A torn marker write also remains aborted until power is removed. */
@@ -67,23 +68,17 @@ uint8_t board_abort_latch_is_set(void)
 }
 
 /* Physical launch authority requires a verified persistent marker. Keep RAM
- * inhibition and attempt Abort retention on failure; never authorize launch
- * merely because backup access succeeded earlier at boot. */
+ * inhibition on failure, never an Abort (none after Launch); never authorize
+ * launch merely because backup access succeeded earlier at boot. */
 uint8_t board_launch_latch_set_verified(void)
 {
     launch_latched = 1U;
-    if (!enable_backup_writes()) {
-        board_abort_latch_set();
-        return 0U;
-    }
+    if (!enable_backup_writes()) return 0U;
     TAMP->BKP28R = UINT32_C(0x4c41554e);
     TAMP->BKP29R = ~UINT32_C(0x4c41554e);
     __DSB();
     if (TAMP->BKP28R != UINT32_C(0x4c41554e) ||
-        TAMP->BKP29R != ~UINT32_C(0x4c41554e)) {
-        board_abort_latch_set();
-        return 0U;
-    }
+        TAMP->BKP29R != ~UINT32_C(0x4c41554e)) return 0U;
     launch_verified = 1U;
     return 1U;
 }

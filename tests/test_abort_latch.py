@@ -18,10 +18,13 @@ class AbortLatchTests(unittest.TestCase):
 #define RCC_CSR_BORRSTF (1U << 27)
 #define __DSB() ((void)0)
 static struct {uint32_t CSR, APB1ENR1;} rcc;
-static struct {uint32_t CR1;} pwr;
+typedef struct {uint32_t CR1;} PwrFake;
+static PwrFake pwr;
+static unsigned dbp_fail;
+static PwrFake *pwr_view(void){if(dbp_fail)pwr.CR1=0;return &pwr;}
 static struct {uint32_t BKP28R, BKP29R, BKP30R, BKP31R;} tamp;
 #define RCC (&rcc)
-#define PWR (&pwr)
+#define PWR (pwr_view())
 #define TAMP (&tamp)
 """
         main = r"""
@@ -58,6 +61,13 @@ int main(void) {
     backup_ready=1;assert(board_abort_latch_clear_for_recovery());
     assert(!board_launch_latch_is_set()&&!board_abort_latch_is_set());
     assert(!tamp.BKP28R&&!tamp.BKP29R&&!tamp.BKP30R&&!tamp.BKP31R);
+    /* Backup access failure keeps the RAM launch inhibit, never an Abort
+     * (no automatic Abort after Launch), at boot and at the launch write. */
+    dbp_fail=1;board_abort_latch_init();
+    assert(board_launch_latch_is_set()&&!board_abort_latch_is_set()&&!board_launch_latch_was_verified());
+    assert(!board_launch_latch_set_verified()&&!board_abort_latch_is_set());
+    assert(!tamp.BKP28R&&!tamp.BKP30R&&!tamp.BKP31R);
+    dbp_fail=0;
     return 0;
 }
 """

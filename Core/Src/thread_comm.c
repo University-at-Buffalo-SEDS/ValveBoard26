@@ -172,11 +172,9 @@ static uint8_t safety_launch_inhibit_locked(void)
     g_safety_report_closing = 1U;
     g_safety_report.reason = 0U;
     if (g_safety_report_inflight_lease != 0U) return 0U;
-    if (!board_launch_latch_set_verified()) {
-        /* Actual backup-write failure retains the existing local safe Stop.
-         * A draining publisher above never takes this failure path. */
-        thread_comm_latch_abort_locked(0U);return 0U;
-    }
+    /* Backup-write failure keeps the RAM launch inhibit and closing==1, so
+     * the safety service retries; it never latches Abort. */
+    if (!board_launch_latch_set_verified()) return 0U;
     g_safety_report_closing = 3U;
     return 1U;
 }
@@ -187,10 +185,7 @@ void thread_comm_service_safety_publication(void)
     /* Finish inhibition only: this service never queues Launch or actuates. */
     if (g_safety_report_closing == 1U && !g_safety_report_inflight_lease &&
         !g_thread_comm_abort && !g_recovery_pending && persistent_store_controls_ready()) {
-        if (!board_launch_latch_set_verified()) {
-            thread_comm_latch_abort_locked(0U);g_command_admission_fault = 1U;
-        }
-        else g_safety_report_closing = 3U;
+        if (board_launch_latch_set_verified()) g_safety_report_closing = 3U;
     }
     if (tx_mutex_put(&g_thread_comm_state_mutex) != TX_SUCCESS)
         g_command_admission_fault = 1U;
