@@ -137,6 +137,11 @@ static void data_acq_report_pressure(void)
     }
 
     if (pressureTransducerRead(&fuel_tank_pressure, &sample) == HAL_OK) {
+        if (pressureTransducerSettled(HAL_GetTick()) == 0U) {
+            /* Settling after power-up: never published, never tank pressure. */
+            data_acq_last_pressure_ticks = now;
+            return;
+        }
         /* The published psi, classified once: clamped/full-scale or
          * miscalibrated conversions are faults, never tank pressure. */
         const overpressure_sample_t snapshot = {

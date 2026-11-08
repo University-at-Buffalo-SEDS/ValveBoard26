@@ -6,6 +6,8 @@
 #include "telemetry.h"
 #include "board_uptime.h"
 #include "driver-body.h"
+/* Power-up settling is covered by test_pressure_sd_capture; samples here are settled. */
+uint8_t pressureTransducerSettled(uint32_t now_ms){(void)now_ms;return 1U;}
 #include "pressure_sd.c"
 /* ACTUAL_CONVERSION_FUNCTION */
 static uint64_t release_ms;

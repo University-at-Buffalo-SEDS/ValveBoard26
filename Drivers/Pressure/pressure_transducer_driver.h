@@ -58,6 +58,13 @@ typedef struct {
     uint16_t dma_samples[PRESSURE_TRANSDUCER_DMA_BUFFER_LEN];
 } pressure_transducer_debug_t;
 
+/* The transducer and ADC read far too high right after power-up and start.
+ * Readings are taken (so the converter settles) but nothing may use or send
+ * them until this long after a successful start. */
+#define PRESSURE_TRANSDUCER_SETTLE_MS 1000U
+/* 1 once PRESSURE_TRANSDUCER_SETTLE_MS have passed since the last successful
+ * start; latches. Safe to call from an ISR. */
+uint8_t pressureTransducerSettled(uint32_t now_ms);
 HAL_StatusTypeDef pressureTransducerInit(pressure_transducer_t *sensor);
 HAL_StatusTypeDef pressureTransducerRead(pressure_transducer_t *sensor,
                                          pressure_transducer_sample_t *sample);

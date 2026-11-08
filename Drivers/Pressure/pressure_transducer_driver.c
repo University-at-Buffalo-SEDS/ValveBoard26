@@ -56,6 +56,23 @@ static uint32_t pressure_latest_raw_adc(const pressure_transducer_t *sensor)
     return sensor->dma_samples[latest_index];
 }
 
+static volatile uint32_t pressure_started_ms;
+static volatile uint8_t pressure_started;
+static volatile uint8_t pressure_settled;
+
+uint8_t pressureTransducerSettled(uint32_t now_ms)
+{
+    if (pressure_settled != 0U) {
+        return 1U;
+    }
+    if ((pressure_started != 0U) &&
+        ((uint32_t)(now_ms - pressure_started_ms) >= PRESSURE_TRANSDUCER_SETTLE_MS)) {
+        pressure_settled = 1U;
+        return 1U;
+    }
+    return 0U;
+}
+
 HAL_StatusTypeDef pressureTransducerInit(pressure_transducer_t *sensor)
 {
     if ((sensor == NULL) || (sensor->hadc == NULL) || (sensor->trigger_timer == NULL)) {
@@ -108,6 +125,9 @@ HAL_StatusTypeDef pressureTransducerInit(pressure_transducer_t *sensor)
     }
 
     sensor->dma_running = 1U;
+    pressure_started_ms = HAL_GetTick();
+    pressure_settled = 0U;
+    pressure_started = 1U;
     return HAL_OK;
 }
 

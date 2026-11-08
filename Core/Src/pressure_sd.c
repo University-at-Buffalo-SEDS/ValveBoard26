@@ -73,6 +73,7 @@ static void observe_sdk_call(uint32_t started, uint32_t stage, SedsResult result
 static void capture(ADC_HandleTypeDef *adc, unsigned offset)
 {
     if (!ready || !source || adc != source->hadc) return;
+    if (!pressureTransducerSettled(HAL_GetTick())) return; /* Power-up settling. */
     const uint32_t remaining=__HAL_DMA_GET_COUNTER(adc->DMA_Handle);
     const uint32_t phase=(16U-(remaining%16U))%16U;
     /* A delayed IRQ may arrive after DMA began overwriting that half. Do not

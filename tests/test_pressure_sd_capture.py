@@ -25,12 +25,15 @@ static capture_t received;static unsigned sends;static int full;
 #define TX_NO_WAIT 0
 #define TX_SUCCESS 0
 unsigned HAL_GetTick(void){return tick;}
+static uint8_t settled;uint8_t pressureTransducerSettled(uint32_t now_ms){(void)now_ms;return settled;}
 int tx_queue_send(void *q,void *message,int wait){(void)q;assert(!wait);++sends;if(full)return 1;memcpy(&received,message,sizeof(received));received_ticks=pressure_sd_clock_next(&sample_clock,received.first_sequence,received.first_ms);return 0;}
 ''' + functions + r'''
 int main(void){
  (void)last_first_ms;
  dma_t dma={8};ADC_HandleTypeDef adc={&dma},other={&dma};source->hadc=&adc;
  for(unsigned i=0;i<16;++i)source->dma_samples[i]=100+i;
+ tick=16;HAL_ADC_ConvHalfCpltCallback(&adc);assert(!sends); /* power-up settling: nothing captured */
+ settled=1;
  tick=16;HAL_ADC_ConvHalfCpltCallback(&other);assert(!sends);
  HAL_ADC_ConvHalfCpltCallback(&adc);
  assert(sends==1 && received_ticks==2 && received.first_sequence==0);
