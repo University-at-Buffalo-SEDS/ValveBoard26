@@ -246,7 +246,7 @@ int main(int argc,char**argv){
   packet.sender="RF";assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_PERMISSION_DENIED);packet.sender="@addr:4294967296";packet.sender_len=16;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_PERMISSION_DENIED);
   packet.sender="GS";packet.sender_len=2;body[3]=1;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);body[3]=0;body[2]=2;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);body[2]=0;assert(responses==old_responses&&writes==media_writes&&reads==read_calls);
   req.expected_boot_generation--;packet_body(body,&req);assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==0&&response[1]==4);req.expected_boot_generation++;packet_body(body,&req);
-  packet.timestamp=0;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==0&&response[1]==4);packet.timestamp=10000;now=16000;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==0&&response[1]==4);now=10000;
+  packet.timestamp=0;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==0&&response[1]==4);packet.timestamp=10000;now=25001;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==0&&response[1]==4);now=10000;
   req.operation=0;packet_body(body,&req);packet.sender="@addr:1";packet.sender_len=7;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==0&&response[1]==0);assert(reads==read_calls&&writes==media_writes);
   req.operation=1;req.nonce=7;now=10001;begin_phase(3);send_req(r,&req,10001);main_service();end_phase();assert(response[1]==0&&finished==1&&floor_writes==1&&state_writes==1);
   BoardRecoveryRequest fresh_query={.operation=0,.nonce=8,.issuer_session=77};reads=read_calls;writes=media_writes;now=10002;query_req(r,&fresh_query,10002);assert(response[1]==0&&response[2]==0&&!(response[3]&1U)&&get64(response+12)==req.expected_boot_generation&&response[20]==2&&reads==read_calls&&writes==media_writes);
@@ -281,7 +281,7 @@ int main(int argc,char**argv){
  main_service();assert(response[1]==BOARD_RECOVERY_RESULT_PENDING&&thread_comm_get_abort()&&!finished);
  assert(thread_comm_set_flight_state(7)!=TX_SUCCESS);assert(!board_launch_latch_is_set());
  if(!strcmp(scenario,"lease_timeout")){
-  now=16001;main_service();assert(response[1]==BOARD_RECOVERY_RESULT_STALE&&thread_comm_get_abort()&&!finished);
+  now=25002;main_service();assert(response[1]==BOARD_RECOVERY_RESULT_STALE&&thread_comm_get_abort()&&!finished);
   end_publisher(t);main_service();assert(thread_comm_get_abort()&&!finished);
   puts("PASS original intent expires while publisher held; no recovery clear, replay, firing or automatic rollback");return 0;
  }

@@ -30,4 +30,4 @@ void bootstrap_marker_request(BootstrapMarker*out,const BoardRecoveryRequest*r,u
 }
 
 /* Pure request-time validation shared by storage admission and QUERY arming. */
-bool bootstrap_request_fresh(uint64_t source,uint64_t now){return source&&source!=UINT64_MAX&&now&&now!=UINT64_MAX&&(now>=source?now-source<=5000U:source-now<=1000U);}
+bool bootstrap_request_fresh(uint64_t source,uint64_t now){return source&&source!=UINT64_MAX&&now&&now!=UINT64_MAX&&(now>=source?now-source<=15000U:source-now<=1000U);}
