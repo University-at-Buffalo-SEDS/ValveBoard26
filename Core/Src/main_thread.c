@@ -8,6 +8,7 @@
 #include "can_bus.h"
 #include "main.h"
 #include "thread_comm.h"
+#include "board_abort_latch.h"
 #include "board_recovery.h"
 #include "board_bootstrap_storage.h"
 #include "solenoid_driver.h"
@@ -136,6 +137,14 @@ static void normally_open_valve_open(void)
     no_servo_open();
     g_no_servo_open_state = 1U;
     (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN, g_no_servo_open_state);
+}
+
+/* The TAMP launch marker survives watchdog, brownout and NRST resets. After an
+ * accepted, unaborted Launch a reset must not drain the tank of a burning
+ * motor; only an explicit Stop or operator valve command opens Vent/Dump. */
+static uint8_t post_launch_reset_hold(void)
+{
+    return board_launch_latch_is_set() && !board_abort_latch_is_set();
 }
 
 
@@ -546,8 +555,13 @@ void main_thread_entry(ULONG initial_input)
 
     // Set initial valve positions
     pilot_valve_off();
-    normally_open_valve_open();
-    nitrous_valve_open();
+    if (post_launch_reset_hold()) {
+        no_servo_close(); dump_servo_close();
+        g_no_servo_open_state = g_nitrous_servo_open_state = 0U;
+    } else {
+        normally_open_valve_open();
+        nitrous_valve_open();
+    }
     
     thread_comm_msg_t msg;uint32_t command_epoch=0U;
     
@@ -559,7 +573,7 @@ void main_thread_entry(ULONG initial_input)
         board_watchdog_progress(BOARD_WATCHDOG_CONTROL);
         thread_comm_service_board_recovery();
         board_bootstrap_storage_service();
-        if (!persistent_store_controls_ready()&&!thread_comm_launch_continuity()) main_thread_force_outputs_safe_off();
+        if (!persistent_store_controls_ready()&&!thread_comm_launch_continuity()&&!post_launch_reset_hold()) main_thread_force_outputs_safe_off();
         service_overpressure();
         service_launch_sequence_request();
 
