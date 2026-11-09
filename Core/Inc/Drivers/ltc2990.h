@@ -66,6 +66,9 @@ int LTC2990_Init(LTC2990_Handle_t *handle,
                  uint8_t address,
                  LTC2990_Role_t role);
 void LTC2990_Step(LTC2990_Handle_t *handle);
+/* Work that must not wait out a conversion (up to 100 ms per channel when a
+ * monitor stops converting). Called from thread context between polls. */
+void LTC2990_Set_Wait_Service(void (*service)(void));
 void LTC2990_Get_Values(LTC2990_Handle_t *handle, float *values);
 
 int8_t LTC2990_Enable_All_Voltages(LTC2990_Handle_t *handle);

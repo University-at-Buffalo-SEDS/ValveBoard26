@@ -36,6 +36,14 @@ static void report_power_sample(unsigned index, uint32_t type, float value)
 #endif
 }
 
+/* Runs on the caller's thread after every conversion wait; no bus lock held. */
+static void (*ltc2990_wait_service)(void);
+
+void LTC2990_Set_Wait_Service(void (*service)(void))
+{
+    ltc2990_wait_service = service;
+}
+
 static inline void ltc2990_sleep_ms(uint32_t ms)
 {
     ULONG ticks = (ULONG)(((uint64_t)ms * TX_TIMER_TICKS_PER_SECOND + 999ULL) / 1000ULL);
@@ -45,6 +53,9 @@ static inline void ltc2990_sleep_ms(uint32_t ms)
 
     if (tx_thread_identify() != TX_NULL) {
         tx_thread_sleep(ticks);
+        if (ltc2990_wait_service != TX_NULL) {
+            ltc2990_wait_service();
+        }
     } else {
         HAL_Delay(ms);
     }

@@ -183,6 +183,8 @@ static void data_acq_report_power(void)
         LTC2990_Get_Values(&ltc2990_voltage_handle, ltc2990_latest_voltages);
     }
 
+    /* Failed transactions busy-wait their HAL timeout without a sleep. */
+    data_acq_report_pressure();
     if (ltc2990_current_ready != 0U) {
         telemetry_ltc2990_update_current(&ltc2990_current_handle);
     }
@@ -197,6 +199,11 @@ void data_acq_thread_entry(ULONG initial_input)
     tx_thread_sleep(DATA_ACQ_STARTUP_DELAY_TICKS);
     /* Pressure first: its settle window starts before slow power-sensor I2C. */
     data_acq_pressure_init();
+    /* The power monitors share this thread. A monitor that stops converting
+     * (a reset by a servo-move transient leaves only TINT enabled) holds each
+     * read up to 100 ms per channel; keep the 50 Hz pressure sample, which the
+     * overpressure stale check and the station rely on, running inside it. */
+    LTC2990_Set_Wait_Service(data_acq_report_pressure);
     data_acq_ltc2990_init();
 
     for (;;) {
