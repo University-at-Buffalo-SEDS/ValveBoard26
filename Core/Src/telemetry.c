@@ -135,6 +135,17 @@ volatile uint32_t g_telemetry_discovery_seen = 0U;
 volatile uint32_t g_telemetry_timesync_valid = 0U;
 /* Network clock restarts after it disagreed with the station clock by >60 s. */
 volatile uint32_t g_network_clock_resyncs = 0U;
+/* A restart cannot fix a source that disagrees with the GS; repeating it on
+ * every GS packet kept the clock torn down. Monotonic ticks pace it. */
+#define NETWORK_CLOCK_RESYNC_HOLDOFF_TICKS (30U * (ULONG)TX_TIMER_TICKS_PER_SECOND)
+static ULONG g_network_clock_resync_tick;
+/* Latest GS heartbeat time (the station's own network clock) and its receipt
+ * tick, under the router lock. Unlike the forward-only recovery station
+ * clock it follows a GS clock step in either direction. */
+#define STATION_REPORT_REFERENCE_TICKS (30U * (ULONG)TX_TIMER_TICKS_PER_SECOND)
+#define STATION_REPORT_AGREEMENT_MS 2000U
+static uint64_t g_station_report_utc;
+static ULONG g_station_report_tick;
 volatile uint32_t g_telemetry_network_ready = 0U;
 volatile uint32_t g_telemetry_peer_mask = 0U;
 volatile uint32_t g_sim_heartbeat_attempts = 0U;
@@ -434,6 +445,12 @@ SedsResult Heartbeat_handler(const SedsPacketView *pkt, void *user)
   (void)user;
   /* GS heartbeats keep the recovery freshness clock current, also in Abort. */
   if (pkt != NULL) board_recovery_observe_station_time(g_router.r, pkt);
+  if (pkt != NULL && pkt->ty == SEDS_DT_HEARTBEAT && pkt->timestamp != 0U &&
+      pkt->timestamp != UINT64_MAX && ground_heartbeat_owner_matches(pkt->sender, pkt->sender_len))
+  {
+    g_station_report_utc = pkt->timestamp;
+    g_station_report_tick = tx_time_get();
+  }
 
   if (thread_comm_get_abort() != 0U)
   {
@@ -785,18 +802,22 @@ static UNUSED_FUNCTION void rx_synchronous(const uint8_t *bytes, size_t len)
 static void telemetry_update_network_health(SedsRouter *router)
 {
   uint64_t network_time_ms = 0ULL;
+  const ULONG now_ticks = tx_time_get();
   if (seds_router_get_network_time_ms(router, &network_time_ms) == SEDS_OK)
   {
     g_telemetry_timesync_valid = 1U;
-    if (board_recovery_network_clock_resync_needed(network_time_ms) &&
+    if ((g_network_clock_resyncs == 0U ||
+         (ULONG)(now_ticks - g_network_clock_resync_tick) >= NETWORK_CLOCK_RESYNC_HOLDOFF_TICKS) &&
+        board_recovery_network_clock_resync_needed(network_time_ms) &&
         telemetry_configure_timesync_locked(router) == SEDS_OK)
     {
       g_network_clock_resyncs++;
+      g_network_clock_resync_tick = now_ticks;
       network_time_ms = 0ULL;
     }
   }
   /* Keep an observed sample only; safety never enters the SDK or extrapolates. */
-  telemetry_event_clock_observe(network_time_ms, (uint32_t)tx_time_get());
+  telemetry_event_clock_observe(network_time_ms, (uint32_t)now_ticks);
   if (g_telemetry_discovery_seen != 0U &&
       g_telemetry_timesync_valid != 0U)
   {
@@ -916,6 +937,25 @@ SedsResult telemetry_poll_discovery(void)
 }
 
 
+#ifdef TELEMETRY_ENABLED
+/* The GS admits a valve report only near its own network clock. The SEDSnet
+ * clock is used while it agrees with the latest GS heartbeat; while it is
+ * restarting, invalid or stepped away from the GS (a source change), the
+ * heartbeat time advanced by board ticks keeps reports flowing and admissible.
+ * 0 only when neither clock is known: the report stays pending. */
+static uint64_t telemetry_report_utc_locked(void)
+{
+  const uint64_t network = telemetry_unix_ms_locked();
+  const ULONG age = (ULONG)(tx_time_get() - g_station_report_tick);
+  if (g_station_report_utc == 0U || age > STATION_REPORT_REFERENCE_TICKS) return network;
+  const uint64_t station = g_station_report_utc +
+      ((uint64_t)age * 1000U) / (uint64_t)TX_TIMER_TICKS_PER_SECOND;
+  if (network != 0U && network + STATION_REPORT_AGREEMENT_MS >= station &&
+      network <= station + STATION_REPORT_AGREEMENT_MS) return network;
+  return station;
+}
+#endif
+
 static SedsResult telemetry_publish_umbilical_snapshot_locked(uint8_t cmd_id, uint8_t on,
     uint8_t *deferred, TelemetryStatusSnapshot snapshot)
 {
@@ -933,7 +973,7 @@ static SedsResult telemetry_publish_umbilical_snapshot_locked(uint8_t cmd_id, ui
     *deferred = 1U;
     return SEDS_IO;
   }
-  const uint64_t observed_utc = telemetry_unix_ms_locked();
+  const uint64_t observed_utc = telemetry_report_utc_locked();
   if (observed_utc == 0ULL) {
     *deferred = 1U;
     return SEDS_IO;

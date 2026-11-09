@@ -118,7 +118,7 @@ class QualificationContractTests(unittest.TestCase):
         self.assertIn("&observed_utc, true", status)
         self.assertLess(status.index("const uint64_t observed_utc"), status.index("snapshot(cmd_id"))
         self.assertLess(status.index("snapshot(cmd_id"), status.index("seds_router_log_typed_ex"))
-        self.assertIn("telemetry_unix_ms_locked", status)
+        self.assertIn("telemetry_report_utc_locked", status)
         self.assertNotIn("tx_thread_sleep", status)
         self.assertNotIn("init_telemetry_router", status)
 
