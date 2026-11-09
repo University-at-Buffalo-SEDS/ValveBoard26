@@ -55,6 +55,27 @@ class QualificationContractTests(unittest.TestCase):
         ):
             self.assertIn(symbol, telemetry)
 
+    def test_stack_floor_samples_cover_the_pressure_sampler_loop(self):
+        # The sampler thread sleeps before its loop. A stack floor checked only
+        # on samples taken during that sleep measures an idle stack, so every
+        # qualified sample must fall after the startup delay plus some loop time.
+        import re
+        root = Path(build.__file__).resolve().parent
+        execution = json.loads((root / "sim" / "board.json").read_text(encoding="utf-8"))["execution"]
+        source = (root / "Core" / "Src" / "data_acq_thread.c").read_text(encoding="utf-8")
+        seconds = int(re.search(
+            r"#define DATA_ACQ_STARTUP_DELAY_TICKS \((\d+)U \* TX_TIMER_TICKS_PER_SECOND\)", source).group(1))
+        probes = {p["name"]: p for p in execution["memory_probes"]}
+        self.assertEqual(probes["data_acq_stack_remaining"].get("minimum"), 1024)
+        samples, warmup = execution["sample_count"], execution["memory_probe_warmup_samples"]
+        # Samples are evenly spaced; the first qualified one is index `warmup`.
+        first_qualified_ms = execution["virtual_time_ms"] * (warmup + 1) // samples
+        self.assertGreaterEqual(first_qualified_ms, seconds * 1000 + 500)
+        self.assertGreaterEqual(samples - warmup, 2, "two qualified samples after warmup")
+        # The loop's deepest stack use comes with its second power-monitor
+        # report, about 1.5 s into the loop; the window must reach past it.
+        self.assertGreaterEqual(execution["virtual_time_ms"], seconds * 1000 + 2000)
+
     def test_shared_can_avoids_hop_retry_storms(self):
         root = Path(build.__file__).resolve().parent
         telemetry = (root / "Core" / "Src" / "telemetry.c").read_text(encoding="utf-8")
