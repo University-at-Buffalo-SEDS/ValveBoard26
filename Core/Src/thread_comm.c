@@ -1282,9 +1282,13 @@ bool board_recovery_bind_bootstrap_owner(BootstrapOwnerComplete complete,uint8_t
 int32_t board_recovery_prepare_storage_only(uint32_t epoch) {
  if(!epoch||epoch==UINT32_MAX)return -10;
  if(!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_WAIT_FOREVER)!=TX_SUCCESS)return -14;
- if(launch_retained_for_recovery_locked())return command_state_release()?-10:-9;
+ /* A RESYNC to Startup/Idle may stop a live launch owner itself (see
+  * board_recovery_stop_launch); it is revoked only once this barrier is taken. */
+ bool live_launch=launch_retained_for_recovery_locked();
+ if(live_launch&&!board_recovery_stop_launch)return command_state_release()?-10:-9;
  int32_t result=-10;
  if(!g_command_admission_fault&&!g_bootstrap_finalizing&&!g_recovery_pending&&epoch==g_thread_comm_recovery_epoch&&g_bootstrap_stop&&g_recovery_read_outputs) {
+  if(live_launch)launch_revoke_locked();
   g_thread_comm_abort=1U;
   if(board_abort_latch_prepare_recovery()&&g_bootstrap_stop()) {
    thread_comm_msg_t discarded;

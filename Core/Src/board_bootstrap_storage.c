@@ -116,8 +116,10 @@ static bool note_query_locked(const BoardRecoveryRequest*r,uint64_t source,uint6
   if(!metadata_load_bool(&runtime_ready)||!metadata_load_bool(&normal_eligible)||job.waiting||
      !r||r->operation!=BOARD_RECOVERY_QUERY||!r->nonce||!r->issuer_session||
      !generation||generation==UINT64_MAX||generation!=board_recovery_boot_current()||
-     persistent_store_bootstrap_faulted()||
-     !board_recovery_completed_query(epoch,source,&completed))return false;
+     persistent_store_bootstrap_faulted())return false;
+  /* No completed owner: still record the tuple; RESYNC out of a live Launch
+   * binds its issuer to it. A zero completion serial never arms retirement. */
+  if(!board_recovery_completed_query(epoch,source,&completed))completed=(BoardRecoveryCompletedLaunch){0};
   query.nonce=r->nonce;query.issuer=r->issuer_session;query.source=source;
   query.generation=generation;query.epoch=epoch;query.completed=completed;query.valid=true;return true;
  }
@@ -234,9 +236,9 @@ BoardBootstrapResult board_bootstrap_storage_first_leg(const BoardRecoveryReques
  return live.abort_epoch==r->expected_abort_epoch&&(live.flags&BOARD_RECOVERY_ABORT_LATCHED)?BOOTSTRAP_STORED_INHIBITED:BOOTSTRAP_IO;
 }
 static bool prepare_transaction(const BoardRecoveryRequest*r,uint64_t source,bool normal){
- if(write_transaction(r,source,normal?JOB_NORMAL:JOB_SECOND)!=BOOTSTRAP_STORED_INHIBITED)return false;
  board_recovery_stop_launch=normal&&r->resync&&r->desired_state<=1U;
- int32_t begun=board_recovery_begin_prepare(r->desired_state,r->expected_abort_epoch);board_recovery_stop_launch=0U;
+ bool written=write_transaction(r,source,normal?JOB_NORMAL:JOB_SECOND)==BOOTSTRAP_STORED_INHIBITED;
+ int32_t begun=written?board_recovery_begin_prepare(r->desired_state,r->expected_abort_epoch):-10;board_recovery_stop_launch=0U;
  if(begun!=0)return false;
  if(flight_state_cache_prepare_recovery(r->desired_state)!=0||!board_recovery_bind_bootstrap_request(r->expected_boot_generation,r->expected_abort_epoch,r->desired_state,r->issuer_session,source)){board_recovery_cancel_prepare(r->desired_state,r->expected_abort_epoch);return false;}
  BoardRecoverySnapshot snapshot={0};return board_recovery_apply_safe(r->desired_state,r->expected_abort_epoch,&snapshot)==-14;
@@ -268,7 +270,9 @@ int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*r,uin
   if(kind){
    /* Claim the RAM hold under the same state lock as Launch BEFORE changing
     * this query/job. An already accepted Launch leaves all of them untouched. */
-   board_recovery_stop_launch=kind==JOB_NORMAL&&r->resync&&r->desired_state<=1U;
+   /* Stopping a live Launch also binds the issuer, epoch and freshness to
+    * this board's own prior QUERY (a distinct nonce). */
+   board_recovery_stop_launch=kind==JOB_NORMAL&&r->resync&&r->desired_state<=1U&&armed;
    int32_t held=board_recovery_stage_storage_hold(r->expected_abort_epoch);board_recovery_stop_launch=0U;
    /* Only NORMAL and only a QUERY observed after this exact completed owner.
     * Existing bootstrap legs and every active/prelaunch recovery retain the

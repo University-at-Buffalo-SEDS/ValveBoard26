@@ -11,6 +11,6 @@ class RecoveryTransportTests(unittest.TestCase):
   cls=durable.DurableRecoveryTests
   cls.setUpClass()
   try:
-   for name in ('resync','resync_unsafe'):
+   for name in ('resync','resync_unsafe','resync_launch'):
     with self.subTest(name=name):cls().case(name)
   finally:cls.tearDownClass()

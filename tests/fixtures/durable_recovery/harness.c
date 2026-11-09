@@ -158,6 +158,7 @@ static void packet_body(uint8_t*p,const BoardRecoveryRequest*r){memset(p,0,32);p
 
 
 static uint8_t stop_owner(void){assert(main_owner&&state_mutex->locked);owner_stopped=true;return 1;}
+static void launch_noop(void*context){(void)context;}
 static void main_service(void){main_owner=true;for(unsigned drain=0;drain<3;drain++){thread_comm_service_board_recovery();board_bootstrap_storage_service();}main_owner=false;}
 static uint64_t get64(const uint8_t*p){uint64_t value=0;for(unsigned i=0;i<8;i++)value|=(uint64_t)p[i]<<(8*i);return value;}
 static void send_req(SedsRouter*r,BoardRecoveryRequest*q,uint64_t time){uint8_t body[32];packet_body(body,q);request(r,body,time);}
@@ -233,6 +234,27 @@ int main(int argc,char**argv){
   writes=media_writes;reads=read_calls;send_req(r,&req,10001);assert(response[1]==0&&writes==media_writes&&reads==read_calls);send_req(r,&req,10002);assert(response[1]==6&&writes==media_writes&&reads==read_calls);req.desired_state=1;send_req(r,&req,10001);assert(response[1]==6&&finished==1&&writes==media_writes);
   packet.timestamp=10001;assert(board_recovery_command_is_stale(&packet));packet.timestamp=10002;assert(!board_recovery_automatic_is_stale(&packet));packet.timestamp=12000;assert(board_recovery_command_is_stale(&packet));assert(board_recovery_automatic_is_stale(NULL));board_recovery_transport_set_router(NULL);packet.timestamp=10002;assert(board_recovery_command_is_stale(&packet));
   puts("actual transport auth/target/shape/time/epoch/original tuple/read-only Q and staged strict owner PASS");return 0;
+ }
+ if(!strcmp(scenario,"resync_launch")){
+  /* The board is in a live Launch (not aborted). RESYNC to Idle must be bound
+   * to this board's own prior QUERY: a different issuer session or the
+   * query's own nonce is refused and the launch keeps running; the bound
+   * request stops it and returns the board to Idle with no Abort. */
+  assert(thread_comm_request_launch_sequence(10000)==TX_SUCCESS);
+  thread_comm_launch_owner_t owner;assert(thread_comm_take_accepted_launch(&owner));assert(thread_comm_launch_begin_owned(&owner,launch_noop,0));
+  assert(thread_comm_get_flight_state()==7&&!thread_comm_get_abort());
+  BoardRecoveryRequest lq={.operation=0,.nonce=3,.issuer_session=77};now=10001;query_req(r,&lq,10001);
+  assert(response[1]==0&&response[2]==7&&!(response[3]&BOARD_RECOVERY_ABORT_LATCHED));
+  uint32_t epoch=(uint32_t)response[20]|(uint32_t)response[21]<<8|(uint32_t)response[22]<<16|(uint32_t)response[23]<<24;
+  uint64_t gen=board_recovery_boot_current();unsigned writes=media_writes;
+  BoardRecoveryRequest rs={.operation=BOARD_RECOVERY_RESYNC,.desired_state=1,.nonce=4,.expected_boot_generation=gen,.expected_abort_epoch=epoch,.issuer_session=78};
+  now=10002;send_req(r,&rs,10002);main_service();
+  assert(response[1]==4&&writes==media_writes&&!finished&&thread_comm_get_flight_state()==7&&!thread_comm_get_abort()&&thread_comm_launch_continuity());
+  rs.issuer_session=77;rs.nonce=3;send_req(r,&rs,10002);main_service();
+  assert(response[1]==4&&writes==media_writes&&!finished&&thread_comm_get_flight_state()==7&&thread_comm_launch_continuity());
+  rs.nonce=5;now=10003;send_req(r,&rs,10003);main_service();send_req(r,&rs,10003);
+  assert(response[1]==0&&response[2]==1&&!(response[3]&BOARD_RECOVERY_ABORT_LATCHED)&&!thread_comm_get_abort()&&!thread_comm_launch_continuity());
+  puts("RESYNC from a live Launch: wrong session and replayed query nonce refused; bound request returns to Idle with no Abort PASS");return 0;
  }
  if(!strcmp(scenario,"resync")||!strcmp(scenario,"resync_unsafe")){
   /* The station is filling; this board rebooted or desynced and latched Abort.
