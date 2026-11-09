@@ -4,6 +4,7 @@ Verifies inactive FSTATE source authority while preserving other controller
 message policies. This is not network delivery or physical owner evidence.
 """
 from pathlib import Path
+from board_repo import ACTUATOR_BOARD,VALVE_BOARD,board_name
 import subprocess
 import tempfile
 import unittest
@@ -48,7 +49,7 @@ class ManagedAuthorityTests(unittest.TestCase):
    bool allowed=board_recovery_managed_update_allowed(&p);bool expected=healthy&&READY_GUARD&&(!active?(type!=SEDS_DT_FLIGHT_STATE||src==0):(src==0&&!stale));assert(allowed==expected);cases++;
    }
    healthy=ready=true;active=false;assert(board_recovery_managed_update_allowed(NULL));recovery_router=NULL;p.ty=SEDS_DT_FLIGHT_STATE;p.sender="GS";p.sender_len=2;assert(!board_recovery_managed_update_allowed(&p));p.ty=SEDS_DT_FLIGHT_COMMAND;assert(board_recovery_managed_update_allowed(&p));printf("actual authority matrix %u PASS\\n",cases);return 0;}
-  '''.replace('READY_GUARD','true' if ROOT.name in ['ActuatorBoard26','ValveBoard26'] else 'ready')
+  '''.replace('READY_GUARD','true' if board_name(ROOT) in [ACTUATOR_BOARD,VALVE_BOARD] else 'ready')
   with tempfile.TemporaryDirectory() as tmp:
    d=Path(tmp);p=d/'probe.c';p.write_text(code);exe=d/'probe'
    subprocess.run(['cc','-std=c17','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-g',str(p),'-o',str(exe)],check=True,capture_output=True)

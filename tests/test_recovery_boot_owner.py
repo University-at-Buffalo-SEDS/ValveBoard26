@@ -1,12 +1,13 @@
 """Actual owner output callback keeps quiescence private and evidence based."""
 from pathlib import Path
+from board_repo import ACTUATOR_BOARD,VALVE_BOARD,board_name
 import subprocess,tempfile,unittest
 from test_launch_abort_policy import function
 ROOT=Path(__file__).resolve().parents[1]
 
 class BootOwnerOutputsTests(unittest.TestCase):
  def test_processed_stop_and_actual_commanded_outputs(self):
-  vb=ROOT.name=='ValveBoard26'
+  vb=board_name(ROOT)==VALVE_BOARD
   owner=ROOT/'Core/Src'/('main_thread.c' if vb else 'main_task.c')
   production=function(owner.read_text(),'recovery_read_outputs')
   if vb:production+='\n'+function(owner.read_text(),'current_status_read_locked')+'\n'+function(owner.read_text(),'current_status_snapshot')

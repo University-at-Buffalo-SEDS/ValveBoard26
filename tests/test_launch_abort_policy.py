@@ -4,6 +4,7 @@ Deterministic mutex-entry interleavings exercise both launch/automatic-abort
 orders. This is host logic evidence, not a physical interrupt or backup-power test.
 """
 from pathlib import Path
+from board_repo import ACTUATOR_BOARD,VALVE_BOARD,board_name
 import re
 import subprocess
 import tempfile
@@ -24,7 +25,7 @@ def function(source, name):
 
 class LaunchAbortPolicyTests(unittest.TestCase):
     def test_actual_launch_auto_manual_rollback_reset_and_admission_races(self):
-        ab = ROOT.name == 'ActuatorBoard26'
+        ab = board_name(ROOT) == ACTUATOR_BOARD
         state = 'ACTUATOR' if ab else 'VALVE'
         latch = (ROOT / 'Core/Src/board_abort_latch.c').read_text()
         latch = '\n'.join(line for line in latch.splitlines() if not line.startswith('#include'))

@@ -7,6 +7,7 @@ Actual latch/admission and VB owner functions; MMIO/ThreadX/output callbacks are
 host fixtures. This injects a fault, not evidence of a hardware incident.
 """
 from pathlib import Path
+from board_repo import ACTUATOR_BOARD,VALVE_BOARD,board_name
 import ast,re,subprocess,tempfile,unittest
 from test_recovery_durable_barrier import MAIN
 from test_launch_abort_policy import function
@@ -128,7 +129,7 @@ class VerifiedLaunchTests(unittest.TestCase):
  def setUpClass(cls):
   cls.tmp=tempfile.TemporaryDirectory(prefix='verified-launch-');p=Path(cls.tmp.name);(p/'main.h').write_text(MAIN)
   tree=ast.parse((ROOT/'tests/test_board_recovery_owner.py').read_text());tx=next(n.args[0].value for n in ast.walk(tree)if isinstance(n,ast.Call)and isinstance(n.func,ast.Attribute)and n.func.attr=='write_text'and n.args and isinstance(n.args[0],ast.Constant)and isinstance(n.args[0].value,str)and 'typedef struct{UINT locked;}TX_MUTEX'in n.args[0].value);(p/'tx_api.h').write_text(tx)
-  cls.vb=ROOT.name=='ValveBoard26';code=HARNESS
+  cls.vb=board_name(ROOT)==VALVE_BOARD;code=HARNESS
   if cls.vb:
    owner=(ROOT/'Core/Src/main_thread.c').read_text();code=code.replace('ACTUAL_OWNER',owner_source(owner))
   else:code=code.replace('ACTUAL_OWNER','')

@@ -3,13 +3,14 @@
 No SDK/wire changes or physical outputs. Each case starts a fresh process.
 """
 from pathlib import Path
+from board_repo import ACTUATOR_BOARD,VALVE_BOARD,board_name
 import re, unittest
 from test_postlaunch_storage_continuity import prefix, compile_case
 ROOT=Path(__file__).resolve().parents[1]
 
 class OriginalLaunchDeadlineTests(unittest.TestCase):
  def test_actual_original_timeline_admission_and_owner_guards(self):
-  ab=ROOT.name=='ActuatorBoard26'
+  ab=board_name(ROOT)==ACTUATOR_BOARD
   pre=re.sub(r'#ifdef VB\n.*?#endif','',prefix(),flags=re.S)
   code=pre+'\n#include "'+str((ROOT/'Core/Src/thread_comm.c').resolve())+'"\n'+r'''
 static uint32_t fake_tick,clock_calls,observed_deadline,effects;

@@ -4,6 +4,7 @@ The selected source may be canonical for a preserved causal old RED. No SDK,
 network, physical outputs or private dependency override is involved.
 """
 from pathlib import Path
+from board_repo import ACTUATOR_BOARD,VALVE_BOARD,board_name
 import ast,os,re,subprocess,tempfile,unittest
 from test_launch_abort_policy import function
 BASE=Path(__file__).resolve().parents[1]
@@ -25,7 +26,7 @@ def compile_case(code,case,inline_state=False):
  # Calls in the fixture offer an explicit coherent pre-admission clock.
  # The production source is separately compiled/included under its real names.
  code=code.replace('thread_comm_request_network_launch_original(', 'fixture_timed_launch(')
- effective=re.sub(r'#ifdef VB\n.*?#endif','',code,flags=re.S) if ROOT.name=='ActuatorBoard26' else code
+ effective=re.sub(r'#ifdef VB\n.*?#endif','',code,flags=re.S) if board_name(ROOT)==ACTUATOR_BOARD else code
  if 'ULONG tx_time_get(void){' not in effective:code+='\nULONG tx_time_get(void){return 0;}\n'
  if 'SedsResult Valve_Command_handler(' in code:
   telemetry=(ROOT/'Core/Src/telemetry.c').read_text()
