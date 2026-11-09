@@ -54,7 +54,13 @@ uint32_t overpressure_step(overpressure_t *op, const overpressure_sample_t *samp
         op->last_seq = sample->seq;
         /* A future or older-than-fresh timestamp neither counts nor clears. */
         if ((uint32_t)(now_ms - sample->at_ms) <= OVERPRESSURE_FRESH_MS) {
-            if (!sample->valid) {
+            if (sample->settling) {
+                /* Not a reading: it never counts toward or continues a trip.
+                 * Before the first reading it proves acquisition is alive, so
+                 * the stale clock starts after the settle window, not before. */
+                op->relief_streak = op->abort_streak = 0U;
+                if (!op->have_valid) op->started_ms = sample->at_ms;
+            } else if (!sample->valid) {
                 op->relief_streak = op->abort_streak = 0U;
                 if (op->fault != OVERPRESSURE_FAULT_INVALID) {
                     op->fault = OVERPRESSURE_FAULT_INVALID;

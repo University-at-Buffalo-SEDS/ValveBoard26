@@ -137,11 +137,9 @@ static void data_acq_report_pressure(void)
     }
 
     if (pressureTransducerRead(&fuel_tank_pressure, &sample) == HAL_OK) {
-        if (pressureTransducerSettled(HAL_GetTick()) == 0U) {
-            /* Settling after power-up: never published, never tank pressure. */
-            data_acq_last_pressure_ticks = now;
-            return;
-        }
+        /* Settling after power-up: never published, never tank pressure, but
+         * still a live acquisition for the overpressure stale check. */
+        const uint8_t settling = pressureTransducerSettled(HAL_GetTick()) == 0U;
         /* The published psi, classified once: clamped/full-scale or
          * miscalibrated conversions are faults, never tank pressure. */
         const overpressure_sample_t snapshot = {
@@ -149,20 +147,22 @@ static void data_acq_report_pressure(void)
             .at_ms = (uint32_t)now * (1000U / TX_TIMER_TICKS_PER_SECOND),
             .raw_adc = sample.raw_adc,
             .psi = sample.pressure,
-            .valid = overpressure_sample_valid(sample.raw_adc, sample.pressure,
-                                               fuel_tank_pressure.min_adc,
-                                               fuel_tank_pressure.max_adc,
-                                               fuel_tank_pressure.max_pressure),
+            .valid = !settling && overpressure_sample_valid(sample.raw_adc, sample.pressure,
+                                                            fuel_tank_pressure.min_adc,
+                                                            fuel_tank_pressure.max_adc,
+                                                            fuel_tank_pressure.max_pressure),
+            .settling = settling,
         };
         TX_INTERRUPT_SAVE_AREA
         TX_DISABLE
         data_acq_pressure_snapshot = snapshot;
         TX_RESTORE
-#ifdef TELEMETRY_ENABLED
-        (void)log_telemetry_asynchronous(SEDS_DT_FUEL_TANK_PRESSURE, &sample.pressure, 1U,
-                                         sizeof(sample.pressure));
-#endif
         data_acq_last_pressure_ticks = now;
+#ifdef TELEMETRY_ENABLED
+        if (!settling)
+            (void)log_telemetry_asynchronous(SEDS_DT_FUEL_TANK_PRESSURE, &sample.pressure, 1U,
+                                             sizeof(sample.pressure));
+#endif
     } else {
         data_acq_pressure_read_fail_count++;
     }
@@ -195,8 +195,9 @@ void data_acq_thread_entry(ULONG initial_input)
     (void)initial_input;
 
     tx_thread_sleep(DATA_ACQ_STARTUP_DELAY_TICKS);
-    data_acq_ltc2990_init();
+    /* Pressure first: its settle window starts before slow power-sensor I2C. */
     data_acq_pressure_init();
+    data_acq_ltc2990_init();
 
     for (;;) {
         const ULONG cycle_started = tx_time_get();

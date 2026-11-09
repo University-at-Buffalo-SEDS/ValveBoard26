@@ -38,6 +38,9 @@ typedef struct {
     uint32_t raw_adc;
     float psi;         /* Same calibrated value published as FUEL_TANK_PRESSURE. */
     uint8_t valid;
+    /* Transducer still in its bounded post-start settle window: acquisition
+     * is running but there is no usable reading yet (valid is 0). */
+    uint8_t settling;
 } overpressure_sample_t;
 
 enum {
