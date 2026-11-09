@@ -215,6 +215,12 @@ void persistent_store_note_failure(void) { transient_fault();++g_persistent_stor
 
 void persistent_store_hold_bootstrap(void) { bootstrap_complete_verified=0U;metadata_store_bool(&bootstrap_hold, (true));metadata_store_bool(&controls_ready, (false)); }
 bool persistent_store_bootstrap_pending(void) { return metadata_load_bool(&bootstrap_hold); }
+/* Undo a RAM hold whose job made no effect: strict revalidation re-derives
+ * the hold and controls from the stored marker, exactly as at boot. */
+bool persistent_store_release_unused_hold(void) {
+ if(!persistent_store_enter())return false;
+ metadata_store_bool(&bootstrap_hold, (false));validate_controls();return persistent_store_leave();
+}
 bool persistent_store_bootstrap_faulted(void) { return metadata_load_bool(&storage_faulted); }
 bool persistent_store_bootstrap_metadata_ready(void) { return metadata_load_bool(&recovery_metadata_ready); }
 /* Exact grouped readbacks. Call after explicit provisioning or owner-completed

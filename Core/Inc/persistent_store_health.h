@@ -11,6 +11,7 @@ bool persistent_store_recovery_ready(void);
 void persistent_store_note_failure(void);
 void persistent_store_hold_bootstrap(void);
 bool persistent_store_bootstrap_pending(void);
+bool persistent_store_release_unused_hold(void);
 bool persistent_store_bootstrap_faulted(void);
 bool persistent_store_bootstrap_metadata_ready(void);
 bool persistent_store_verify_bootstrap(uint64_t generation,const uint8_t floor[16],const uint8_t *marker,bool complete);

@@ -291,21 +291,30 @@ void board_bootstrap_storage_service(void){
  if(!jobs_enter())return;
  if(job.valid&&(job.waiting||job.dirty)){request=job.request;source=job.source;context=job.context;reply=job.reply;now=job.now;waiting=job.waiting;dirty=job.dirty;result=job.result;kind=job.kind;phase=job.phase;}
  if(!jobs_leave())return;
- bool terminal=false,progress=false;
+ bool terminal=false,progress=false,effect=phase!=0U;
  if(waiting){
   BoardRecoverySnapshot snapshot={0};(void)board_recovery_snapshot(&snapshot);
-  if(!bootstrap_request_fresh(source,now(context))){result=BOARD_RECOVERY_RESULT_STALE;terminal=true;}
+  /* Freshness gates the first effect. A stopped board whose owner apply is
+   * not blocked finishes to its safe target; a blocked one still expires. */
+  if(!phase&&!bootstrap_request_fresh(source,now(context))){result=BOARD_RECOVERY_RESULT_STALE;terminal=true;}
   else if(!phase&&snapshot.abort_epoch!=request.expected_abort_epoch){result=BOARD_RECOVERY_RESULT_STALE;terminal=true;}
   else if(!phase){
    if(kind==JOB_FIRST||kind==JOB_RECONCILE){BoardBootstrapReply observed;BoardBootstrapResult status=kind==JOB_FIRST?board_bootstrap_storage_first_leg(&request,source,now(context),&observed):write_transaction(&request,source,JOB_RECONCILE);result=status==BOOTSTRAP_STALE?BOARD_RECOVERY_RESULT_STALE:status==BOOTSTRAP_INVALID?BOARD_RECOVERY_RESULT_INVALID:BOARD_RECOVERY_RESULT_IO;terminal=true;}
-   else if(!prepare_transaction(&request,source,kind==JOB_NORMAL)){result=BOARD_RECOVERY_RESULT_IO;terminal=true;}
+   else if(effect=true,!prepare_transaction(&request,source,kind==JOB_NORMAL)){result=BOARD_RECOVERY_RESULT_IO;terminal=true;}
    else{phase=1;result=BOARD_RECOVERY_RESULT_PENDING;progress=true;}
   }else{
    board_recovery_execute_owned();
    int32_t applied=board_recovery_apply_safe(request.desired_state,request.expected_abort_epoch,&snapshot);
    if(applied!=-14){result=applied==0?BOARD_RECOVERY_RESULT_OK:applied==-10?BOARD_RECOVERY_RESULT_STALE:BOARD_RECOVERY_RESULT_IO;terminal=true;}
+   else if(!bootstrap_request_fresh(source,now(context))){result=BOARD_RECOVERY_RESULT_STALE;terminal=true;}
   }
-  if(terminal&&kind!=JOB_FIRST&&kind!=JOB_RECONCILE&&result!=BOARD_RECOVERY_RESULT_OK)board_recovery_bootstrap_retain_stop();
+  /* A refusal before any Stop/storage effect latches nothing: a reset of a
+   * running board must not leave it aborted, and its RAM hold is released
+   * unless a pending marker still requires it. */
+  if(terminal&&kind!=JOB_FIRST&&kind!=JOB_RECONCILE&&result!=BOARD_RECOVERY_RESULT_OK){
+   if(effect)board_recovery_bootstrap_retain_stop();
+   else if(!metadata_load_bool(&pending))(void)persistent_store_release_unused_hold();
+  }
   if(!jobs_enter())return;
   job.phase=phase;job.result=result;if(terminal){job.waiting=false;job.dirty=true;dirty=true;reply_waiting=false;}
   if(!jobs_leave())return;

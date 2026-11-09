@@ -28,13 +28,60 @@ SedsResult board_recovery_sync_command_cutoff(void)
  if (!board_recovery_floor_read_cutoff(&cutoff)) return SEDS_IO;
  return cutoff==0U || thread_comm_publish_command_cutoff(cutoff)==TX_SUCCESS ? SEDS_OK : SEDS_IO;
 }
+/* Station clock: the newest GS-issued timestamp, advanced by the board tick
+ * since its receipt. It is a lower bound of GS time (transit only delays it),
+ * so it never makes an old request look fresher than the GS clock would. It
+ * only moves forward (a network clock resync restarts it from the next GS
+ * packet) and is used beside, never instead of, a valid SEDSnet
+ * network clock: an unsynced or wrongly anchored network clock cannot make a
+ * fresh station request stale, and an absent one no longer refuses everything.
+ * One writer (the network thread); readers use the sequence count. */
+static volatile uint64_t station_utc;static volatile ULONG station_tick;static _Atomic uint32_t station_seq;
+static uint64_t station_estimate(void){
+ for(unsigned i=0U;i<4U;i++){
+  uint32_t seq=atomic_load_explicit(&station_seq,memory_order_acquire);
+  uint64_t utc=station_utc;ULONG tick=station_tick;
+  atomic_thread_fence(memory_order_acquire);
+  if(!(seq&1U)&&seq==atomic_load_explicit(&station_seq,memory_order_relaxed))
+#if TX_TIMER_TICKS_PER_SECOND == 1000
+   return utc?utc+(ULONG)(tx_time_get()-tick):0U;
+#else
+   return utc?utc+((uint64_t)(ULONG)(tx_time_get()-tick)*1000U)/TX_TIMER_TICKS_PER_SECOND:0U;
+#endif
+ }
+ return 0U;
+}
+static void station_store(uint64_t utc){
+ uint32_t seq=atomic_load_explicit(&station_seq,memory_order_relaxed);
+ atomic_store_explicit(&station_seq,seq+1U,memory_order_relaxed);atomic_thread_fence(memory_order_release);
+ station_utc=utc;station_tick=tx_time_get();
+ atomic_store_explicit(&station_seq,seq+2U,memory_order_release);
+}
+void board_recovery_observe_station_time(SedsRouter*router,const SedsPacketView*packet){
+ if(authorized_primary(router,packet)&&packet->timestamp!=UINT64_MAX&&packet->timestamp>station_estimate())station_store(packet->timestamp);
+}
+/* A relayed consumer cannot complete a verified SEDSnet time exchange, so a
+ * first anchor from a source without real time (an RF board without a GPS fix
+ * announces its uptime) is only slewed at 5% and never corrected. A valid
+ * network clock more than 60 s from the station clock needs a timesync restart
+ * so the next announce anchors it afresh. The station clock also restarts from
+ * the next GS packet, so a GS clock step cannot make this repeat every poll. */
+bool board_recovery_network_clock_resync_needed(uint64_t network_now){
+ uint64_t station=station_estimate();
+ if(!station||network_now-station+60000U<=120000U)return false;
+ station_store(0U);return true;
+}
+uint64_t board_recovery_station_now(SedsRouter*router){
+ uint64_t now=0U;if(!router)router=recovery_router;
+ if(!router||seds_router_get_network_time_ms(router,&now)!=SEDS_OK)now=0U;
+ uint64_t station=station_estimate();return station>now?station:now;
+}
 uint8_t board_recovery_command_is_stale(const SedsPacketView *packet)
 {
  if (packet==0 || !board_recovery_command_time_allowed(packet->timestamp)) return 1U;
  if (board_recovery_floor_active()) {
-  uint64_t now=0U;
-  if (recovery_router==0 || seds_router_get_network_time_ms(recovery_router,&now)!=SEDS_OK ||
-      packet->timestamp==0U || (now>=packet->timestamp ? now-packet->timestamp>15000U : packet->timestamp-now>1000U)) return 1U;
+  uint64_t now=recovery_router?board_recovery_station_now(recovery_router):0U;
+  if (!bootstrap_request_fresh(packet->timestamp,now)) return 1U;
  }
  return 0U;
 }
@@ -58,7 +105,7 @@ static SedsResult send_status(SedsRouter*router,uint8_t result,const BoardRecove
  return seds_router_log_queue_typed(router,SEDS_DT_BOARD_STATE_STATUS,status,sizeof status,sizeof(uint8_t),SEDS_EK_UNSIGNED);
 }
 static uint64_t bootstrap_now(void*context) {
- uint64_t now=0U;if(seds_router_get_network_time_ms((SedsRouter*)context,&now)!=SEDS_OK)return 0U;return now;
+ return board_recovery_station_now((SedsRouter*)context);
 }
 static bool bootstrap_reply(void*context,const BoardRecoveryRequest*request,uint8_t result) {
  BoardRecoverySnapshot snapshot={.actual_state=255U};(void)board_recovery_snapshot(&snapshot);
@@ -81,7 +128,10 @@ static SedsResult handle_serialized(SedsRouter*router,const SedsPacketView*packe
    result=board_bootstrap_storage_query_healthy()&&(snapshot.flags&required)==required?BOARD_RECOVERY_RESULT_OK:BOARD_RECOVERY_RESULT_IO;
   }
   /* RAM clock only. Normal completed recovery needs a fresh QUERY too; active
-   * Launch cannot arm it, and an old queued query never gains a renewed UTC. */
+   * Launch cannot arm it, and an old queued query never gains a renewed UTC.
+   * The station's own QUERY time may advance the station clock: the station
+   * acts only on a reply to its nonce within its query deadline. */
+  board_recovery_observe_station_time(router,packet);
   uint64_t now=bootstrap_now(router);
   if((result==BOARD_RECOVERY_RESULT_OK||board_bootstrap_storage_pending())&&
      bootstrap_request_fresh(packet->timestamp,now))
