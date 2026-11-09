@@ -218,7 +218,7 @@ static Solenoid_t pilot_solenoid;static uint8_t g_outputs_initialized=1U;static 
 #define BOARD_RECOVERY_SAFE_OUTPUTS 2U
 static const char*mode="";
 static void servo_transient(void){
- if(!strcmp(mode,"por")){ltc[0].control=ltc[1].control=0U;ltc[0].pending=ltc[1].pending=0U;}
+ if(!strncmp(mode,"por",3)){ltc[0].control=ltc[1].control=0U;ltc[0].pending=ltc[1].pending=0U;}
  if(!strcmp(mode,"bus"))bus_fault_until=now+1000U;
 }
 static void no_servo_open(void){moves++;servo_transient();}
@@ -248,18 +248,26 @@ static void run(uint32_t until){
 }
 int main(int argc,char**argv){
  mode=argc>1?argv[1]:"";setvbuf(stdout,NULL,_IONBF,0);
- if(strcmp(mode,"normal")&&strcmp(mode,"por")&&strcmp(mode,"bus"))return 2;
+ if(strcmp(mode,"normal")&&strcmp(mode,"por")&&strcmp(mode,"por_reconfig")&&strcmp(mode,"bus"))return 2;
  for(int t=0;t<2;t++){getcontext(&ctx[t]);ctx[t].uc_stack.ss_sp=stacks[t];ctx[t].uc_stack.ss_size=sizeof stacks[t];ctx[t].uc_link=&sched;}
  makecontext(&ctx[0],control,0);makecontext(&ctx[1],acq,0);
  now=5U;run(8000U);
  /* Healthy power monitors are configured and reporting before the Resync. */
  assert(((ltc[0].control>>3)&3U)==3U&&((ltc[1].control>>3)&3U)==3U);
  assert(voltage_reports>=5U&&current_reports>=5U);
- measuring=1U;const unsigned before=stale;resync_at=10000U;run(16000U);
+ measuring=1U;const unsigned before=stale;resync_at=10000U;run(10000U);
+ const unsigned voltage_at_move=voltage_reports,current_at_move=current_reports;run(16000U);
  printf("%s gap=%u published_gap=%u stale=%u voltage=%u current=%u\n",
         mode,max_gap,max_published_gap,stale-before,voltage_reports,current_reports);
  assert(moves==3U&&stale==before);
  assert(max_gap<MAX_SAMPLE_GAP_MS&&max_published_gap<MAX_SAMPLE_GAP_MS);
+ if(!strcmp(mode,"por_reconfig")){
+  /* A monitor back in its power-on mode is configured again and reports. */
+  printf("reconfig control=%02x/%02x voltage=+%u current=+%u\n",ltc[1].control,ltc[0].control,
+         voltage_reports-voltage_at_move,current_reports-current_at_move);
+  assert(((ltc[0].control>>3)&3U)==3U&&((ltc[1].control>>3)&3U)==3U);
+  assert(voltage_reports-voltage_at_move>=3U&&current_reports-current_at_move>=3U);
+ }
  return 0;
 }
 '''
@@ -299,6 +307,7 @@ class PressureSamplerPowerStall(unittest.TestCase):
 
     def test_resync_with_healthy_power_monitors_keeps_sampling(self): self.run_mode('normal')
     def test_power_monitor_reset_by_servo_move_does_not_stall_sampling(self): self.run_mode('por')
+    def test_power_monitor_reset_by_servo_move_is_reconfigured(self): self.run_mode('por_reconfig')
     def test_power_i2c_timeouts_during_servo_move_do_not_stall_sampling(self): self.run_mode('bus')
 
 

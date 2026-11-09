@@ -96,6 +96,7 @@ enum{LTC2990_ROLE_VOLTAGE,LTC2990_ROLE_CURRENT};
 int8_t LTC2990_Init(LTC2990_Handle_t*,I2C_HandleTypeDef*,uint8_t,int);
 void LTC2990_Get_Values(LTC2990_Handle_t*,float*);
 void LTC2990_Set_Wait_Service(void(*)(void));
+int8_t LTC2990_Configuration_Lost(LTC2990_Handle_t*);
 void telemetry_ltc2990_update_voltage(LTC2990_Handle_t*);
 void telemetry_ltc2990_update_current(LTC2990_Handle_t*);
 '''
@@ -160,6 +161,7 @@ int8_t LTC2990_Init(LTC2990_Handle_t*h,I2C_HandleTypeDef*i,uint8_t a,int r){(voi
 void LTC2990_Get_Values(LTC2990_Handle_t*h,float*v){(void)h;(void)v;}
 /* Inert driver: its waits are the stub sleeps below, never serviced. */
 void LTC2990_Set_Wait_Service(void(*s)(void)){(void)s;}
+int8_t LTC2990_Configuration_Lost(LTC2990_Handle_t*h){(void)h;return 0;}
 void telemetry_ltc2990_update_voltage(LTC2990_Handle_t*h){(void)h;tx_thread_sleep(15U);
  if(stall_ms&&now>=stall_at){uint32_t ms=stall_ms;stall_ms=0U;tx_thread_sleep(ms);}}
 void telemetry_ltc2990_update_current(LTC2990_Handle_t*h){(void)h;tx_thread_sleep(15U);}

@@ -190,6 +190,18 @@ void LTC2990_Get_Values(LTC2990_Handle_t *handle, float *values)
     }
 }
 
+int8_t LTC2990_Configuration_Lost(LTC2990_Handle_t *handle)
+{
+    uint8_t reg = 0U;
+    if ((handle == TX_NULL) || (LTC2990_Read_Register(handle, CONTROL_REG, &reg) != 0)) {
+        return 0; /* Unreadable is a bus fault, handled by I2C recovery. */
+    }
+    const uint8_t configured = (handle->role == LTC2990_ROLE_VOLTAGE)
+                                   ? (uint8_t)(CTRL_ALL | V1_V2_V3_V4)
+                                   : (uint8_t)(CTRL_ALL | MODE_DUAL_DIFF);
+    return ((reg & (uint8_t)(TEMP_MEAS_MODE_MASK | VOLTAGE_MODE_MASK)) != configured) ? 1 : 0;
+}
+
 int8_t LTC2990_Enable_All_Voltages(LTC2990_Handle_t *handle)
 {
     return LTC2990_Set_Mode(handle, ENABLE_ALL, TEMP_MEAS_MODE_MASK);

@@ -70,6 +70,9 @@ void LTC2990_Step(LTC2990_Handle_t *handle);
  * monitor stops converting). Called from thread context between polls. */
 void LTC2990_Set_Wait_Service(void (*service)(void));
 void LTC2990_Get_Values(LTC2990_Handle_t *handle, float *values);
+/* 1 when the device answers but no longer holds the mode LTC2990_Init set
+ * (a power-on reset); 0 when it does or cannot be read. */
+int8_t LTC2990_Configuration_Lost(LTC2990_Handle_t *handle);
 
 int8_t LTC2990_Enable_All_Voltages(LTC2990_Handle_t *handle);
 int8_t LTC2990_Set_Mode(LTC2990_Handle_t *handle, uint8_t bits_to_set, uint8_t bits_to_clear);

@@ -32,6 +32,7 @@ static volatile uint32_t data_acq_current_init_fail_count;
 static volatile uint32_t data_acq_pressure_init_fail_count;
 static volatile uint32_t data_acq_pressure_read_fail_count;
 static volatile uint32_t data_acq_cycle_count;
+static volatile uint32_t data_acq_power_reconfig_count;
 static ULONG data_acq_last_power_ticks;
 static ULONG data_acq_last_power_retry_ticks;
 static ULONG data_acq_last_pressure_ticks;
@@ -168,6 +169,19 @@ static void data_acq_report_pressure(void)
     }
 }
 
+/* A monitor reset by a supply dip (servo-move transient) still ACKs but
+ * returns to its power-on mode, internal temperature only: its voltage or
+ * current never converts again until it is configured anew. */
+static uint8_t data_acq_power_monitor_lost(LTC2990_Handle_t *handle, uint8_t *ready)
+{
+    if ((*ready == 0U) || (LTC2990_Configuration_Lost(handle) == 0)) {
+        return 0U;
+    }
+    *ready = 0U;
+    data_acq_power_reconfig_count++;
+    return 1U;
+}
+
 static void data_acq_report_power(void)
 {
     const ULONG now = tx_time_get();
@@ -190,6 +204,12 @@ static void data_acq_report_power(void)
     }
 
     data_acq_last_power_ticks = now;
+    data_acq_report_pressure();
+    const uint8_t lost = data_acq_power_monitor_lost(&ltc2990_voltage_handle, &ltc2990_voltage_ready) |
+                         data_acq_power_monitor_lost(&ltc2990_current_handle, &ltc2990_current_ready);
+    if (lost != 0U) {
+        data_acq_ltc2990_init();
+    }
 }
 
 void data_acq_thread_entry(ULONG initial_input)
