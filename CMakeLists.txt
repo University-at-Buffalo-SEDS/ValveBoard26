@@ -138,6 +138,10 @@ set(SEDSNET_ENV_STARTING_QUEUE_SIZE "2048" CACHE STRING
 set(SEDSNET_ENV_QUEUE_GROW_STEP "1.0" CACHE STRING "" FORCE)
 set(SEDSNET_ENV_PAYLOAD_COMPRESS_THRESHOLD "30" CACHE STRING "" FORCE)
 set(SEDSNET_TARGET "thumbv7em-none-eabihf" CACHE STRING "" FORCE)
+# SEDSnet 4.3.13 outgrew this firmware slot with generic ARMv7E-M code; Cortex-M4
+# code generation (as the Gateway uses) fits it back in the firmware slot.
+set(SEDSNET_ENV_RUSTFLAGS "-Ctarget-cpu=cortex-m4" CACHE STRING
+    "Rust code generation flags for the STM32G4 Cortex-M4" FORCE)
 if(ENABLE_TELEMETRY)
     include(cmake/sedsnet_fetch.cmake)
 endif()
