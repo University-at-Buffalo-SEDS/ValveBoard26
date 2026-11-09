@@ -96,12 +96,46 @@ static uint8_t recovery_read_outputs(uint32_t*mask){*mask=6U;return BOARD_RECOVE
 """ + body + r"""
 int main(void){
  for(uint8_t phase=2;phase<=BOARD_RECOVERY_MAX_STATE;phase++){assert(recovery_prepare_outputs(phase)&&writes==0);}
- /* Recover to Startup is the path that drives the safe state. */
+ /* Startup and Idle drive the safe state (a RESYNC from a live Launch). */
  assert(recovery_prepare_outputs(0)&&writes==3);
+ assert(recovery_prepare_outputs(1)&&writes==6);
  return 0;
 }
 """
         self.build_and_run("", code)
+
+    def test_resync_to_idle_stops_a_live_launch_without_an_abort(self):
+        """A board in Launch (not aborted), pilot open: RESYNC to Idle. Without
+        the resync permission the owner refuses and nothing moves; a stale
+        epoch is refused even with it; with it the internal barrier revokes the
+        launch owner, the safe state is driven and verified BEFORE the state
+        leaves Launch, no Abort is latched and only the recovery epoch moves."""
+        tx, code = owner_fixture()
+        code += r"""
+static uint32_t outputs=1U;static unsigned prepared,finished;static uint8_t last_desired=255;
+static uint8_t read_outputs(uint32_t*mask){*mask=outputs;return BOARD_RECOVERY_OUTPUTS_VALID|(outputs==6U?BOARD_RECOVERY_SAFE_OUTPUTS:0U);}
+static uint8_t prepare(uint8_t desired){prepared++;last_desired=desired;if(desired<=1U)outputs=6U;return outputs==6U;}
+static void finish(void){assert(outputs==6U&&prepared==1&&g_thread_comm_flight_state==VALVE_FLIGHT_STATE_LAUNCH&&!abort_latch);finished++;}
+static void begin(void*context){(void)context;}
+int main(void){
+ TX_BYTE_POOL pool={0};BoardRecoverySnapshot status;
+ assert(thread_comm_init(&pool)==0);board_recovery_bind_owner(read_outputs,prepare,finish);
+ assert(thread_comm_request_launch_sequence(10000)==TX_SUCCESS);
+ thread_comm_launch_owner_t owner;assert(thread_comm_take_accepted_launch(&owner));assert(thread_comm_launch_begin_owned(&owner,begin,0));
+ assert(g_thread_comm_flight_state==VALVE_FLIGHT_STATE_LAUNCH&&!thread_comm_get_abort());
+ assert(board_recovery_snapshot(&status)==0);uint32_t before=status.abort_epoch;
+ assert(board_recovery_stage_storage_hold(before)==-10&&board_recovery_begin_prepare(1,before)!=0);
+ board_recovery_stop_launch=1U;assert(board_recovery_begin_prepare(1,before+1U)!=0);board_recovery_stop_launch=0U;
+ assert(!prepared&&!finished&&outputs==1U&&!thread_comm_get_abort()&&g_thread_comm_flight_state==VALVE_FLIGHT_STATE_LAUNCH);
+ board_recovery_stop_launch=1U;assert(board_recovery_stage_storage_hold(before)==0&&board_recovery_begin_prepare(1,before)==0);board_recovery_stop_launch=0U;
+ assert(board_recovery_apply_safe(1,before,&status)==-14);board_recovery_execute_owned();
+ assert(prepared==1&&finished==1&&last_desired==1&&!thread_comm_get_abort()&&!abort_latch);
+ assert(board_recovery_snapshot(&status)==0&&status.abort_epoch==before+1U&&status.actual_state==1&&!(status.flags&BOARD_RECOVERY_ABORT_LATCHED));
+ assert(!thread_comm_launch_continuity());
+ return 0;
+}
+"""
+        self.build_and_run(tx, code)
 
 
 if __name__ == "__main__":

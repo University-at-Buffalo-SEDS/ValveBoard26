@@ -520,7 +520,9 @@ static uint8_t current_status_snapshot(uint8_t id, uint8_t *state)
 static uint8_t recovery_prepare_outputs(uint8_t desired)
 {
     if (g_outputs_initialized == 0U) return 0U;
-    if (desired == 0U) {
+    /* Startup and Idle both drive the safe state first: a RESYNC from a live
+     * Launch arrives with the pilot open and the servos commanded closed. */
+    if (desired <= 1U) {
         no_servo_open();
         dump_servo_open();
         solenoidOff(&pilot_solenoid);

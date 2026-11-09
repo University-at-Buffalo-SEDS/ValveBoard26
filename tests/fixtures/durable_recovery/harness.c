@@ -257,6 +257,14 @@ int main(int argc,char**argv){
   /* Stale context: the epoch from the readback before this Abort. */
   rs.expected_abort_epoch=epoch-1U;send_req(r,&rs,10002);assert(response[1]==4&&thread_comm_get_abort()&&writes==media_writes&&!finished);
   rs.expected_abort_epoch=epoch;
+  /* RESYNC to Startup/Idle keeps every binding: a wrong boot generation, a
+   * stale source time or a stale epoch is refused with nothing written. */
+  {BoardRecoveryRequest bad=rs;bad.desired_state=1;bad.nonce=40;bad.expected_boot_generation=gen+1U;send_req(r,&bad,10002);
+   assert(response[1]==4&&writes==media_writes&&!finished&&thread_comm_get_abort());
+   bad.expected_boot_generation=gen;bad.nonce=41;bad.expected_abort_epoch=epoch+1U;send_req(r,&bad,10002);
+   assert(response[1]==4&&writes==media_writes&&!finished);
+   bad.expected_abort_epoch=epoch;bad.nonce=42;uint64_t saved_now=now;now=40000;send_req(r,&bad,10002);now=saved_now;
+   assert(response[1]==4&&writes==media_writes&&!finished);}
   if(!strcmp(scenario,"resync_unsafe")){
    unsafe_outputs=true;rs.nonce=5;now=10003;send_req(r,&rs,10003);main_service();send_req(r,&rs,10003);
    BoardRecoverySnapshot after={0};(void)board_recovery_snapshot(&after);
