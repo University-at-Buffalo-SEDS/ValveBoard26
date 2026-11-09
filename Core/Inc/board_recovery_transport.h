@@ -10,6 +10,10 @@ SedsResult board_recovery_handle(SedsRouter *router,const SedsPacketView *packet
 uint8_t board_recovery_command_is_stale(const SedsPacketView *packet);
 uint8_t board_recovery_managed_update_allowed(const SedsPacketView *packet);
 uint8_t board_recovery_automatic_is_stale(const SedsPacketView *packet);
+/* Acknowledge a delivered reliable packet that is deliberately not applied:
+ * counts it in g_reliable_refusal_count and returns SEDS_OK. */
+extern volatile uint32_t g_reliable_refusal_count;
+SedsResult board_recovery_refused(void);
 /* Advance the station clock from an authorized GS packet's timestamp. */
 void board_recovery_observe_station_time(SedsRouter*router,const SedsPacketView*packet);
 /* Freshness clock: max(valid network time, station clock); 0 when neither. */

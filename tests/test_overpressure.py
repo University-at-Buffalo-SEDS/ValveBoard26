@@ -702,7 +702,7 @@ class OverpressureTests(unittest.TestCase):
         self.assertIn('overpressure_sample_valid(sample.raw_adc, sample.pressure', report)
         self.assertLess(report.index('data_acq_pressure_snapshot = snapshot'), report.index('SEDS_DT_FUEL_TANK_PRESSURE'))
         telemetry = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Valve_Command_handler')
-        self.assertLess(telemetry.index('board_recovery_command_is_stale(pkt)) return SEDS_OK'),
+        self.assertLess(telemetry.index('board_recovery_command_is_stale(pkt)) return board_recovery_refused()'),
                         telemetry.index('CMD_OVERPRESSURE_ACK'))
         self.assertIn('overpressure.c', (ROOT / 'CMakeLists.txt').read_text())
         # Normal launch PILOT timing is untouched.

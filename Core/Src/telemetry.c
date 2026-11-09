@@ -258,6 +258,14 @@ static UINT admit_timed_launch(const SedsPacketView*p) {
  return thread_comm_request_network_launch_original_at(p->timestamp,p->sender,(uint32_t)p->sender_len,utc,before,launch_monotonic_tick);
 }
 
+/* A command refused for safety or staleness stays refused but is
+ * acknowledged and counted; only a transient admission failure is retried. */
+static SedsResult network_admission_result(UINT admitted)
+{
+  return admitted==TX_SUCCESS ? SEDS_OK :
+         admitted==THREAD_COMM_STALE_TIMESTAMP ? board_recovery_refused() : SEDS_HANDLER_ERROR;
+}
+
 SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
 {
   /* Only a trusted exact network Stop of an already accepted Launch may
@@ -265,7 +273,7 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
   if(pkt&&pkt->payload&&pkt->payload_len==1U&&pkt->payload[0]==CMD_ABORT&&
      board_recovery_manual_stop_source_allowed(g_router.r,pkt)){
     const UINT stopped=thread_comm_request_accepted_launch_manual_abort(pkt->timestamp);
-    if(stopped==THREAD_COMM_STALE_TIMESTAMP)return SEDS_OK;
+    if(stopped==THREAD_COMM_STALE_TIMESTAMP)return board_recovery_refused();
     if(stopped==TX_SUCCESS){
       (void)telemetry_broadcast_abort("Valve board abort command");
       return SEDS_OK;
@@ -276,14 +284,14 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
   /* An exact already committed original needs no new storage read/admission.
    * Refused/uncertain queue attempts never appear in this owner receipt. */
   if(pkt&&pkt->payload&&pkt->payload_len==1U&&pkt->payload[0]==CMD_SEQUENCE){
-    if(pkt->sender_len>THREAD_COMM_LAUNCH_SENDER_MAX||(!pkt->sender&&pkt->sender_len))return SEDS_BAD_ARG;
+    if(pkt->sender_len>THREAD_COMM_LAUNCH_SENDER_MAX||(!pkt->sender&&pkt->sender_len))return board_recovery_refused();
     if(thread_comm_launch_original_accepted(pkt->timestamp,pkt->sender,(uint32_t)pkt->sender_len))return SEDS_OK;
   }
 
   /* Publish storage-validated cutoff before state-lock admission; no NVM
    * getter runs under that lock. Refusal/IO is not a stale-command receipt. */
   if (pkt != NULL && board_recovery_sync_command_cutoff()!=SEDS_OK) return SEDS_IO;
-  if (pkt != NULL && board_recovery_command_is_stale(pkt)) return SEDS_OK;
+  if (pkt != NULL && board_recovery_command_is_stale(pkt)) return board_recovery_refused();
   /* Overpressure acknowledgement bypasses queue admission so it also works
    * while Abort is latched; the control owner validates it and moves nothing. */
   if (pkt != NULL && pkt->payload != NULL && pkt->payload_len == 1U &&
@@ -298,26 +306,17 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
   {
     return SEDS_BAD_ARG;
   }
-  if (pkt->payload == NULL || pkt->payload_len == 0U)
-  {
-    return SEDS_BAD_ARG;
-  }
-  // get the current command and push into the tx queue for the main task to handle
+  /* Malformed commands are refused (acknowledged, never admitted). */
   uint8_t cmd_u8;
-  int32_t got = seds_pkt_get_u8(pkt, &cmd_u8, 1U);
-  if (got != 1)
-  {
-    return (got < 0) ? (SedsResult)got : SEDS_BAD_ARG;
-  }
+  if (pkt->payload == NULL || pkt->payload_len != 1U || seds_pkt_get_u8(pkt, &cmd_u8, 1U) != 1)
+    return board_recovery_refused();
 
   /* Origin fits the existing fixed U8 schema. The high bit is reserved for
    * automatic ordinary valves; manual/launch/abort/pyro commands stay untagged. */
-  if (pkt->payload_len != 1U) return SEDS_BAD_ARG;
   if ((cmd_u8 & THREAD_COMM_AUTOMATIC_TAG) != 0U) {
     const uint8_t command = cmd_u8 & (uint8_t)~THREAD_COMM_AUTOMATIC_TAG;
-    if (!(command <= CMD_DUMP_CLOSE)) return SEDS_BAD_ARG;
-    const UINT admitted=thread_comm_admit_network_automatic((thread_comm_msg_t)command,pkt->timestamp);
-    return admitted==TX_SUCCESS || admitted==THREAD_COMM_STALE_TIMESTAMP ? SEDS_OK : SEDS_HANDLER_ERROR;
+    if (!(command <= CMD_DUMP_CLOSE)) return board_recovery_refused();
+    return network_admission_result(thread_comm_admit_network_automatic((thread_comm_msg_t)command,pkt->timestamp));
   }
 
   g_sim_valve_commands_received++;
@@ -341,23 +340,16 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
 
   if (cmd_u8 == CMD_SEQUENCE)
   {
-    const UINT admitted=admit_timed_launch(pkt);
-    if (admitted==THREAD_COMM_STALE_TIMESTAMP) return SEDS_OK;
-    if (admitted != TX_SUCCESS)
-    {
-      return SEDS_HANDLER_ERROR;
-    }
     /* Only the main owner transitions LAUNCH when consuming this mailbox.
      * A late producer return must not relatch state after owner recovery. */
-    return SEDS_OK;
+    return network_admission_result(admit_timed_launch(pkt));
   }
 
   /* Do not acknowledge a reliable network command until the control thread
    * actually owns it. A transient mutex/queue collision must be visible to
    * SEDSNet so its handler retry can deliver the command instead of silently
    * losing it. */
-  const UINT admitted=thread_comm_admit_network((thread_comm_msg_t)cmd_u8,pkt->timestamp);
-  return admitted==TX_SUCCESS || admitted==THREAD_COMM_STALE_TIMESTAMP ? SEDS_OK : SEDS_HANDLER_ERROR;
+  return network_admission_result(thread_comm_admit_network((thread_comm_msg_t)cmd_u8,pkt->timestamp));
 }
 
 SedsResult Abort_handler(const SedsPacketView *pkt, void *user)
@@ -393,50 +385,55 @@ SedsResult Abort_handler(const SedsPacketView *pkt, void *user)
   return SEDS_OK;
 }
 
-SedsResult Flight_State_handler(const SedsPacketView *pkt, void *user)
+/* SEDS_PERMISSION_DENIED: deliberately refused (stale, aborted, malformed or
+ * not allowed in this state), never applied. Other errors are transient. */
+static SedsResult flight_state_admit(const SedsPacketView *pkt)
 {
   /* Endpoint fanout may also deliver SDK diagnostics or other data types.
    * Only this handler's actual command contract can mutate board state. */
   if (pkt != NULL && pkt->ty != SEDS_DT_FLIGHT_STATE) return SEDS_OK;
   if (pkt != NULL && board_recovery_sync_command_cutoff()!=SEDS_OK) return SEDS_IO;
-  /* Explicit recovery installs a persisted replay floor before clearing abort. */
-  if (pkt != NULL && board_recovery_command_is_stale(pkt)) return SEDS_HANDLER_ERROR;
-
-  (void)user;
+  /* Explicit recovery installs a persisted replay floor before clearing abort.
+   * The endpoint path keeps the managed-variable authority gate: a refused
+   * managed value is acknowledged now, so this handler also runs for it. */
+  if (pkt != NULL && (board_recovery_command_is_stale(pkt) ||
+                      !board_recovery_managed_update_allowed(pkt))) return SEDS_PERMISSION_DENIED;
 
   if (thread_comm_get_abort() != 0U)
   {
-    return SEDS_HANDLER_ERROR;
-  }
-
-  if (pkt == NULL || pkt->payload == NULL || pkt->payload_len == 0U)
-  {
-    g_flight_state_handler_error_count++;
-    return SEDS_BAD_ARG;
+    return SEDS_PERMISSION_DENIED;
   }
 
   uint8_t flight_state = 0U;
-  int32_t got = seds_pkt_get_u8(pkt, &flight_state, 1U);
-  if (got != 1)
+  if (pkt == NULL || pkt->payload == NULL || pkt->payload_len == 0U ||
+      seds_pkt_get_u8(pkt, &flight_state, 1U) != 1)
   {
     g_flight_state_handler_error_count++;
-    return (got < 0) ? (SedsResult)got : SEDS_BAD_ARG;
+    return SEDS_PERMISSION_DENIED;
   }
 
   g_flight_state_handler_count++;
   g_last_flight_state_packet = flight_state;
 
-  if (thread_comm_apply_network_flight_state(flight_state,pkt->timestamp) != TX_SUCCESS)
+  const UINT applied = thread_comm_apply_network_flight_state(flight_state,pkt->timestamp);
+  if (applied != TX_SUCCESS)
   {
     g_flight_state_handler_error_count++;
-    return SEDS_HANDLER_ERROR;
+    return applied == THREAD_COMM_STALE_TIMESTAMP ? SEDS_PERMISSION_DENIED : SEDS_HANDLER_ERROR;
   }
   return SEDS_OK;
 }
 
+SedsResult Flight_State_handler(const SedsPacketView *pkt, void *user)
+{
+  (void)user;
+  const SedsResult result = flight_state_admit(pkt);
+  return result == SEDS_PERMISSION_DENIED ? board_recovery_refused() : result;
+}
+
 SedsResult flight_state_cache_apply_network_update(const SedsPacketView *packet)
 {
-  return Flight_State_handler(packet, NULL);
+  return flight_state_admit(packet);
 }
 
 SedsResult Heartbeat_handler(const SedsPacketView *pkt, void *user)

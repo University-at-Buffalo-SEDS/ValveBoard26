@@ -31,6 +31,8 @@ def compile_case(code,case,inline_state=False):
   telemetry=(ROOT/'Core/Src/telemetry.c').read_text()
   adapter='\nstatic SedsResult seds_router_get_network_time_ms(void*r,uint64_t*out){(void)r;*out=10000U;return SEDS_OK;}\n'
   helpers=adapter+function(telemetry,'launch_monotonic_tick')+'\n'+function(telemetry,'admit_timed_launch')+'\n'
+  if 'network_admission_result(' in telemetry:
+   helpers+='static SedsResult board_recovery_refused(void){return SEDS_OK;}\n'+function(telemetry,'network_admission_result')+'\n'
   code=code.replace('SedsResult Valve_Command_handler(',helpers+'SedsResult Valve_Command_handler(')
   code=code.replace('static struct{void*r;}g_router;','static struct{void*r;}g_router={(void*)1};')
  with tempfile.TemporaryDirectory(prefix='postlaunch-storage-')as temp:

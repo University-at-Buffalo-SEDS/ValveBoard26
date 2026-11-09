@@ -48,6 +48,7 @@ typedef int SedsResult;
 #define SEDS_OK 0
 #define SEDS_DT_ABORT 135612662U
 static SedsResult board_recovery_sync_command_cutoff(void){return SEDS_OK;}
+static SedsResult board_recovery_refused(void){return SEDS_OK;}
 #define SEDS_BAD_ARG -1
 #define SEDS_HANDLER_ERROR -3
 typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;const char*sender;size_t sender_len;uint32_t ty;} SedsPacketView;
@@ -92,7 +93,7 @@ int main(int argc,char**argv){
 '''
   control=(ROOT/'Core/Src/main_thread.c').read_text();telemetry=(ROOT/'Core/Src/telemetry.c').read_text();safety=(ROOT/'Core/Src/safety_thread.c').read_text()
   code='#include <assert.h>\nstatic void main_thread_force_outputs_safe_off(void){assert(0 && "unexpected store inhibition in healthy Abort fixture");}\n'+code
-  for key,value in [('ACTUAL_CONSUMER',function(control,'handle_command')),('ACTUAL_MANUAL',function(telemetry,'Abort_handler')),('ACTUAL_TYPED',function(telemetry,'launch_monotonic_tick')+'\n'+function(telemetry,'admit_timed_launch')+'\n'+function(telemetry,'Valve_Command_handler')),('ACTUAL_SAFETY',function(safety,'safety_request_abort'))]:code=code.replace(key,value)
+  for key,value in [('ACTUAL_CONSUMER',function(control,'handle_command')),('ACTUAL_MANUAL',function(telemetry,'Abort_handler')),('ACTUAL_TYPED',function(telemetry,'launch_monotonic_tick')+'\n'+function(telemetry,'admit_timed_launch')+'\n'+function(telemetry,'network_admission_result')+'\n'+function(telemetry,'Valve_Command_handler')),('ACTUAL_SAFETY',function(safety,'safety_request_abort'))]:code=code.replace(key,value)
   with tempfile.TemporaryDirectory(prefix='abort-owner-notification-')as tmp:
    p=Path(tmp);(p/'tx_api.h').write_text(tx);(p/'test.c').write_text(code);binary=p/'test'
    subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I'+str(p),'-I'+str(ROOT/'Core/Inc'),str(p/'test.c'),'-o',str(binary)],check=True)

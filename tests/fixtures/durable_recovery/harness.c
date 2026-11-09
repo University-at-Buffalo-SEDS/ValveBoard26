@@ -9,6 +9,9 @@
 #include "board_abort_latch.h"
 #include "flight_state_cache.h"
 #include <assert.h>
+/* Deterministically refused requests are acknowledged and counted. */
+static __attribute__((unused)) uint32_t refusals_expected;
+#define REFUSED(call) (refusals_expected=g_reliable_refusal_count,(call)==SEDS_OK&&g_reliable_refusal_count==refusals_expected+1U)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -223,9 +226,9 @@ int main(int argc,char**argv){
   BoardRecoverySnapshot snapshot={0};assert(board_recovery_snapshot(&snapshot)==0);unsigned reads=read_calls,writes=media_writes,old_responses=responses;
   uint32_t ends[2]={RECOVERY_ENDPOINT,9999};uint8_t body[32];BoardRecoveryRequest req={.operation=1,.nonce=2,.expected_boot_generation=board_recovery_boot_current(),.expected_abort_epoch=snapshot.abort_epoch,.issuer_session=77};packet_body(body,&req);
   SedsPacketView packet={.ty=200,.sender="GS",.sender_len=2,.endpoints=ends,.num_endpoints=2,.payload=body,.payload_len=32,.timestamp=10000};
-  assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);packet.num_endpoints=1;assert(board_recovery_handle(r,&packet,9999,123)==SEDS_BAD_ARG);
-  packet.sender="RF";assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_PERMISSION_DENIED);packet.sender="@addr:4294967296";packet.sender_len=16;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_PERMISSION_DENIED);
-  packet.sender="GS";packet.sender_len=2;body[3]=1;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);body[3]=0;body[2]=2;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);body[2]=0;assert(responses==old_responses&&writes==media_writes&&reads==read_calls);
+  assert(REFUSED(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)));packet.num_endpoints=1;assert(REFUSED(board_recovery_handle(r,&packet,9999,123)));
+  packet.sender="RF";assert(REFUSED(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)));packet.sender="@addr:4294967296";packet.sender_len=16;assert(REFUSED(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)));
+  packet.sender="GS";packet.sender_len=2;body[3]=1;assert(REFUSED(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)));body[3]=0;body[2]=2;assert(REFUSED(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)));body[2]=0;assert(responses==old_responses&&writes==media_writes&&reads==read_calls);
   req.expected_boot_generation--;packet_body(body,&req);assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==0&&response[1]==4);req.expected_boot_generation++;packet_body(body,&req);
   packet.timestamp=0;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==0&&response[1]==4);packet.timestamp=10000;now=25001;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==0&&response[1]==4);now=10000;
   req.operation=0;packet_body(body,&req);packet.sender="@addr:1";packet.sender_len=7;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==0&&response[1]==0);assert(reads==read_calls&&writes==media_writes);
@@ -271,10 +274,10 @@ int main(int argc,char**argv){
    * do: a board left in Launch is resynced back without an Abort): no
    * reply, storage access or state change. RECOVER keeps Startup/Idle only. */
   static const uint8_t refused[]={7U,8U,13U,14U,15U,16U,255U};
-  for(unsigned i=0;i<sizeof refused;i++){rs.desired_state=refused[i];packet_body(body,&rs);assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);}
-  rs.desired_state=5;rs.expected_boot_generation=UINT64_MAX;packet_body(body,&rs);assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);
-  rs.expected_boot_generation=gen;rs.operation=BOARD_RECOVERY_RECOVER;packet_body(body,&rs);assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);
-  rs.operation=BOARD_RECOVERY_RESYNC;packet_body(body,&rs);body[1]=3;assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);
+  for(unsigned i=0;i<sizeof refused;i++){rs.desired_state=refused[i];packet_body(body,&rs);assert(REFUSED(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)));}
+  rs.desired_state=5;rs.expected_boot_generation=UINT64_MAX;packet_body(body,&rs);assert(REFUSED(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)));
+  rs.expected_boot_generation=gen;rs.operation=BOARD_RECOVERY_RECOVER;packet_body(body,&rs);assert(REFUSED(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)));
+  rs.operation=BOARD_RECOVERY_RESYNC;packet_body(body,&rs);body[1]=3;assert(REFUSED(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)));
   assert(responses==old_responses&&reads==read_calls&&writes==media_writes&&thread_comm_get_abort()&&!finished&&last_prepare==255);
   /* Stale context: the epoch from the readback before this Abort. */
   rs.expected_abort_epoch=epoch-1U;send_req(r,&rs,10002);assert(response[1]==4&&thread_comm_get_abort()&&writes==media_writes&&!finished);

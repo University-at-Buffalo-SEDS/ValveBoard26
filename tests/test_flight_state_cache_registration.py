@@ -29,7 +29,8 @@ HEADERS = {'sedsnet.h': '#pragma once\n'
  'board_recovery_transport.h': '#pragma once\n'
                                '#include "sedsnet.h"\n'
                                'uint8_t board_recovery_managed_update_allowed(const '
-                               'SedsPacketView*);\n',
+                               'SedsPacketView*);\n'
+                               'SedsResult board_recovery_refused(void);\n#ifndef SEDS_PERMISSION_DENIED\n#define SEDS_PERMISSION_DENIED -6\n#endif\n',
  'persistent_store.h': '#pragma once\n'
                        '#include <stddef.h>\n'
                        '#include <stdint.h>\n'
@@ -56,6 +57,7 @@ int persistent_store_init(void){return 0;}
 int persistent_store_get(uint32_t key,void*p,size_t*n){assert(key==0x46535445U&&*n==1);*(uint8_t*)p=stored;return 0;}
 int persistent_store_set(uint32_t key,const void*p,size_t n){assert(key==0x46535445U&&n==1);writes++;stored=*(const uint8_t*)p;return 0;}
 uint8_t board_recovery_managed_update_allowed(const SedsPacketView*p){assert(p);return 1;}
+SedsResult board_recovery_refused(void){return SEDS_OK;}
 SedsResult seds_router_enable_network_variable(SedsRouter*r,unsigned ty,bool rd,bool wr){assert(r&&ty==SEDS_DT_FLIGHT_STATE&&rd&&!wr);enables++;return fail_enable?SEDS_HANDLER_ERROR:SEDS_OK;}
 SedsResult seds_router_on_network_variable_update(SedsRouter*r,unsigned ty,SedsResult(*cb)(const SedsPacketView*,void*),void*u){assert(r&&ty==SEDS_DT_FLIGHT_STATE&&cb&&!u);registrations++;return fail_callback?SEDS_HANDLER_ERROR:SEDS_OK;}
 void seds_router_disable_managed_variable(SedsRouter*r,unsigned ty){(void)r;(void)ty;assert(!"selective retirement must not disable service");}

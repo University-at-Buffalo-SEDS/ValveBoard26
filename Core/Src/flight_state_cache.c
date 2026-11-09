@@ -137,20 +137,22 @@ static SedsResult persist_update(const SedsPacketView *packet, void *user)
         if (packet != NULL && packet->ty == SEDS_DT_FLIGHT_STATE)
             (void)clear_managed_cache();
         g_flight_state_cache_errors++;
-        return SEDS_HANDLER_ERROR;
+        return board_recovery_refused();
     }
 
+    /* Refused values are retired from the cache, never applied or
+     * persisted, but acknowledged so the station stops retransmitting. */
     if (!board_recovery_managed_update_allowed(packet)) {
         (void)clear_managed_cache();
         ++g_flight_state_cache_errors;
-        return SEDS_HANDLER_ERROR;
+        return board_recovery_refused();
     }
     const uint8_t state = packet->payload[0];
     const SedsResult apply_result = flight_state_cache_apply_network_update(packet);
     if (apply_result != SEDS_OK) {
         (void)clear_managed_cache();
         g_flight_state_cache_errors++;
-        return apply_result;
+        return apply_result == SEDS_PERMISSION_DENIED ? board_recovery_refused() : apply_result;
     }
     const bool changed = state != g_persisted_state;
     g_has_value = true;

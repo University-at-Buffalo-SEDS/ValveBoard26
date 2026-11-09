@@ -54,6 +54,8 @@ int persistent_store_init(void){return 0;}
 int persistent_store_get(uint32_t key,void *p,size_t*n){assert(key==0x46535445U&&*n==1);*(uint8_t*)p=stored;return 0;}
 int persistent_store_set(uint32_t key,const void *p,size_t n){assert(key==0x46535445U&&n==1);writes++;if(fail_write)return 2;stored=*(const uint8_t*)p;return 0;}
 uint8_t board_recovery_managed_update_allowed(const SedsPacketView *packet){assert(packet);return policy;}
+volatile uint32_t g_reliable_refusal_count;
+SedsResult board_recovery_refused(void){++g_reliable_refusal_count;return SEDS_OK;}
 SedsResult __real_seds_router_enable_network_variable(SedsRouter*,SedsDataType,bool,bool);
 SedsResult __real_seds_router_on_network_variable_update(SedsRouter*,SedsDataType,SedsEndpointHandlerFn,void*);
 void __real_seds_router_disable_managed_variable(SedsRouter*,SedsDataType);

@@ -14,6 +14,12 @@
 static SedsRouter *recovery_router;
 void board_recovery_transport_set_router(SedsRouter *router) { recovery_router=router; }
 static atomic_flag dispatching=ATOMIC_FLAG_INIT;
+/* A delivered reliable packet that is deliberately not applied (stale,
+ * unauthorized, malformed, refused in this state) is still acknowledged: an
+ * SDK handler error withholds the receipt and the station retransmits the
+ * same refused packet forever. Count it here instead. */
+volatile uint32_t g_reliable_refusal_count __attribute__((used));
+SedsResult board_recovery_refused(void){++g_reliable_refusal_count;return SEDS_OK;}
 static uint8_t authorized_primary(SedsRouter *router,const SedsPacketView *packet)
 {
  return packet!=NULL && seds_router_sender_matches_hostname(router,
@@ -113,10 +119,10 @@ static bool bootstrap_reply(void*context,const BoardRecoveryRequest*request,uint
   (uint32_t)(((uint64_t)tx_time_get()*1000U)/TX_TIMER_TICKS_PER_SECOND))==SEDS_OK;
 }
 static SedsResult handle_serialized(SedsRouter*router,const SedsPacketView*packet,uint32_t local_endpoint,uint32_t uptime_ms) {
- if(!router||!packet||packet->ty!=SEDS_DT_BOARD_RECOVERY_REQUEST||packet->num_endpoints!=1U||!packet->endpoints||packet->endpoints[0]!=local_endpoint)return SEDS_BAD_ARG;
- if(!authorized_primary(router,packet))return SEDS_PERMISSION_DENIED;
+ if(!router||!packet)return SEDS_BAD_ARG;
  BoardRecoveryRequest request;
- if(!board_recovery_decode_request(packet->payload,packet->payload_len,&request))return SEDS_BAD_ARG;
+ if(packet->ty!=SEDS_DT_BOARD_RECOVERY_REQUEST||packet->num_endpoints!=1U||!packet->endpoints||packet->endpoints[0]!=local_endpoint||
+    !authorized_primary(router,packet)||!board_recovery_decode_request(packet->payload,packet->payload_len,&request))return board_recovery_refused();
  BoardRecoverySnapshot snapshot={.actual_state=255U};int32_t observed=board_recovery_snapshot(&snapshot);
  uint64_t generation=board_recovery_boot_current();uint8_t result=observed==0?BOARD_RECOVERY_RESULT_OK:BOARD_RECOVERY_RESULT_IO;
  if(request.operation==BOARD_RECOVERY_QUERY) {

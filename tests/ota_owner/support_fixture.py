@@ -176,6 +176,8 @@ typedef int SedsResult;
 #define SEDS_IO -1
 #define SEDS_BAD_ARG -2
 #define SEDS_HANDLER_ERROR -3
+#define SEDS_PERMISSION_DENIED -6
+static volatile uint32_t g_reliable_refusal_count;
 #define SEDS_DT_FLIGHT_STATE 256715704U
 #define SEDS_DT_ABORT 135612662U
 #define FLIGHT_STATE_PERSIST_KEY 0x46535445U
@@ -325,7 +327,9 @@ def build(board,candidate):
     telemetry=(source/'Core/Src/telemetry.c').read_text();transport=(source/'Core/Src/board_recovery_transport.c').read_text()
     snippets=function(transport,'authorized_primary')+'\n'+function(transport,'board_recovery_manual_stop_source_allowed')+'\n'+function(telemetry,'Abort_handler')
     cache=(source/'Core/Src/flight_state_cache.c').read_text()
-    fstate='\n'.join(function(transport,n)for n in ['board_recovery_sync_command_cutoff','board_recovery_command_is_stale','board_recovery_managed_update_allowed'])+'\n'+'\n'.join(function(telemetry,n)for n in ['Flight_State_handler','flight_state_cache_apply_network_update'])+'\n'+function(cache,'clear_managed_cache')+'\n'+function(cache,'persist_update')
+    refusal=['board_recovery_refused'] if 'board_recovery_refused(void)' in transport else []
+    admit=['flight_state_admit'] if 'flight_state_admit(' in telemetry else []
+    fstate='\n'.join(function(transport,n)for n in ['board_recovery_sync_command_cutoff','board_recovery_command_is_stale','board_recovery_managed_update_allowed',*refusal])+'\n'+'\n'.join(function(telemetry,n)for n in [*admit,'Flight_State_handler','flight_state_cache_apply_network_update'])+'\n'+function(cache,'clear_managed_cache')+'\n'+function(cache,'persist_update')
     effects=''
     extra=[]
     if board=='ValveBoard26':

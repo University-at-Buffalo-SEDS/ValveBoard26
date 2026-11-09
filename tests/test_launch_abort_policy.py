@@ -30,11 +30,11 @@ class LaunchAbortPolicyTests(unittest.TestCase):
         latch = '\n'.join(line for line in latch.splitlines() if not line.startswith('#include'))
         shared = (ROOT / 'Core/Src/thread_comm.c').read_text()
         receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Abort_handler')
-        command_receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Valve_Command_handler')
+        command_receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'network_admission_result')+'\n'+function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Valve_Command_handler')
         clock_adapter = "unsigned long tx_time_get(void){return 0;}\nstatic SedsResult seds_router_get_network_time_ms(void*r,uint64_t*out){(void)r;*out=1234;return SEDS_OK;}\n"
         timed_helpers = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'launch_monotonic_tick')+'\n'+function((ROOT / 'Core/Src/telemetry.c').read_text(), 'admit_timed_launch')+'\n'
 
-        managed_receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Flight_State_handler')
+        managed_receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'flight_state_admit')+'\n'+function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Flight_State_handler')
         control_source=(ROOT/'Core/Src'/('main_task.c' if ab else 'main_thread.c')).read_text()
         self.assertIn('thread_comm_apply_automatic_owned(cmd,command_epoch,apply_automatic_valve)',control_source)
         self.assertIn('thread_comm_receive_owned(&msg,&command_epoch)',control_source)
@@ -96,12 +96,15 @@ typedef int SedsResult;
 #define SEDS_DT_FLIGHT_STATE 256715704U
 #define SEDS_DT_VALVE_COMMAND 245583120U
 static SedsResult board_recovery_sync_command_cutoff(void){return SEDS_OK;}
+static unsigned refusals;static SedsResult board_recovery_refused(void){++refusals;return SEDS_OK;}
+#define SEDS_PERMISSION_DENIED -6
 #define SEDS_BAD_ARG -1
 #define SEDS_ERR -2
 #define SEDS_HANDLER_ERROR -3
 typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;const char*sender;size_t sender_len;uint32_t ty;} SedsPacketView;
 static uint8_t board_recovery_command_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static uint8_t board_recovery_automatic_is_stale(const SedsPacketView*p){(void)p;return 0;}
+static uint8_t board_recovery_managed_update_allowed(const SedsPacketView*p){(void)p;return 1;}
 static struct{void*r;}g_router={(void*)1};
 static bool board_recovery_manual_stop_source_allowed(void*r,const SedsPacketView*p){(void)r;(void)p;return false;}
 static unsigned g_flight_state_handler_error_count,g_flight_state_handler_count,g_last_flight_state_packet;
@@ -143,12 +146,13 @@ int main(void){
  managed_pkt.ty=SEDS_DT_ABORT;assert(Flight_State_handler(&managed_pkt,0)==SEDS_OK);
  assert(g_flight_state_handler_count==0&&thread_comm_get_flight_state()==STATE_LAUNCH&&!thread_comm_get_abort());
  managed_pkt.ty=SEDS_DT_FLIGHT_STATE;
- assert(Flight_State_handler(&managed_pkt,0)!=SEDS_OK);
+ /* Refused, never applied, but acknowledged so the station stops retrying. */
+ unsigned refused=refusals;assert(Flight_State_handler(&managed_pkt,0)==SEDS_OK&&refusals==refused+1);
  assert(thread_comm_get_flight_state()==STATE_LAUNCH&&!thread_comm_get_abort());
  /* Launch winning the state mutex must suppress the same managed update. */
  reset_power();assert(thread_comm_set_flight_state(STATE_ARMED)==TX_SUCCESS);
  before_state_lock=launch_before_claim;
- assert(Flight_State_handler(&managed_pkt,0)!=SEDS_OK);
+ refused=refusals;assert(Flight_State_handler(&managed_pkt,0)==SEDS_OK&&refusals==refused+1);
  assert(thread_comm_get_flight_state()==STATE_LAUNCH&&!thread_comm_get_abort());
  /* Exact automatic marker is suppressed after launch, including delayed retry. */
  const uint8_t automatic[]="SEDS_AUTO_ABORT_V1:late heartbeat";
@@ -180,8 +184,11 @@ int main(void){
  assert(thread_comm_receive(&received,TX_NO_WAIT)!=TX_SUCCESS); /* stale auto no effect */
  marked[0]=AUTO_CMD;assert(Valve_Command_handler(&pkt,0)==SEDS_OK);
  assert(thread_comm_receive(&received,TX_NO_WAIT)==TX_SUCCESS);CHECK_RECEIVED
- pkt.payload_len=2;assert(Valve_Command_handler(&pkt,0)==SEDS_BAD_ARG);
- pkt.payload_len=1;marked[0]=BAD_AUTO|THREAD_COMM_AUTOMATIC_TAG;assert(Valve_Command_handler(&pkt,0)==SEDS_BAD_ARG);
+ /* Malformed commands are refused: acknowledged and counted, never queued. */
+ refused=refusals;pkt.payload_len=2;assert(Valve_Command_handler(&pkt,0)==SEDS_OK&&refusals==refused+1);
+ assert(thread_comm_receive(&received,TX_NO_WAIT)!=TX_SUCCESS);
+ pkt.payload_len=1;marked[0]=BAD_AUTO|THREAD_COMM_AUTOMATIC_TAG;assert(Valve_Command_handler(&pkt,0)==SEDS_OK&&refusals==refused+2);
+ assert(thread_comm_receive(&received,TX_NO_WAIT)!=TX_SUCCESS);
  reset_power();assert(thread_comm_set_flight_state(STATE_ARMED)==TX_SUCCESS);
  marked[0]=AUTO_CMD|THREAD_COMM_AUTOMATIC_TAG;before_state_lock=launch_before_claim;
  assert(Valve_Command_handler(&pkt,0)==SEDS_OK);
@@ -201,8 +208,8 @@ int main(void){
   marked[0]=(uint8_t)wire;pkt.payload_len=1;
   const unsigned raw=wire&127U;
   const unsigned supported=AUTO_ALLOWED;
-  const int result=Valve_Command_handler(&pkt,0);
-  assert(result==(supported?SEDS_OK:SEDS_BAD_ARG));
+  const unsigned refused_before=refusals;const int result=Valve_Command_handler(&pkt,0);
+  assert(result==SEDS_OK&&refusals==refused_before+(supported?0U:1U));
   if(supported){
    assert(thread_comm_receive(&received,TX_NO_WAIT)==TX_SUCCESS);
    physical_calls=0;assert(thread_comm_apply_automatic(received,apply_automatic_valve)&&physical_calls);

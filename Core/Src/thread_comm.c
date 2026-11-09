@@ -768,12 +768,14 @@ static UINT thread_comm_apply_managed_flight_state_impl(uint8_t flight_state, ui
     }
     /* Launch and this decision share the same mutex. Delayed managed Aborted
      * has no manual-emergency provenance and cannot overwrite actual flight. */
+    /* A network write refused in this state is final (acknowledged), not a
+     * transient failure for SEDSnet to retry. */
     if (g_recovery_pending != 0U || g_thread_comm_abort != 0U ||
         (board_launch_latch_is_set() != 0U &&
          (flight_state == VALVE_FLIGHT_STATE_ABORTED ||
           flight_state < g_thread_comm_flight_state))) {
         (void)tx_mutex_put(&g_thread_comm_state_mutex);
-        return TX_QUEUE_ERROR;
+        return network ? THREAD_COMM_STALE_TIMESTAMP : TX_QUEUE_ERROR;
     }
     /* Managed progression is metadata, not another physical Launch admission.
      * Once inhibition completed, later backup loss cannot create a NEW Stop.
