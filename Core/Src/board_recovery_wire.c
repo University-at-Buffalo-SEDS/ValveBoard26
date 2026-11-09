@@ -16,13 +16,15 @@ uint8_t board_recovery_decode_request(const uint8_t *wire,size_t length,BoardRec
  if (wire==0 || request==0 || length!=BOARD_RECOVERY_REQUEST_SIZE ||
      wire[0]!=BOARD_RECOVERY_VERSION || wire[1]>BOARD_RECOVERY_RESYNC || wire[3]!=0U) return 0U;
  BoardRecoveryRequest parsed;
- parsed.operation=wire[1]; parsed.desired_state=wire[2];
+ parsed.operation=wire[1]; parsed.desired_state=wire[2]; parsed.resync=wire[1]==BOARD_RECOVERY_RESYNC;
  parsed.nonce=board_recovery_read_le64(wire+4U); parsed.expected_boot_generation=board_recovery_read_le64(wire+12U);
  parsed.expected_abort_epoch=read_le32(wire+20U); parsed.issuer_session=board_recovery_read_le64(wire+24U);
  if (parsed.nonce==0U || parsed.issuer_session==0U) return 0U;
  /* Never a commissioning leg: a known boot generation is required. */
  if (parsed.operation==BOARD_RECOVERY_RESYNC) {
-  if ((uint8_t)(parsed.desired_state-2U)>BOARD_RECOVERY_MAX_STATE-2U ||
+  /* Startup/Idle too: from Launch (not aborted) the board stops its own
+   * launch owner as part of this recovery (board_recovery_stop_launch). */
+  if (parsed.desired_state>BOARD_RECOVERY_MAX_STATE ||
       parsed.expected_boot_generation==UINT64_MAX) return 0U;
   parsed.operation=BOARD_RECOVERY_RECOVER;
  } else if (parsed.operation==BOARD_RECOVERY_RECOVER && parsed.desired_state>1U) return 0U;

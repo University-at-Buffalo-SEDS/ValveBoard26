@@ -28,6 +28,8 @@ typedef struct {
  uint64_t nonce, issuer_session, expected_boot_generation;
  uint32_t expected_abort_epoch;
  uint8_t operation, desired_state;
+ /* RAM only: decoded from RESYNC (operation is then RECOVER). */
+ uint8_t resync;
 } BoardRecoveryRequest;
 #define BOARD_RECOVERY_REQUEST_NATIVE_PREFIX_SIZE 30U
 #if defined(__cplusplus)

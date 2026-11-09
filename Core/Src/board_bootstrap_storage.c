@@ -235,7 +235,9 @@ BoardBootstrapResult board_bootstrap_storage_first_leg(const BoardRecoveryReques
 }
 static bool prepare_transaction(const BoardRecoveryRequest*r,uint64_t source,bool normal){
  if(write_transaction(r,source,normal?JOB_NORMAL:JOB_SECOND)!=BOOTSTRAP_STORED_INHIBITED)return false;
- if(board_recovery_begin_prepare(r->desired_state,r->expected_abort_epoch)!=0)return false;
+ board_recovery_stop_launch=normal&&r->resync&&r->desired_state<=1U;
+ int32_t begun=board_recovery_begin_prepare(r->desired_state,r->expected_abort_epoch);board_recovery_stop_launch=0U;
+ if(begun!=0)return false;
  if(flight_state_cache_prepare_recovery(r->desired_state)!=0||!board_recovery_bind_bootstrap_request(r->expected_boot_generation,r->expected_abort_epoch,r->desired_state,r->issuer_session,source)){board_recovery_cancel_prepare(r->desired_state,r->expected_abort_epoch);return false;}
  BoardRecoverySnapshot snapshot={0};return board_recovery_apply_safe(r->desired_state,r->expected_abort_epoch,&snapshot)==-14;
 }
@@ -266,7 +268,8 @@ int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*r,uin
   if(kind){
    /* Claim the RAM hold under the same state lock as Launch BEFORE changing
     * this query/job. An already accepted Launch leaves all of them untouched. */
-   int32_t held=board_recovery_stage_storage_hold(r->expected_abort_epoch);
+   board_recovery_stop_launch=kind==JOB_NORMAL&&r->resync&&r->desired_state<=1U;
+   int32_t held=board_recovery_stage_storage_hold(r->expected_abort_epoch);board_recovery_stop_launch=0U;
    /* Only NORMAL and only a QUERY observed after this exact completed owner.
     * Existing bootstrap legs and every active/prelaunch recovery retain the
     * old exclusion. A new issuer, nonce replay, stale query or boot cannot use

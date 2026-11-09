@@ -245,9 +245,10 @@ int main(int argc,char**argv){
   BoardRecoveryRequest rs={.operation=BOARD_RECOVERY_RESYNC,.desired_state=BOARD_RECOVERY_MAX_STATE+1U,.nonce=4,.expected_boot_generation=gen,.expected_abort_epoch=epoch,.issuer_session=77};
   unsigned reads=read_calls,writes=media_writes,old_responses=responses;uint32_t endpoint=RECOVERY_ENDPOINT;uint8_t body[32];
   SedsPacketView packet={.ty=200,.sender="GS",.sender_len=2,.endpoints=&endpoint,.num_endpoints=1,.payload=body,.payload_len=32,.timestamp=10002};now=10002;
-  /* Launch onward, Startup, Idle and the commissioning sentinel never decode: no
+  /* Launch onward and the commissioning sentinel never decode (Startup and Idle
+   * do: a board left in Launch is resynced back without an Abort): no
    * reply, storage access or state change. RECOVER keeps Startup/Idle only. */
-  static const uint8_t refused[]={0U,1U,7U,8U,13U,14U,15U,16U,255U};
+  static const uint8_t refused[]={7U,8U,13U,14U,15U,16U,255U};
   for(unsigned i=0;i<sizeof refused;i++){rs.desired_state=refused[i];packet_body(body,&rs);assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);}
   rs.desired_state=5;rs.expected_boot_generation=UINT64_MAX;packet_body(body,&rs);assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);
   rs.expected_boot_generation=gen;rs.operation=BOARD_RECOVERY_RECOVER;packet_body(body,&rs);assert(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)==SEDS_BAD_ARG);

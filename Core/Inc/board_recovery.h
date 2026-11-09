@@ -44,6 +44,10 @@ int32_t board_recovery_apply_safe(uint8_t desired_state,
 /* RAM-only job admission, serialized against accepted Launch before any
  * query/job mutation, storage hold or NVM work. 0=owned, negative=refused. */
 int32_t board_recovery_stage_storage_hold(uint32_t expected_epoch);
+/* Set only around staging/preparing a RESYNC to Startup/Idle: lets that one
+ * recovery revoke a live (not aborted) launch owner itself instead of being
+ * refused. The internal stop drives outputs safe without latching Abort. */
+extern volatile uint8_t board_recovery_stop_launch;
 /* RAM-only proof captured by an authorized fresh QUERY after completion.
  * The transport binds issuer/nonce/boot/epoch; this owner binds actual Launch. */
 typedef struct { uint64_t source_utc; uint32_t serial; } BoardRecoveryCompletedLaunch;

@@ -21,6 +21,11 @@ int main(void) {
  uint8_t request[33]={1,1,0,0};request[4]=17;request[12]=23;request[20]=31;request[24]=42;
  BoardRecoveryRequest decoded={0};assert(board_recovery_decode_request(request,32,&decoded));
  assert(decoded.nonce==17&&decoded.expected_boot_generation==23&&decoded.expected_abort_epoch==31&&decoded.issuer_session==42);
+ assert(!decoded.resync);
+ /* RESYNC to Startup/Idle decodes (as RECOVER, flagged resync); Launch on never. */
+ for(unsigned state=0;state<256;state++){request[1]=2;request[2]=(uint8_t)state;BoardRecoveryRequest rs={0};
+  assert(board_recovery_decode_request(request,32,&rs)==(state<=6U));if(state<=6U)assert(rs.operation==1&&rs.resync&&rs.desired_state==state);}
+ request[1]=1;request[2]=0;
  for(size_t n=0;n<33;n++)if(n!=32)assert(!board_recovery_decode_request(request,n,&decoded));
  for(unsigned state=2;state<256;state++){request[2]=(uint8_t)state;assert(!board_recovery_decode_request(request,32,&decoded));}request[2]=1;
  for(unsigned field=0;field<4;field++){uint8_t old=request[field];request[field]=255;assert(!board_recovery_decode_request(request,32,&decoded));request[field]=old;}

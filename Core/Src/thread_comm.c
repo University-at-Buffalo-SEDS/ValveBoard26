@@ -1079,7 +1079,7 @@ int32_t board_recovery_begin_prepare(uint8_t desired_state, uint32_t expected_ep
         return -10;
     if (g_thread_comm_initialized == 0U ||
         tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER) != TX_SUCCESS) return -14;
-    if (launch_retained_for_recovery_locked())
+    if (launch_retained_for_recovery_locked() && !board_recovery_stop_launch)
         return command_state_release() ? -10 : -9;
     if (g_command_admission_fault || !persistent_store_recovery_ready()) {if(!bootstrap_state_release())return -9;return -9;}
     int32_t result = -10;
@@ -1231,13 +1231,14 @@ static bool bootstrap_state_release(void) {
 /* Called with jobs_mutex held. This lock order is jobs -> state; the hold
  * changes only RAM atomics. Launch admission uses this same state owner and
  * rejects held controls, so exactly one side of the boundary may win. */
+volatile uint8_t board_recovery_stop_launch;
 int32_t board_recovery_stage_storage_hold(uint32_t expected_epoch) {
  if(!expected_epoch||expected_epoch==UINT32_MAX||!g_thread_comm_initialized)
   return -10;
  if(tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return -14;
  int32_t result=-10;
  if(g_completed_retirement_fault)result=-9;
- else if(expected_epoch==g_thread_comm_recovery_epoch&&!launch_retained_for_recovery_locked()) {
+ else if(expected_epoch==g_thread_comm_recovery_epoch&&(!launch_retained_for_recovery_locked()||board_recovery_stop_launch)) {
   persistent_store_hold_bootstrap();result=0;
  }
  return command_state_release()?result:-9;
