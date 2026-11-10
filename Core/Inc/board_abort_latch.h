@@ -8,6 +8,10 @@ void board_abort_latch_set(void);
 /* Verified persistent Abort barrier before manual recovery writes any flash. */
 uint8_t board_abort_latch_prepare_recovery(void);
 uint8_t board_abort_latch_is_set(void);
+/* Set by a 0->1 latch (never by recovery preparation or a retained boot);
+ * the telemetry thread pushes one BOARD_STATE_STATUS, then clears it. */
+uint8_t board_abort_latch_push_pending(void);
+void board_abort_latch_push_sent(void);
 
 void board_launch_latch_set(void);
 /* Return true only after current backup marker write and exact readback. */

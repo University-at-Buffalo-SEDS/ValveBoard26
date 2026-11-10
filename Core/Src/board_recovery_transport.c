@@ -103,6 +103,8 @@ uint8_t board_recovery_automatic_is_stale(const SedsPacketView *packet)
  return board_recovery_command_is_stale(packet);
 }
 
+/* Issuer of the last valid station QUERY, echoed by the Abort push. */
+static uint64_t last_query_issuer;
 static SedsResult send_status(SedsRouter*router,uint8_t result,const BoardRecoveryRequest*request,
                             uint64_t generation,const BoardRecoverySnapshot*snapshot,uint32_t uptime_ms) {
  uint8_t status[BOARD_RECOVERY_STATUS_SIZE];
@@ -126,6 +128,7 @@ static SedsResult handle_serialized(SedsRouter*router,const SedsPacketView*packe
  BoardRecoverySnapshot snapshot={.actual_state=255U};int32_t observed=board_recovery_snapshot(&snapshot);
  uint64_t generation=board_recovery_boot_current();uint8_t result=observed==0?BOARD_RECOVERY_RESULT_OK:BOARD_RECOVERY_RESULT_IO;
  if(request.operation==BOARD_RECOVERY_QUERY) {
+  last_query_issuer=request.issuer_session;
   generation=board_bootstrap_storage_query_generation();
   if((!generation&&!board_bootstrap_storage_uncertain_first())||(snapshot.flags&BOARD_RECOVERY_SUPPORTED)==0U){snapshot.flags&=(uint8_t)~BOARD_RECOVERY_SUPPORTED;result=BOARD_RECOVERY_RESULT_UNSUPPORTED;}
   else if(generation==UINT64_MAX)result=BOARD_RECOVERY_RESULT_IO;
@@ -151,6 +154,15 @@ static SedsResult handle_serialized(SedsRouter*router,const SedsPacketView*packe
  (void)board_recovery_snapshot(&snapshot);
 
  return send_status(router,result,&request,generation,&snapshot,uptime_ms);
+}
+/* One unsolicited status for a fresh Abort latch, so the station sees it even
+ * while its ordered queries wait: nonce 0, the issuer of the last valid QUERY,
+ * the QUERY reply's generation, the live latch flags and abort epoch. */
+SedsResult board_recovery_push_abort_status(SedsRouter*router,uint32_t uptime_ms) {
+ BoardRecoverySnapshot snapshot={.actual_state=255U};(void)board_recovery_snapshot(&snapshot);
+ snapshot.flags|=BOARD_RECOVERY_ABORT_LATCHED;
+ BoardRecoveryRequest request={0};request.issuer_session=last_query_issuer;
+ return send_status(router,BOARD_RECOVERY_RESULT_OK,&request,board_bootstrap_storage_query_generation(),&snapshot,uptime_ms);
 }
 SedsResult board_recovery_handle(SedsRouter*router,const SedsPacketView*packet,uint32_t local_endpoint,uint32_t uptime_ms) {
  /* Nonblocking serialization: no transport waits/SDK lock cycle, and manual

@@ -85,6 +85,7 @@ static int telemetry_poll_timesync(void){return 0;}
 static void ota_stream_poll(void){advance(extra_us);}
 static int process_all_queues_timeout(unsigned n){assert(n==TELEMETRY_QUEUE_SERVICE_BUDGET_MS);sdk_calls++;advance((uint64_t)n*1000U);return 0;}
 static void telemetry_report_safety_abort(void){}
+static void telemetry_push_abort_status(void){}
 static unsigned tx_thread_sleep(unsigned ticks){
  assert(ticks==1&&!mock_irq&&!in_isr); /* actualNETsleep allows readyMAIN6 whileNET5 blocked */
  main_runs++;advance((uint64_t)ticks*1000U);

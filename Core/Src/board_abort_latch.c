@@ -11,6 +11,8 @@ static uint8_t launch_latched;
 static uint8_t launch_verified;
 static uint8_t latched;
 static uint8_t backup_ready;
+/* A fresh 0->1 latch owes the station one unsolicited status. */
+static volatile uint8_t push_pending;
 
 static uint8_t enable_backup_writes(void)
 {
@@ -44,6 +46,8 @@ void board_abort_latch_init(void)
 
 void board_abort_latch_set(void)
 {
+    /* Recovery preparation latches first, so it never owes a push. */
+    if (!latched) push_pending = 1U;
     latched = 1U;
     if (backup_ready) {
         TAMP->BKP30R = ABORT_MAGIC;
@@ -65,6 +69,16 @@ uint8_t board_abort_latch_prepare_recovery(void)
 uint8_t board_abort_latch_is_set(void)
 {
     return latched;
+}
+
+uint8_t board_abort_latch_push_pending(void)
+{
+    return push_pending;
+}
+
+void board_abort_latch_push_sent(void)
+{
+    push_pending = 0U;
 }
 
 /* Physical launch authority requires a verified persistent marker. Keep RAM

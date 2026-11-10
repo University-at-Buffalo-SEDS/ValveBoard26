@@ -111,6 +111,7 @@ void telemetry_thread_entry(ULONG initial_input)
         ota_stream_poll();
         (void)process_all_queues_timeout(TELEMETRY_QUEUE_SERVICE_BUDGET_MS);
         telemetry_report_safety_abort();
+        telemetry_push_abort_status();
 
         g_sim_main_stack_remaining = stack_remaining(&main_thread);
         g_sim_telemetry_stack_remaining = stack_remaining(&telemetry_thread);

@@ -32,6 +32,7 @@ extern int telemetry_router_leave(void);
 #include <string.h>
 #include "thread_comm.h"
 #include "board_recovery_transport.h"
+#include "board_abort_latch.h"
 
 /* Passive debugger evidence: success is API acceptance, not a remote ACK. */
 typedef struct {
@@ -616,6 +617,20 @@ static void telemetry_set_unix_time_ms_locked(uint64_t unix_ms)
   {
     (void)telemetry_apply_local_unix_time_locked(g_router.r);
   }
+#endif
+}
+
+/* Telemetry thread: push one status for a fresh Abort latch, retried on the
+ * next pass only if the router refused it. */
+void telemetry_push_abort_status(void)
+{
+#ifdef TELEMETRY_ENABLED
+  if (!board_abort_latch_push_pending() || !telemetry_router_enter()) return;
+  const SedsResult result = g_router.r == NULL ? SEDS_ERR :
+      board_recovery_push_abort_status(g_router.r,
+          (uint32_t)(((uint64_t)tx_time_get() * 1000U) / TX_TIMER_TICKS_PER_SECOND));
+  (void)telemetry_router_leave();
+  if (result == SEDS_OK) board_abort_latch_push_sent();
 #endif
 }
 

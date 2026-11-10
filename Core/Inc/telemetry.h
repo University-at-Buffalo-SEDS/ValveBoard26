@@ -37,6 +37,7 @@ SedsResult init_telemetry_router(void);
 SedsResult log_telemetry_synchronous(SedsDataType data_type, const void *data,
                                      size_t element_count, size_t element_size);
 
+void telemetry_push_abort_status(void);
 SedsResult log_telemetry_asynchronous(SedsDataType data_type, const void *data,
                                       size_t element_count, size_t element_size);
 

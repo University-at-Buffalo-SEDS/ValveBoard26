@@ -74,6 +74,7 @@ bool board_bootstrap_storage_note_query(const BoardRecoveryRequest*r,uint64_t a,
 int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*r,uint64_t a,uint64_t b,uint32_t c,void*d,BootstrapReply e,BootstrapNow f){(void)r;(void)a;(void)b;(void)c;(void)d;(void)e;(void)f;abort();}
 /* SOURCE_FUNCTION:authorized_primary */
 /* SOURCE_FUNCTION:board_recovery_refused */
+static uint64_t last_query_issuer;
 /* SOURCE_FUNCTION:send_status */
 /* SOURCE_FUNCTION:bootstrap_now */
 /* SOURCE_FUNCTION:bootstrap_reply */
