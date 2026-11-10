@@ -1,9 +1,10 @@
 from pathlib import Path
 import ast,os,subprocess,tempfile,sys,re,json,hashlib
 import unittest
+from board_identity import BOARD_REPOSITORY
 class HeartbeatOwnerTests(unittest.TestCase):
  def test_actual_idle_active_launch_stop_owner_interleavings(self):
-  w=Path(__file__).resolve().parents[2];root=Path(__file__).resolve().parents[1];b=root.name;ab=b=='ActuatorBoard26';state='ACTUATOR'if ab else'VALVE';safety=(root/'Core/Src'/('safety_task.c'if ab else'safety_thread.c')).read_text();owner=(root/'Core/Src/thread_comm.c').read_text()
+  w=Path(__file__).resolve().parents[2];root=Path(__file__).resolve().parents[1];b=BOARD_REPOSITORY;ab=b=='ActuatorBoard26';state='ACTUATOR'if ab else'VALVE';safety=(root/'Core/Src'/('safety_task.c'if ab else'safety_thread.c')).read_text();owner=(root/'Core/Src/thread_comm.c').read_text()
   def function(source,name):
    match=re.search(r'\b'+re.escape(name)+r'\([^;{}]*\)\s*\{',source);assert match,name
    start=source.rfind('\n',0,match.start())+1;end=match.end();depth=1
