@@ -16,6 +16,7 @@ extern volatile uint32_t g_telemetry_discovery_seen;
 #define FLIGHT_STATE_PERSIST_KEY 0x46535445u
 #define FLIGHT_STATE_MAX_VALUE 15U
 #define FLIGHT_STATE_UNSYNCED_RETRY_MS 500U
+#define FLIGHT_STATE_PERSIST_RETRY_MS 1000U
 
 volatile uint32_t g_flight_state_cache_value __attribute__((used, externally_visible)) = 0U;
 volatile uint32_t g_flight_state_cache_restores __attribute__((used, externally_visible)) = 0U;
@@ -28,7 +29,11 @@ static bool g_persist_ready;
 static bool g_has_value;
 #ifdef TELEMETRY_ENABLED
 static bool g_network_value_seen;
+/* An applied value not yet durable; retried from the poll. */
+static bool g_persist_pending;
 static uint8_t g_persisted_state = UINT8_MAX;
+/* GET cadence while unseen; once a value is applied (and only then can a
+ * persist be pending) it paces the durability retry instead. */
 static uint32_t g_last_refresh_ms;
 static SedsRouter *g_cache_router;
 static SedsResult persist_update(const SedsPacketView *packet, void *user);
@@ -116,6 +121,7 @@ int32_t flight_state_cache_prepare_recovery(uint8_t desired_state)
         return -9;
     }
     g_persisted_state = desired_state;
+    g_persist_pending = false; /* never overwrite the prepared state */
     g_network_value_seen = false;
     g_last_refresh_ms = HAL_GetTick();
 #endif
@@ -125,6 +131,22 @@ int32_t flight_state_cache_prepare_recovery(uint8_t desired_state)
 }
 
 #ifdef TELEMETRY_ENABLED
+/* Busy is ordinary contention, not a fault. */
+static void persist_pending(void)
+{
+    const uint8_t state = (uint8_t)g_flight_state_cache_value;
+    bool busy = false;
+    if (!g_persist_ready ||
+        persistent_store_try_set(FLIGHT_STATE_PERSIST_KEY, &state, sizeof(state), &busy) !=
+            LAUNCHCORE_PERSIST_OK) {
+        if (!busy) g_flight_state_cache_errors++;
+        return;
+    }
+    g_persisted_state = state;
+    g_persist_pending = false;
+    g_flight_state_cache_writes++;
+}
+
 static SedsResult persist_update(const SedsPacketView *packet, void *user)
 {
     (void)user;
@@ -154,28 +176,18 @@ static SedsResult persist_update(const SedsPacketView *packet, void *user)
         g_flight_state_cache_errors++;
         return apply_result == SEDS_PERMISSION_DENIED ? board_recovery_refused() : apply_result;
     }
-    const bool changed = state != g_persisted_state;
+    const bool changed = g_persist_pending || state != g_persisted_state;
     g_has_value = true;
     g_network_value_seen = true;
     g_flight_state_cache_value = state;
     g_flight_state_cache_updates++;
     if (!changed) return SEDS_OK;
-
-    bool busy=false;
-    if (!g_persist_ready ||
-        persistent_store_try_set(FLIGHT_STATE_PERSIST_KEY, &state,
-                             sizeof(state),&busy) != LAUNCHCORE_PERSIST_OK)
-    {
-        /* Preserve the existing volatile apply-before-persist policy, but
-         * retire the SDK cache so an identical reliable retry re-enters this
-         * callback instead of being accepted without retrying durability.
-         * g_network_value_seen is unchanged: no extra polling traffic. */
-        (void)clear_managed_cache();
-        if(!busy)g_flight_state_cache_errors++;
-        return SEDS_HANDLER_ERROR;
-    }
-    g_persisted_state = state;
-    g_flight_state_cache_writes++;
+    /* Applied (the valves already follow it): acknowledge it whatever flash
+     * does. An error withholds the receipt and stalls the station's ordered
+     * FLIGHT_STATE stream (Aborted included) behind this write. */
+    g_persist_pending = true;
+    g_last_refresh_ms = HAL_GetTick();
+    persist_pending();
     return SEDS_OK;
 }
 
@@ -200,9 +212,14 @@ SedsResult flight_state_cache_init(SedsRouter *router)
 SedsResult flight_state_cache_poll(SedsRouter *router)
 {
     if (router == NULL) return SEDS_BAD_ARG;
+    const uint32_t now_ms = HAL_GetTick();
+    if (g_persist_pending &&
+        (uint32_t)(now_ms - g_last_refresh_ms) >= FLIGHT_STATE_PERSIST_RETRY_MS) {
+        g_last_refresh_ms = now_ms;
+        persist_pending();
+    }
     if (g_network_value_seen) return SEDS_OK;
     if (g_telemetry_discovery_seen == 0U) return SEDS_OK;
-    const uint32_t now_ms = HAL_GetTick();
     if ((uint32_t)(now_ms - g_last_refresh_ms) <
         FLIGHT_STATE_UNSYNCED_RETRY_MS) return SEDS_OK;
     g_last_refresh_ms = now_ms;

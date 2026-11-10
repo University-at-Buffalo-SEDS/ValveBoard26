@@ -48,6 +48,7 @@ class RefusedReliableAckTests(unittest.TestCase):
                   'bootstrap_reply': 'board_recovery_transport.c',
                   'handle_serialized': 'board_recovery_transport.c',
                   'clear_managed_cache': 'flight_state_cache.c',
+                  'persist_pending': 'flight_state_cache.c',
                   'persist_update': 'flight_state_cache.c',
                   'flight_state_admit': 'telemetry.c',
                   'Flight_State_handler': 'telemetry.c',

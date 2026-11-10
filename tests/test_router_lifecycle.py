@@ -48,7 +48,7 @@ class RouterLifecycleTests(unittest.TestCase):
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_actual_sdk_retries_same_packet_after_storage_busy(self): self.case('busy_retry')
+    def test_storage_busy_is_acknowledged_and_persisted_by_the_poll(self): self.case('busy_retry')
 
     def test_two_initializers_and_actual_rx_wait_for_complete_registration(self): self.case('race')
     def test_isr_startup_missing_mutex_and_failed_acquisition_do_no_sdk_work(self): self.case('context')

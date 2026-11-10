@@ -187,8 +187,11 @@ static bool seds_router_sender_matches_hostname(SedsRouter*r,const uint8_t*s,siz
 static uint8_t board_recovery_automatic_is_stale(const SedsPacketView*p){(void)p;return 1;}
 static uint32_t g_flight_state_handler_count,g_flight_state_handler_error_count,g_last_flight_state_packet;
 static uint32_t g_flight_state_cache_value,g_flight_state_cache_updates,g_flight_state_cache_writes,g_flight_state_cache_errors,cache_invalidated;
-static bool g_persist_ready=true,g_has_value,g_network_value_seen;
+static bool g_persist_ready=true,g_has_value,g_network_value_seen,g_persist_pending;
 static uint8_t g_persisted_state=UINT8_MAX;
+static uint32_t g_last_refresh_ms;
+static uint32_t fixture_tick(void){return 0U;}
+#define HAL_GetTick fixture_tick
 static SedsRouter*g_cache_router=&router;
 static SedsRouter*recovery_router=&router;
 static SedsResult seds_router_get_network_time_ms(SedsRouter*r,uint64_t*out){assert(r);*out=1000;return SEDS_OK;}
@@ -217,7 +220,8 @@ static void*receiver(void*unused){(void)unused;
  if(fstate_busy_case){uint8_t value=1;SedsPacketView f={.ty=SEDS_DT_FLIGHT_STATE,.payload=&value,.payload_len=1,.sender=(const uint8_t*)"GS",.sender_len=2,.timestamp=501};
   SedsResult status=persist_update(&f,NULL);
 #ifdef CANDIDATE
-  assert(status==SEDS_HANDLER_ERROR&&cache_invalidated==1&&g_persisted_state==UINT8_MAX&&g_has_value&&g_network_value_seen&&g_flight_state_cache_errors==0&&persistent_store_controls_ready());
+  /* Applied and acknowledged while flash is busy; persistence stays pending. */
+  assert(status==SEDS_OK&&cache_invalidated==0&&g_persisted_state==UINT8_MAX&&g_persist_pending&&g_has_value&&g_network_value_seen&&g_flight_state_cache_errors==0&&persistent_store_controls_ready());
 #else
   assert(status==SEDS_OK);
 #endif
@@ -248,12 +252,13 @@ int main(int argc,char**argv){
  if(!strcmp(argv[1],"fstate_retry")){
   pthread_t worker;assert(!pthread_mutex_lock(&gate));io_block=true;assert(!pthread_mutex_unlock(&gate));assert(!pthread_create(&worker,NULL,writer,NULL));assert(!pthread_mutex_lock(&gate));deadline_wait(&io_entered);assert(!pthread_mutex_unlock(&gate));
   uint8_t value=1;SedsPacketView f={.ty=SEDS_DT_FLIGHT_STATE,.payload=&value,.payload_len=1,.sender=(const uint8_t*)"GS",.sender_len=2,.timestamp=501};
-  assert(persist_update(&f,NULL)==SEDS_HANDLER_ERROR&&cache_invalidated==1&&g_persisted_state==UINT8_MAX&&g_flight_state_cache_errors==0&&persistent_store_controls_ready());
+  assert(persist_update(&f,NULL)==SEDS_OK&&g_persist_pending&&cache_invalidated==0&&g_persisted_state==UINT8_MAX&&g_flight_state_cache_errors==0&&persistent_store_controls_ready());
   assert(!pthread_mutex_lock(&gate));io_release=true;assert(!pthread_cond_broadcast(&condition));assert(!pthread_mutex_unlock(&gate));assert(!pthread_join(worker,NULL));
-  assert(persist_update(&f,NULL)==SEDS_OK&&g_persisted_state==1&&cache_invalidated==1&&g_flight_state_cache_errors==0&&persistent_store_controls_ready());
+  persist_pending(); /* the poll's once-per-second durability retry */
+  assert(!g_persist_pending&&g_persisted_state==1&&cache_invalidated==0&&g_flight_state_cache_errors==0&&persistent_store_controls_ready());
   uint8_t saved=255;size_t length=1;assert(persistent_store_get(0x46535445,&saved,&length)==LAUNCHCORE_PERSIST_OK&&saved==1);
   assert(thread_comm_request_manual_abort_original_utc(501)==TX_SUCCESS&&output_mask()==STOP_MASK);
-  puts("GREEN: original FSTATE packet retries after Busy, persists exact value without storage fault; later Stop applies GPIO");return 0;
+  puts("GREEN: FSTATE acknowledged during Busy, the poll retry persists the exact value without storage fault; later Stop applies GPIO");return 0;
  }
  uint32_t dequeued_epoch=0;pthread_t old_producer;bool waiting_producer=false;
  if(!strncmp(argv[1],"queue",5)){
@@ -329,7 +334,7 @@ def build(board,candidate):
     cache=(source/'Core/Src/flight_state_cache.c').read_text()
     refusal=['board_recovery_refused'] if 'board_recovery_refused(void)' in transport else []
     admit=['flight_state_admit'] if 'flight_state_admit(' in telemetry else []
-    fstate='\n'.join(function(transport,n)for n in ['board_recovery_sync_command_cutoff','board_recovery_command_is_stale','board_recovery_managed_update_allowed',*refusal])+'\n'+'\n'.join(function(telemetry,n)for n in [*admit,'Flight_State_handler','flight_state_cache_apply_network_update'])+'\n'+function(cache,'clear_managed_cache')+'\n'+function(cache,'persist_update')
+    fstate='\n'.join(function(transport,n)for n in ['board_recovery_sync_command_cutoff','board_recovery_command_is_stale','board_recovery_managed_update_allowed',*refusal])+'\n'+'\n'.join(function(telemetry,n)for n in [*admit,'Flight_State_handler','flight_state_cache_apply_network_update'])+'\n'+function(cache,'clear_managed_cache')+'\n'+function(cache,'persist_pending')+'\n'+function(cache,'persist_update')
     effects=''
     extra=[]
     if board=='ValveBoard26':

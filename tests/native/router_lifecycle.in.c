@@ -254,10 +254,12 @@ int main(int argc,char**argv){
   input_size=pack(SEDS_DT_FLIGHT_STATE,1,input,sizeof input);store_busy=true;
   rx_asynchronous(input,(size_t)input_size);
   if(RX_QUEUED_ONLY){assert(telemetry_router_enter());(void)seds_router_process_all_queues(g_router.r);assert(telemetry_router_leave());}
-  assert(app_callbacks==1&&writes==0&&g_persisted_state==5&&g_flight_state_cache_errors==0&&invalidations==1);
-  store_busy=false;rx_asynchronous(input,(size_t)input_size);
-  if(RX_QUEUED_ONLY){assert(telemetry_router_enter());(void)seds_router_process_all_queues(g_router.r);assert(telemetry_router_leave());}
-  assert(app_callbacks==2&&writes==1&&stored==1&&g_persisted_state==1&&g_flight_state_cache_errors==0&&invalidations==1);
+  /* Applied and acknowledged while flash is busy; the cache keeps the value. */
+  assert(app_callbacks==1&&writes==0&&g_persisted_state==5&&g_flight_state_cache_errors==0&&invalidations==0);
+  /* The poll retries durability at most once per second, not the packet. */
+  store_busy=false;assert(flight_state_cache_poll(g_router.r)==SEDS_OK&&writes==0);
+  clock_ms+=1000U;assert(flight_state_cache_poll(g_router.r)==SEDS_OK);
+  assert(app_callbacks==1&&writes==1&&stored==1&&g_persisted_state==1&&g_flight_state_cache_errors==0&&invalidations==0);
  }else if(!strcmp(argv[2],"race")){
   input_size=pack(SEDS_DT_FLIGHT_STATE,0,input,sizeof input);pause_enabled=1;
   pthread_t first,second,rx;assert(!pthread_create(&first,NULL,initialize,NULL));

@@ -78,7 +78,10 @@ int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*r,uin
 /* SOURCE_FUNCTION:bootstrap_now */
 /* SOURCE_FUNCTION:bootstrap_reply */
 /* SOURCE_FUNCTION:handle_serialized */
+static bool g_persist_pending;static uint32_t g_last_refresh_ms;
+static uint32_t HAL_GetTick(void){return 0U;}
 /* SOURCE_FUNCTION:clear_managed_cache */
+/* SOURCE_FUNCTION:persist_pending */
 /* SOURCE_FUNCTION:flight_state_admit */
 /* SOURCE_FUNCTION:Flight_State_handler */
 SedsResult flight_state_cache_apply_network_update(const SedsPacketView *packet);
