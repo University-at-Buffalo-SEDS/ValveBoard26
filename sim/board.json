@@ -67,7 +67,7 @@
       "bus": "adc3",
       "bits": 12,
       "channels": 1,
-      "channel_samples": [2048],
+      "channel_samples": [155],
       "noise_lsb": 2
     },
     {"type":"adc","name":"valve_voltage_monitor","model":"ltc2990","bus":"i2c2@0x4d","bits":15,"channels":4,
