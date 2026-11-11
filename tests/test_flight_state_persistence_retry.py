@@ -35,36 +35,36 @@ static SedsRouter poll_router=1;
 static void poll_at(uint32_t at){tick=at;assert(flight_state_cache_poll(&poll_router)==SEDS_OK);}
 int main(int argc,char**argv){
  assert(argc==2);SedsRouter r=0;
- assert(flight_state_cache_init(&r)==0&&flight_state_cache_value()==5);
+ assert(flight_state_cache_init(&r)==0&&flight_state_cache_value()==6);
  tick=10000;
  if(!strcmp(argv[1],"write_failure")){
   fail_write=1;
   /* Applied and acknowledged; durability is retried, not the receipt. */
-  assert(update(3)==SEDS_OK&&flight_state_cache_value()==3&&writes==1&&stored==5);
+  assert(update(13)==SEDS_OK&&flight_state_cache_value()==13&&writes==1&&stored==6);
   poll_at(10999);assert(writes==1);                   /* at most once per second */
-  poll_at(11000);assert(writes==2&&stored==5);
+  poll_at(11000);assert(writes==2&&stored==6);
   fail_write=0;poll_at(11999);assert(writes==2);
-  poll_at(12000);assert(writes==3&&stored==3);
+  poll_at(12000);assert(writes==3&&stored==13);
   poll_at(30000);assert(writes==3);                   /* nothing pending */
-  assert(update(3)==SEDS_OK&&writes==3&&clears==0);    /* the applied cache is kept */
+  assert(update(13)==SEDS_OK&&writes==3&&clears==0);    /* the applied cache is kept */
   assert(g_flight_state_cache_errors==2);
  }else if(!strcmp(argv[1],"busy")){
   store_busy=1;
-  assert(update(7)==SEDS_OK&&flight_state_cache_value()==7&&stored==5);
+  assert(update(7)==SEDS_OK&&flight_state_cache_value()==7&&stored==6);
   const uint32_t errors=g_flight_state_cache_errors;
-  poll_at(11000);assert(stored==5&&g_flight_state_cache_errors==errors); /* busy is no fault */
+  poll_at(11000);assert(stored==6&&g_flight_state_cache_errors==errors); /* busy is no fault */
   store_busy=0;poll_at(12000);assert(stored==7);
  }else if(!strcmp(argv[1],"newer_value")){
   store_busy=1;assert(update(1)==SEDS_OK&&update(2)==SEDS_OK);
   store_busy=0;poll_at(11000);assert(stored==2);
  }else if(!strcmp(argv[1],"same_value_while_pending")){
-  fail_write=1;assert(update(3)==SEDS_OK);
-  fail_write=0;assert(update(3)==SEDS_OK&&stored==3);  /* a retry of the write persists */
+  fail_write=1;assert(update(13)==SEDS_OK);
+  fail_write=0;assert(update(13)==SEDS_OK&&stored==13);  /* a retry of the write persists */
   const unsigned w=writes;poll_at(20000);assert(writes==w);
  }else if(!strcmp(argv[1],"prepare_clears_pending")){
   /* A durable recovery preparation must never be overwritten by a stale
    * pending FLIGHT_STATE retry. */
-  fail_write=1;assert(update(3)==SEDS_OK&&stored==5);
+  fail_write=1;assert(update(13)==SEDS_OK&&stored==6);
   fail_write=0;assert(flight_state_cache_prepare_recovery(0)==0&&stored==0);
   const unsigned w=writes;poll_at(20000);assert(writes==w&&stored==0);
  }else assert(!"unknown case");

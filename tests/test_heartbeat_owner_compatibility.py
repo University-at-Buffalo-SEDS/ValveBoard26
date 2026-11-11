@@ -36,7 +36,7 @@ static uint8_t claim_with_interleave(uint32_t reason,uint64_t at,uint64_t hb,uin
   HEARTBEAT
   #undef thread_comm_request_local_abort
   int main(int argc,char**argv){
-   assert(argc==2);TX_BYTE_POOL pool={0};assert(thread_comm_init(&pool)==0);board_recovery_bind_owner(read_outputs,prepare,finish);assert(thread_comm_set_flight_state(STATE_FLIGHT_STATE_PREFILL)==0);assert(thread_comm_note_groundstation_heartbeat(100)==0);
+   assert(argc==2);TX_BYTE_POOL pool={0};assert(thread_comm_init(&pool)==0);board_recovery_bind_owner(read_outputs,prepare,finish);assert(thread_comm_set_flight_state(STATE_FLIGHT_STATE_FILL)==0);assert(thread_comm_note_groundstation_heartbeat(100)==0);
    if(!strcmp(argv[1],"idle")){assert(thread_comm_set_flight_state(STATE_FLIGHT_STATE_IDLE)==0);}
    if(!strcmp(argv[1],"fill_to_idle"))interleave=1;
    if(!strcmp(argv[1],"fill_to_launch"))interleave=2;

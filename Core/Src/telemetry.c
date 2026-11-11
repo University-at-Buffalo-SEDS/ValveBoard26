@@ -413,6 +413,15 @@ static SedsResult flight_state_admit(const SedsPacketView *pkt)
     return SEDS_PERMISSION_DENIED;
   }
 
+  /* Contract set (a) only: a retired value (older firmware) maps to the
+   * nearest network value; the cache callback counts and logs it once. */
+  flight_state = flight_state_from_wire(flight_state, NULL);
+  if (flight_state == FLIGHT_STATE_NET_INVALID)
+  {
+    g_flight_state_handler_error_count++;
+    return SEDS_PERMISSION_DENIED;
+  }
+
   g_flight_state_handler_count++;
   g_last_flight_state_packet = flight_state;
 

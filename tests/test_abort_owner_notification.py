@@ -78,7 +78,7 @@ int main(int argc,char**argv){
  const uint8_t command=CMD_ABORT;SedsPacketView packet={.ty=SEDS_DT_ABORT,.payload=&command,.payload_len=1,.timestamp=100};
  /* Heartbeat is now intentionally inert in Idle. Preserve this original
   * late-after-claim recovery test in its supervised active prelaunch state. */
- if(!strcmp(argv[1],"automatic")){assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_PREFILL)==TX_SUCCESS);safety_request_abort(SAFETY_ABORT_HEARTBEAT,"first cause");}
+ if(!strcmp(argv[1],"automatic")){assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_FILL)==TX_SUCCESS);safety_request_abort(SAFETY_ABORT_HEARTBEAT,"first cause");}
  else if(!strcmp(argv[1],"manual"))assert(Abort_handler(&packet,0)==SEDS_OK);
  else if(!strcmp(argv[1],"typed"))assert(Valve_Command_handler(&packet,0)==SEDS_OK);
  else assert(0);

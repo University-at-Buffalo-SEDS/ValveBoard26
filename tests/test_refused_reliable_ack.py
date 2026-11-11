@@ -48,6 +48,7 @@ class RefusedReliableAckTests(unittest.TestCase):
                   'bootstrap_reply': 'board_recovery_transport.c',
                   'handle_serialized': 'board_recovery_transport.c',
                   'clear_managed_cache': 'flight_state_cache.c',
+                  'flight_state_cache_from_wire': 'flight_state_cache.c',
                   'persist_pending': 'flight_state_cache.c',
                   'persist_update': 'flight_state_cache.c',
                   'flight_state_admit': 'telemetry.c',
@@ -85,6 +86,12 @@ class RefusedReliableAckTests(unittest.TestCase):
 
     def test_refused_flight_state_is_acknowledged_not_applied(self):
         self.assertIn('PASS refused FLIGHT_STATE', self.run_case('flight_state'))
+
+    def test_in_flight_state_is_applied_and_out_of_set_refused(self):
+        self.assertIn('PASS InFlight FLIGHT_STATE', self.run_case('in_flight'))
+
+    def test_retired_flight_state_is_mapped_and_logged_once(self):
+        self.assertIn('PASS retired FLIGHT_STATE', self.run_case('retired'))
 
     def test_refused_valve_command_is_acknowledged_and_counted(self):
         self.assertIn('PASS refused VALVE_COMMAND', self.run_case('valve_command'))

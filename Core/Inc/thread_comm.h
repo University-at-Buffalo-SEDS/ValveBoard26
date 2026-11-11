@@ -39,24 +39,45 @@ void thread_comm_launch_complete_owned(const thread_comm_launch_owner_t*owner);
 UINT thread_comm_request_network_launch_original(uint64_t source,const char*sender,uint32_t sender_len);
 UINT thread_comm_request_network_launch_original_at(uint64_t source,const char*sender,uint32_t sender_len,uint64_t observed_utc,uint32_t observed_tick,uint32_t(*monotonic_now)(void));
 uint8_t thread_comm_take_accepted_launch(thread_comm_launch_owner_t*out);
+/* Network FLIGHT_STATE (contract set (a)): Startup, Idle, Fill, Armed, Launch,
+ * Landed, Aborted and InFlight. RETIRED members are never on the wire: a
+ * receiver maps them on receipt (flight_state_cache.h). The names stay
+ * only so older firmware on a mixed bench reads clearly. */
 typedef enum {
     VALVE_FLIGHT_STATE_STARTUP = 0,
     VALVE_FLIGHT_STATE_IDLE = 1,
-    VALVE_FLIGHT_STATE_PREFILL = 2,
-    VALVE_FLIGHT_STATE_FILL_TEST = 3,
-    VALVE_FLIGHT_STATE_NITROGEN_FILL = 4,
-    VALVE_FLIGHT_STATE_NITROUS_FILL = 5,
+    VALVE_FLIGHT_STATE_FILL = 2,
+    VALVE_FLIGHT_STATE_RETIRED_FILL_TEST = 3,
+    VALVE_FLIGHT_STATE_RETIRED_NITROGEN_FILL = 4,
+    VALVE_FLIGHT_STATE_RETIRED_NITROUS_FILL = 5,
     VALVE_FLIGHT_STATE_ARMED = 6,
     VALVE_FLIGHT_STATE_LAUNCH = 7,
-    VALVE_FLIGHT_STATE_ASCENT = 8,
-    VALVE_FLIGHT_STATE_COAST = 9,
-    VALVE_FLIGHT_STATE_APOGEE = 10,
-    VALVE_FLIGHT_STATE_PARACHUTE_DEPLOY = 11,
-    VALVE_FLIGHT_STATE_DESCENT = 12,
+    VALVE_FLIGHT_STATE_RETIRED_ASCENT = 8,
+    VALVE_FLIGHT_STATE_RETIRED_COAST = 9,
+    VALVE_FLIGHT_STATE_RETIRED_APOGEE = 10,
+    VALVE_FLIGHT_STATE_RETIRED_PARACHUTE_DEPLOY = 11,
+    VALVE_FLIGHT_STATE_RETIRED_DESCENT = 12,
     VALVE_FLIGHT_STATE_LANDED = 13,
-    VALVE_FLIGHT_STATE_RECOVERY = 14,
+    VALVE_FLIGHT_STATE_RETIRED_RECOVERY = 14,
     VALVE_FLIGHT_STATE_ABORTED = 15,
+    VALVE_FLIGHT_STATE_IN_FLIGHT = 16,
 } valve_flight_state_t;
+
+/* Launch, InFlight and Landed: the vehicle has launched (Aborted excluded).
+ * The retired post-launch values 8..12 and 14 count too, so a state set
+ * before mapping can never read as pre-launch. */
+static inline uint8_t flight_state_launched(uint8_t state)
+{
+    return (uint8_t)((state >= VALVE_FLIGHT_STATE_LAUNCH && state <= VALVE_FLIGHT_STATE_RETIRED_RECOVERY) ||
+                     state == VALVE_FLIGHT_STATE_IN_FLIGHT);
+}
+
+/* Progress order: Launch (7) < InFlight (16) < Landed (13). InFlight ranks
+ * with the retired in-flight values it replaces (8..12). */
+static inline uint8_t flight_state_rank(uint8_t state)
+{
+    return state == VALVE_FLIGHT_STATE_IN_FLIGHT ? VALVE_FLIGHT_STATE_RETIRED_DESCENT : state;
+}
 
 /**
  * @brief Create the shared queue and state protection mutex.

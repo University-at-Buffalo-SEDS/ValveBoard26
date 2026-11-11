@@ -65,6 +65,7 @@ bool persistent_store_commit_absent_floor(const uint8_t value[16]){(void)value;r
 #include <string.h>
 #include <stdbool.h>
 #include "thread_comm.h"
+#include "flight_state_cache.h"
 #include "board_commands.h"
 #define RCC_APB1ENR1_PWREN 1U
 #define RCC_APB1ENR1_RTCAPBEN 2U

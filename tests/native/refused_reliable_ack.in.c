@@ -9,6 +9,7 @@
 #include "board_recovery_wire.h"
 #include "board_recovery.h"
 #include "board_bootstrap_storage.h"
+#include "flight_state_cache.h"
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -44,7 +45,9 @@ static uint8_t board_recovery_automatic_is_stale(const SedsPacketView*p){(void)p
 static uint8_t board_recovery_managed_update_allowed(const SedsPacketView*p){(void)p;return (uint8_t)allowed;}
 static uint8_t board_recovery_manual_stop_source_allowed(SedsRouter*r,const SedsPacketView*p){(void)r;(void)p;return 0;}
 static uint8_t thread_comm_get_abort(void){return (uint8_t)aborted;}
-static UINT thread_comm_apply_network_flight_state(uint8_t s,uint64_t t){(void)s;(void)t;if(apply_result==TX_SUCCESS)++applies;return apply_result;}
+static uint8_t applied_state=UINT8_MAX;
+static UINT thread_comm_apply_network_flight_state(uint8_t s,uint64_t t){(void)t;if(apply_result==TX_SUCCESS){++applies;applied_state=s;}return apply_result;}
+static volatile uint32_t g_flight_state_contract_violations,g_flight_state_contract_logged,g_flight_state_contract_first_raw;
 static UINT thread_comm_admit_network(thread_comm_msg_t m,uint64_t t){(void)m;(void)t;if(admit_result==TX_SUCCESS)++admits;return admit_result;}
 static UINT thread_comm_admit_network_automatic(thread_comm_msg_t m,uint64_t t){return thread_comm_admit_network(m,t);}
 static UINT thread_comm_request_accepted_launch_manual_abort(uint64_t t){(void)t;return TX_QUEUE_ERROR;}
@@ -82,6 +85,7 @@ static uint64_t last_query_issuer;
 static bool g_persist_pending;static uint32_t g_last_refresh_ms;
 static uint32_t HAL_GetTick(void){return 0U;}
 /* SOURCE_FUNCTION:clear_managed_cache */
+/* SOURCE_FUNCTION:flight_state_cache_from_wire */
 /* SOURCE_FUNCTION:persist_pending */
 /* SOURCE_FUNCTION:flight_state_admit */
 /* SOURCE_FUNCTION:Flight_State_handler */
@@ -127,6 +131,23 @@ int main(int argc,char**argv){
   apply_result=TX_MUTEX_ERROR;assert(deliver(SEDS_DT_FLIGHT_STATE,fs_eps,3,"GS",&fs,1)==0);   /* transient: retried */
   assert(g_reliable_refusal_count>=4);
   puts("PASS refused FLIGHT_STATE acknowledged, not applied or persisted; transient failure withholds receipt");
+ }else if(!strcmp(mode,"in_flight")){
+  /* InFlight (16) is in contract set (a): applied, persisted, acknowledged. */
+  uint8_t s=16;assert(deliver(SEDS_DT_FLIGHT_STATE,fs_eps,3,"GS",&s,1)==1&&applies>=1&&applied_state==16U);
+  assert(g_flight_state_cache_value==16U&&persists==1&&g_flight_state_contract_violations==0U);
+  /* Above InFlight is not a FLIGHT_STATE: acknowledged, never applied. */
+  const unsigned before=applies;
+  s=17;assert(deliver(SEDS_DT_FLIGHT_STATE,fs_eps,3,"GS",&s,1)==1&&applies==before&&g_flight_state_cache_value==16U);
+  puts("PASS InFlight FLIGHT_STATE applied and persisted; 17 acknowledged, not applied");
+ }else if(!strcmp(mode,"retired")){
+  /* Older firmware: a retired value is mapped, logged once and acknowledged,
+   * never refused into a retransmit loop. */
+  const uint8_t raw[]={4U,9U,14U,3U},mapped[]={2U,16U,13U,2U};
+  for(unsigned i=0;i<sizeof raw;i++){
+   assert(deliver(SEDS_DT_FLIGHT_STATE,fs_eps,3,"GS",&raw[i],1)==1&&applied_state==mapped[i]&&g_flight_state_cache_value==mapped[i]);
+   assert(g_flight_state_contract_violations==i+1U&&g_flight_state_contract_logged==1U&&g_flight_state_contract_first_raw==4U);
+  }
+  puts("PASS retired FLIGHT_STATE mapped, logged once and acknowledged");
  }else if(!strcmp(mode,"valve_command")){
   uint8_t cmd=CMD_PILOT_OPEN;assert(deliver(SEDS_DT_VALVE_COMMAND,vc_eps,2,"GS",&cmd,1)==1&&admits==1);
   uint8_t bad=THREAD_COMM_AUTOMATIC_TAG|0x7FU;assert(deliver(SEDS_DT_VALVE_COMMAND,vc_eps,2,"GS",&bad,1)==1);  /* malformed */

@@ -36,7 +36,7 @@ SedsResult __real_seds_router_poll_timesync(SedsRouter*r,bool*out){return seds_r
 volatile uint32_t g_telemetry_discovery_seen;
 static uint64_t clock_ms=1000;
 static unsigned writes,app_callbacks,registrations,enables,disables,invalidations,refreshes,outputs;
-static uint8_t stored=5;
+static uint8_t stored=6;
 static bool fail_write=true,policy=true,fail_enable,fail_callback;
 static SedsEndpointHandlerFn original_callback;
 static void *original_user;
@@ -255,7 +255,7 @@ int main(int argc,char**argv){
   rx_asynchronous(input,(size_t)input_size);
   if(RX_QUEUED_ONLY){assert(telemetry_router_enter());(void)seds_router_process_all_queues(g_router.r);assert(telemetry_router_leave());}
   /* Applied and acknowledged while flash is busy; the cache keeps the value. */
-  assert(app_callbacks==1&&writes==0&&g_persisted_state==5&&g_flight_state_cache_errors==0&&invalidations==0);
+  assert(app_callbacks==1&&writes==0&&g_persisted_state==6&&g_flight_state_cache_errors==0&&invalidations==0);
   /* The poll retries durability at most once per second, not the packet. */
   store_busy=false;assert(flight_state_cache_poll(g_router.r)==SEDS_OK&&writes==0);
   clock_ms+=1000U;assert(flight_state_cache_poll(g_router.r)==SEDS_OK);

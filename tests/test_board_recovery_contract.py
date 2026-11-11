@@ -24,7 +24,8 @@ int main(void) {
  assert(!decoded.resync);
  /* RESYNC to Startup/Idle decodes (as RECOVER, flagged resync); Launch on never. */
  for(unsigned state=0;state<256;state++){request[1]=2;request[2]=(uint8_t)state;BoardRecoveryRequest rs={0};
-  assert(board_recovery_decode_request(request,32,&rs)==(state<=6U));if(state<=6U)assert(rs.operation==1&&rs.resync&&rs.desired_state==state);}
+  assert(board_recovery_decode_request(request,32,&rs)==(state<=6U));if(state<=6U)assert(rs.operation==1&&rs.resync&&rs.desired_state==(state>=3U&&state<=5U?2U:state));}
+ /* The fill sub-phases are GS-only: an older station's RESYNC to 3..5 targets Fill. */
  request[1]=1;request[2]=0;
  for(size_t n=0;n<33;n++)if(n!=32)assert(!board_recovery_decode_request(request,n,&decoded));
  for(unsigned state=2;state<256;state++){request[2]=(uint8_t)state;assert(!board_recovery_decode_request(request,32,&decoded));}request[2]=1;

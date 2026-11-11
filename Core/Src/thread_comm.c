@@ -210,14 +210,13 @@ uint8_t thread_comm_request_local_abort(uint32_t reason, uint64_t at_ms,
     }
     return claimed;
 }
-/* Launch admitted, running or completed, or flight state Launch..Recovery:
+/* Launch admitted, running or completed, or flight state Launch, InFlight or Landed:
  * tank overpressure must not interfere with the burn. Called under the owner. */
 static uint8_t overpressure_burn_locked(void)
 {
     return board_launch_latch_is_set() || g_safety_report_closing != 0U ||
         g_accepted_launch.phase != LAUNCH_NONE ||
-        (g_thread_comm_flight_state >= VALVE_FLIGHT_STATE_LAUNCH &&
-         g_thread_comm_flight_state <= VALVE_FLIGHT_STATE_RECOVERY);
+        flight_state_launched(g_thread_comm_flight_state);
 }
 /* Set atomically with the first relief effect; refuses Launch admission until
  * the operator acknowledges. Cleared only by that acknowledgement. */
@@ -742,7 +741,7 @@ UINT thread_comm_set_flight_state(uint8_t flight_state)
         (void)tx_mutex_put(&g_thread_comm_state_mutex);
         return TX_QUEUE_ERROR;
     }
-    if (flight_state >= VALVE_FLIGHT_STATE_LAUNCH && flight_state <= VALVE_FLIGHT_STATE_RECOVERY) {
+    if (flight_state_launched(flight_state)) {
         if (g_thread_comm_abort != 0U || safety_launch_inhibit_locked() == 0U) {
             (void)tx_mutex_put(&g_thread_comm_state_mutex);
             return TX_QUEUE_ERROR;
@@ -773,15 +772,14 @@ static UINT thread_comm_apply_managed_flight_state_impl(uint8_t flight_state, ui
     if (g_recovery_pending != 0U || g_thread_comm_abort != 0U ||
         (board_launch_latch_is_set() != 0U &&
          (flight_state == VALVE_FLIGHT_STATE_ABORTED ||
-          flight_state < g_thread_comm_flight_state))) {
+          flight_state_rank(flight_state) < flight_state_rank(g_thread_comm_flight_state)))) {
         (void)tx_mutex_put(&g_thread_comm_state_mutex);
         return network ? THREAD_COMM_STALE_TIMESTAMP : TX_QUEUE_ERROR;
     }
     /* Managed progression is metadata, not another physical Launch admission.
      * Once inhibition completed, later backup loss cannot create a NEW Stop.
      * Initial/physical admissions still use the checked write independently. */
-    if (flight_state >= VALVE_FLIGHT_STATE_LAUNCH &&
-        flight_state <= VALVE_FLIGHT_STATE_RECOVERY &&
+    if (flight_state_launched(flight_state) &&
         g_safety_report_closing != 3U && !board_launch_latch_was_verified() &&
         safety_launch_inhibit_locked() == 0U) {
         (void)tx_mutex_put(&g_thread_comm_state_mutex);
@@ -1404,7 +1402,7 @@ uint8_t thread_comm_take_launch_sequence_request_owned(uint64_t *timestamp_ms,ui
 int thread_comm_ota_reset_original(uint32_t epoch,void(*apply)(void*),void*context) {
  if(!g_thread_comm_initialized||tx_mutex_get(&g_thread_comm_state_mutex,TX_NO_WAIT)!=TX_SUCCESS)return -1;
  int allowed=epoch&&epoch!=UINT32_MAX&&epoch==g_thread_comm_recovery_epoch&&!g_thread_comm_abort&&!board_launch_latch_is_set()&&
-  (g_thread_comm_flight_state==VALVE_FLIGHT_STATE_STARTUP||g_thread_comm_flight_state==VALVE_FLIGHT_STATE_IDLE||g_thread_comm_flight_state==VALVE_FLIGHT_STATE_RECOVERY);
+  (g_thread_comm_flight_state==VALVE_FLIGHT_STATE_STARTUP||g_thread_comm_flight_state==VALVE_FLIGHT_STATE_IDLE||g_thread_comm_flight_state==VALVE_FLIGHT_STATE_LANDED);
  if(allowed&&apply)apply(context);
  return tx_mutex_put(&g_thread_comm_state_mutex)==TX_SUCCESS?allowed:0;
 }

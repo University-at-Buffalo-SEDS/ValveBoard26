@@ -22,6 +22,9 @@ uint8_t board_recovery_decode_request(const uint8_t *wire,size_t length,BoardRec
  if (parsed.nonce==0U || parsed.issuer_session==0U) return 0U;
  /* Never a commissioning leg: a known boot generation is required. */
  if (parsed.operation==BOARD_RECOVERY_RESYNC) {
+  /* The station's fill sub-phases are GS-only: a RESYNC from an older
+   * station naming FillTest/NitrogenFill/NitrousFill (3..5) targets Fill. */
+  if (parsed.desired_state>=3U && parsed.desired_state<=5U) parsed.desired_state=2U;
   /* Startup/Idle too: from Launch (not aborted) the board stops its own
    * launch owner as part of this recovery (board_recovery_stop_launch). */
   if (parsed.desired_state>BOARD_RECOVERY_MAX_STATE ||

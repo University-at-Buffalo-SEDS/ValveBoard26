@@ -13,7 +13,7 @@ void board_recovery_write_le64(uint8_t *p,uint64_t value);
 #define BOARD_RECOVERY_REQUEST_SIZE 32U
 #define BOARD_RECOVERY_STATUS_SIZE 40U
 #define BOARD_RECOVERY_VERSION 1U
-/* RESYNC carries the station's current phase, PreFill(2)..Armed(6), and decodes
+/* RESYNC carries the station's current phase, Fill(2) or Armed(6), and decodes
  * as RECOVER to that phase: same proof, safe-output, latch and epoch checks,
  * and no output is written. Startup/Idle stay with RECOVER, whose paths drive
  * or re-assert outputs; Launch onward is never recovered or aborted. */

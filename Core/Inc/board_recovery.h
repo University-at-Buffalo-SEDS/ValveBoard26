@@ -1,7 +1,8 @@
 #ifndef BOARD_RECOVERY_H
 #define BOARD_RECOVERY_H
 #include <stdint.h>
-/* Highest recovery target: Armed. RECOVER uses 0..1, RESYNC 2..this. */
+/* Highest recovery target: Armed. RECOVER uses 0..1, RESYNC Fill(2) or this
+ * (an older station's retired fill sub-phases 3..5 decode as Fill). */
 #define BOARD_RECOVERY_MAX_STATE 6U
 /* Application protocol only. Wire encoding is explicit LE, never memcpy of this struct. */
 enum {
@@ -28,7 +29,7 @@ typedef struct {
 /* SEDS_OK (0) or negative SedsResult. Snapshot must be a serialized actual readback. */
 int32_t board_recovery_snapshot(BoardRecoverySnapshot *out);
 /* Manual operator request only. Allowed desired_state: Startup(0), Idle(1), or
- * through RESYNC the station phase PreFill(2)..Armed(6). A RESYNC target never
+ * through RESYNC the station phase Fill(2) or Armed(6). A RESYNC target never
  * writes an output; outputs must already read safe. A latched overpressure
  * relief refuses targets beyond Idle until the operator acknowledges it.
  * Under the board's state lock, validate expected_abort_epoch, check safe outputs,

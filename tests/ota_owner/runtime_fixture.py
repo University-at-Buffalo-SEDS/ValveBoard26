@@ -96,7 +96,7 @@ PREFIX
  if(!strcmp(argv[1],"armed")){assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_ARMED)==TX_SUCCESS);finish();assert(!finishes&&!state.reset_requested&&last_reply[1]==OTA_STREAM_BAD_STATE);return 0;}
  if(!strcmp(argv[1],"restore")){assert(board_launch_latch_set_verified());finish();assert(!finishes&&!state.reset_requested&&last_reply[1]==OTA_STREAM_BAD_STATE);return 0;}
  finish();assert(finishes==1&&state.reset_requested&&!resets);
- if(!strcmp(argv[1],"launch_after_finish")){assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_LAUNCH)==TX_SUCCESS);assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_ASCENT)==TX_SUCCESS);ota_clock+=300;ota_stream_poll();assert(!resets&&!state.reset_requested&&board_launch_latch_is_set());return 0;}
+ if(!strcmp(argv[1],"launch_after_finish")){assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_LAUNCH)==TX_SUCCESS);assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_IN_FLIGHT)==TX_SUCCESS);ota_clock+=300;ota_stream_poll();assert(!resets&&!state.reset_requested&&board_launch_latch_is_set());return 0;}
  if(!strcmp(argv[1],"reset_aba")){assert(thread_comm_request_manual_abort()==TX_SUCCESS);recover_same_state();ota_clock+=300;ota_stream_poll();assert(!resets&&!state.reset_requested);return 0;}
  ota_clock+=300;ota_stream_poll();assert(resets==1);puts("GREEN: original safe epoch reset after actual prepare+reply; distinct from update prepared only");return 0;
 }

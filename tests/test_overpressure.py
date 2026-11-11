@@ -433,7 +433,7 @@ static int has_prefix(const char*text){for(unsigned i=0;i<report_count&&i<64U;i+
 static void close_dump_vent_hw(void){dump_hw=vent_hw=0;}
 
 static void relief_case(void){
- reset_power();assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_NITROUS_FILL)==TX_SUCCESS);
+ reset_power();assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_FILL)==TX_SUCCESS);
  close_dump_vent_hw();run(820.0f,200);assert(!dump_hw&&!vent_hw&&!actuator_count&&!report_count);
  run(870.0f,250);assert(!dump_hw&&!actuator_count);run(870.0f,40);
  assert(dump_hw&&vent_hw&&!pilot_hw&&!thread_comm_get_abort());
@@ -478,7 +478,7 @@ static void ack_refused_case(void){
 }
 
 static void pilot_abort_case(void){
- reset_power();assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_NITROUS_FILL)==TX_SUCCESS);
+ reset_power();assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_FILL)==TX_SUCCESS);
  close_dump_vent_hw();run(900.0f,280);assert(dump_hw&&vent_hw&&!pilot_hw);
  run(970.0f,240);assert(!pilot_hw);run(970.0f,40);assert(pilot_hw&&g_overpressure.stage==OVERPRESSURE_PILOT&&!thread_comm_get_abort());
  /* The window spans exactly 3 s of control ticks. */
@@ -520,7 +520,7 @@ static void manual_abort_in_window_case(void){
 }
 
 static void launch_exclusion_case(void){
- const uint8_t burn_states[]={VALVE_FLIGHT_STATE_LAUNCH,VALVE_FLIGHT_STATE_ASCENT,VALVE_FLIGHT_STATE_COAST,VALVE_FLIGHT_STATE_APOGEE,VALVE_FLIGHT_STATE_PARACHUTE_DEPLOY,VALVE_FLIGHT_STATE_DESCENT,VALVE_FLIGHT_STATE_LANDED,VALVE_FLIGHT_STATE_RECOVERY};
+ const uint8_t burn_states[]={VALVE_FLIGHT_STATE_LAUNCH,VALVE_FLIGHT_STATE_IN_FLIGHT,VALVE_FLIGHT_STATE_LANDED,VALVE_FLIGHT_STATE_RETIRED_ASCENT,VALVE_FLIGHT_STATE_RETIRED_COAST,VALVE_FLIGHT_STATE_RETIRED_APOGEE,VALVE_FLIGHT_STATE_RETIRED_PARACHUTE_DEPLOY,VALVE_FLIGHT_STATE_RETIRED_DESCENT,VALVE_FLIGHT_STATE_RETIRED_RECOVERY};
  for(unsigned i=0;i<sizeof burn_states;i++){
   reset_power();assert(thread_comm_set_flight_state(burn_states[i])==TX_SUCCESS);
   close_dump_vent_hw();pilot_hw=1;const unsigned p=physical;run(1000.0f,5000);
@@ -545,7 +545,7 @@ static void launch_exclusion_case(void){
  /* Exclusion is atomic in the owner: every state 0..255. */
  for(unsigned st=0;st<256;st++){
   reset_power();assert(thread_comm_set_flight_state((uint8_t)st)==TX_SUCCESS);
-  const unsigned excluded=st>=VALVE_FLIGHT_STATE_LAUNCH&&st<=VALVE_FLIGHT_STATE_RECOVERY;
+  const unsigned excluded=(st>=VALVE_FLIGHT_STATE_LAUNCH&&st<=VALVE_FLIGHT_STATE_RETIRED_RECOVERY)||st==VALVE_FLIGHT_STATE_IN_FLIGHT;
   assert(thread_comm_overpressure_excluded()==excluded);
   assert(thread_comm_request_overpressure_abort(1,950,0)==!excluded);
  }
@@ -558,7 +558,7 @@ static void sdk_retry_case(void){
 }
 
 static void invalid_sensor_case(void){
- reset_power();assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_NITROUS_FILL)==TX_SUCCESS);
+ reset_power();assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_FILL)==TX_SUCCESS);
  close_dump_vent_hw();
  /* Full-scale fault: raw rail, published 2000 psi, never trips. */
  for(unsigned i=0;i<5000;i++){ticks++;if(ticks%20U==0U){latest.seq++;latest.at_ms=(uint32_t)ticks;latest.raw_adc=4095U;latest.psi=2000.0f;latest.valid=overpressure_sample_valid(4095U,2000.0f,0.0f,3103.0f,2000.0f);}service_overpressure();}
@@ -573,7 +573,7 @@ static void invalid_sensor_case(void){
  * loop: no valve moves, no Actuator Board command, no Abort; the operator sees
  * an implausible-sensor report instead of an overpressure. */
 static void floating_case(void){
- reset_power();assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_NITROUS_FILL)==TX_SUCCESS);
+ reset_power();assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_FILL)==TX_SUCCESS);
  close_dump_vent_hw();uint32_t r=0x1234567U;float level=0.0f;unsigned spike=0;
  for(unsigned i=0;i<8U*60U*1000U;i++){ticks++;
   if(ticks%20U==0U){r=r*1664525U+1013904223U;const uint32_t x=r>>8;
@@ -593,7 +593,7 @@ static void floating_case(void){
 /* A genuine ramp from 100 to 1000 psi over 3 s, then held: relief at 850,
  * main valve at 950, then main valve closed and the board Abort. */
 static void ramp_case(void){
- reset_power();assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_NITROUS_FILL)==TX_SUCCESS);
+ reset_power();assert(thread_comm_set_flight_state(VALVE_FLIGHT_STATE_FILL)==TX_SUCCESS);
  close_dump_vent_hw();unsigned t850=0,t950=0,relief=0,pilot=0,closed=0;
  for(unsigned t=0;t<9000U&&!closed;t++){ticks++;
   if(ticks%20U==0U){const float psi=t>=3000U?1000.0f:100.0f+0.3f*(float)t;

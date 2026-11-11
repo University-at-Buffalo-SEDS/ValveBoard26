@@ -99,6 +99,18 @@ int main(int argc,char**argv){
   assert(thread_comm_request_automatic_abort()==0&&!test_tamp.BKP30R&&!test_tamp.BKP31R);
   drop_launch=0;thread_comm_service_safety_publication();assert(board_launch_latch_was_verified()&&!thread_comm_get_abort());
   assert(thread_comm_apply_managed_flight_state(7)==TX_SUCCESS&&thread_comm_get_flight_state()==7);return 0;}
+ if(!strcmp(scenario,"in_flight_order")){
+  /* Network InFlight (16) sits between Launch (7) and Landed (13): it counts
+   * as launched, the FC's Landed still follows it, and neither regresses. */
+  assert(launch_request()==TX_SUCCESS&&board_launch_latch_is_set()&&!thread_comm_get_abort());
+  thread_comm_service_safety_publication();
+  assert(thread_comm_apply_managed_flight_state(7)==TX_SUCCESS&&thread_comm_get_flight_state()==7);
+  assert(thread_comm_apply_managed_flight_state(16)==TX_SUCCESS&&thread_comm_get_flight_state()==16);
+  assert(!thread_comm_abort_allowed()&&!thread_comm_heartbeat_abort_allowed());
+  assert(thread_comm_apply_managed_flight_state(7)!=TX_SUCCESS&&thread_comm_get_flight_state()==16);
+  assert(thread_comm_apply_managed_flight_state(13)==TX_SUCCESS&&thread_comm_get_flight_state()==13);
+  assert(thread_comm_apply_managed_flight_state(16)!=TX_SUCCESS&&thread_comm_get_flight_state()==13);
+  assert(!thread_comm_get_abort());return 0;}
  if(!strcmp(scenario,"setter_bad")){drop_launch=1;assert(thread_comm_set_flight_state(7)!=TX_SUCCESS);assert(thread_comm_get_flight_state()==6&&!thread_comm_get_abort()&&board_launch_latch_is_set());assert(!test_tamp.BKP30R&&!test_tamp.BKP31R);return 0;}
 #ifdef VB
  if(!strcmp(scenario,"owner_bad")){
@@ -142,6 +154,7 @@ class VerifiedLaunchTests(unittest.TestCase):
  def test_dropped_launch_writes_reject_admission_and_leave_no_launch_owner(self):self.case('request_bad');self.case('reboot_bad')
  def test_managed_launch_state_never_accepts_failed_durable_latch(self):self.case('managed_bad')
  def test_direct_state_setter_propagates_failed_durable_latch(self):self.case('setter_bad')
+ def test_in_flight_orders_between_launch_and_landed(self):self.case('in_flight_order')
  def test_healthy_launch_and_watchdog_retention_preserve_manual_stop(self):self.case('healthy');self.case('reboot_good')
  def test_vb_owner_requires_initial_acceptance_and_preserves_it_across_second_loss(self):
   if self.vb:self.case('owner_bad');self.case('direct_owner_bad');self.case('stop_before_owner')

@@ -275,7 +275,7 @@ int main(int argc,char**argv){
    * reply, storage access or state change. RECOVER keeps Startup/Idle only. */
   static const uint8_t refused[]={7U,8U,13U,14U,15U,16U,255U};
   for(unsigned i=0;i<sizeof refused;i++){rs.desired_state=refused[i];packet_body(body,&rs);assert(REFUSED(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)));}
-  rs.desired_state=5;rs.expected_boot_generation=UINT64_MAX;packet_body(body,&rs);assert(REFUSED(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)));
+  rs.desired_state=2;rs.expected_boot_generation=UINT64_MAX;packet_body(body,&rs);assert(REFUSED(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)));
   rs.expected_boot_generation=gen;rs.operation=BOARD_RECOVERY_RECOVER;packet_body(body,&rs);assert(REFUSED(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)));
   rs.operation=BOARD_RECOVERY_RESYNC;packet_body(body,&rs);body[1]=3;assert(REFUSED(board_recovery_handle(r,&packet,RECOVERY_ENDPOINT,123)));
   assert(responses==old_responses&&reads==read_calls&&writes==media_writes&&thread_comm_get_abort()&&!finished&&last_prepare==255);
@@ -299,15 +299,15 @@ int main(int argc,char**argv){
   rs.nonce=5;now=10003;send_req(r,&rs,10003);main_service();send_req(r,&rs,10003);
   uint32_t outputs=(uint32_t)response[28]|(uint32_t)response[29]<<8|(uint32_t)response[30]<<16|(uint32_t)response[31]<<24;
   uint32_t applied=(uint32_t)response[20]|(uint32_t)response[21]<<8|(uint32_t)response[22]<<16|(uint32_t)response[23]<<24;
-  assert(response[1]==0&&response[2]==5&&applied==epoch+1U&&!(response[3]&BOARD_RECOVERY_ABORT_LATCHED));
-  assert(outputs==SAFE_MASK&&(response[3]&BOARD_RECOVERY_SAFE_OUTPUTS)&&last_prepare==5&&finished==1&&!thread_comm_get_abort()&&thread_comm_get_flight_state()==5);
-  uint8_t fstate=255;size_t fsize=1;assert(persistent_store_get(0x46535445U,&fstate,&fsize)==LAUNCHCORE_PERSIST_OK&&fsize==1&&fstate==5);
+  assert(response[1]==0&&response[2]==2&&applied==epoch+1U&&!(response[3]&BOARD_RECOVERY_ABORT_LATCHED));
+  assert(outputs==SAFE_MASK&&(response[3]&BOARD_RECOVERY_SAFE_OUTPUTS)&&last_prepare==2&&finished==1&&!thread_comm_get_abort()&&thread_comm_get_flight_state()==2);
+  uint8_t fstate=255;size_t fsize=1;assert(persistent_store_get(0x46535445U,&fstate,&fsize)==LAUNCHCORE_PERSIST_OK&&fsize==1&&fstate==2);
   /* The completed nonce cannot be replayed with a new time, and an exact
    * duplicate only reports the finished result. */
   writes=media_writes;send_req(r,&rs,10003);assert(response[1]==0&&finished==1&&writes==media_writes);
   now=10004;send_req(r,&rs,10004);assert(response[1]==6&&finished==1&&writes==media_writes);
   /* A RESYNC built from the pre-resync readback is stale now. */
-  rs.nonce=6;now=10005;send_req(r,&rs,10005);assert(response[1]==4&&finished==1&&writes==media_writes&&thread_comm_get_flight_state()==5);
+  rs.nonce=6;now=10005;send_req(r,&rs,10005);assert(response[1]==4&&finished==1&&writes==media_writes&&thread_comm_get_flight_state()==2);
   puts("RESYNC to NitrousFill: proof/epoch checked, Abort cleared, outputs untouched, Launch onward refused PASS");return 0;
  }
  if(!strncmp(scenario,"seed_",5)&&strcmp(scenario,"seed_absent")){

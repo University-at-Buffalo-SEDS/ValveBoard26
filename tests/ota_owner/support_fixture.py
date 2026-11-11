@@ -335,6 +335,13 @@ def build(board,candidate):
     refusal=['board_recovery_refused'] if 'board_recovery_refused(void)' in transport else []
     admit=['flight_state_admit'] if 'flight_state_admit(' in telemetry else []
     fstate='\n'.join(function(transport,n)for n in ['board_recovery_sync_command_cutoff','board_recovery_command_is_stale','board_recovery_managed_update_allowed',*refusal])+'\n'+'\n'.join(function(telemetry,n)for n in [*admit,'Flight_State_handler','flight_state_cache_apply_network_update'])+'\n'+function(cache,'clear_managed_cache')+'\n'+function(cache,'persist_pending')+'\n'+function(cache,'persist_update')
+    if 'flight_state_cache_from_wire(' in cache:
+        # Contract set (a) mapping: the header block, its counters and the
+        # counting receiver, ahead of the handlers that call them.
+        header=(source/'Core/Inc/flight_state_cache.h').read_text()
+        contract=header[header.index('#define FLIGHT_STATE_NET_STARTUP'):header.index('static inline uint8_t flight_state_from_wire')]+function(header,'flight_state_from_wire')
+        counters='static uint32_t g_flight_state_contract_violations,g_flight_state_contract_logged,g_flight_state_contract_first_raw;\n'
+        fstate=contract+'\n'+counters+'static '+function(cache,'flight_state_cache_from_wire')+'\n'+fstate
     effects=''
     extra=[]
     if board=='ValveBoard26':
