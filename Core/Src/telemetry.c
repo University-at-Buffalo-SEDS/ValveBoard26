@@ -1,3 +1,5 @@
+#include "board_clock_us.h"
+#include "can_tx_queue.h"
 #include "telemetry_event_clock.h"
 
 #ifdef TELEMETRY_ENABLED
@@ -537,6 +539,9 @@ static UNUSED_FUNCTION SedsResult telemetry_configure_timesync_locked(SedsRouter
     return SEDS_BAD_ARG;
   }
 
+  /* Safety traffic outranks SEDSnet network control (time sync); data stays below. */
+  (void)seds_dtype_set_scheduling_class((uint32_t)SEDS_DT_ABORT, -1);
+  (void)seds_dtype_set_scheduling_class((uint32_t)SEDS_DT_FLIGHT_COMMAND, -1);
   result = seds_router_configure_timesync(
       router, true, telemetry_timesync_role(), telemetry_timesync_priority(),
       (uint64_t)TELEMETRY_TIMESYNC_SOURCE_TIMEOUT_MS,
@@ -655,6 +660,16 @@ void telemetry_set_unix_time_ms(uint64_t unix_ms)
 }
 
 
+/* Router microseconds: board_now_us() in node_now_since_ms's epoch. */
+static uint64_t node_now_since_us(void) {
+  return board_now_us() - g_router.start_time * 1000ULL;
+}
+
+/* A board_now_us() stamp on the router clock (us). */
+static uint64_t telemetry_router_us(uint64_t board_us) {
+  return board_us - g_router.start_time * 1000ULL;
+}
+
 static UNUSED_FUNCTION uint64_t node_now_since_ms(void *user)
 {
   (void)user;
@@ -708,6 +723,7 @@ static SedsResult tx_send_with_priority(const uint8_t *bytes, size_t len,
   const uint32_t can_id =
       board_can_arbitration_id(bytes, len, priority,
           sim_probe_packed_data_type(bytes, len), (uint32_t)SEDS_DT_HEARTBEAT, 0x006U);
+  if (priority == 254U) can_tx_queue_watch_next();
   if (can_bus_send_large(bytes, len, can_id) == HAL_OK)
   {
     if (diagnostic_status) g_valve_status_can_ok++;
@@ -754,8 +770,10 @@ static void rx_asynchronous_locked(const uint8_t *bytes, size_t len)
 
   if (g_can_side_id >= 0)
   {
-    result = seds_router_receive_packed_from_side(
-        g_router.r, (uint32_t)g_can_side_id, bytes, len);
+    result = (can_bus_current_rx_us() != 0U
+        ? seds_router_receive_packed_from_side_at(g_router.r, (uint32_t)g_can_side_id, bytes, len,
+                                                  telemetry_router_us(can_bus_current_rx_us()))
+        : seds_router_receive_packed_from_side(g_router.r, (uint32_t)g_can_side_id, bytes, len));
   }
   else
   {
@@ -798,8 +816,10 @@ static UNUSED_FUNCTION void rx_synchronous_locked(const uint8_t *bytes, size_t l
 
   if (g_can_side_id >= 0)
   {
-    (void)seds_router_receive_packed_from_side(g_router.r, (uint32_t)g_can_side_id, bytes,
-                                                   len);
+    (void)(can_bus_current_rx_us() != 0U
+        ? seds_router_receive_packed_from_side_at(g_router.r, (uint32_t)g_can_side_id, bytes, len,
+                                                  telemetry_router_us(can_bus_current_rx_us()))
+        : seds_router_receive_packed_from_side(g_router.r, (uint32_t)g_can_side_id, bytes, len));
   }
   else
   {
@@ -856,6 +876,15 @@ static SedsResult telemetry_poll_timesync_locked(void)
     return SEDS_ERR;
   }
 
+  {
+    const uint8_t *can_sent;
+    size_t can_sent_len;
+    uint64_t can_sent_us;
+    if (g_can_side_id >= 0 && can_tx_queue_take_watched_sent(&can_sent, &can_sent_len, &can_sent_us)) {
+      (void)seds_router_note_frame_sent(g_router.r, (uint32_t)g_can_side_id, can_sent, can_sent_len,
+                                        telemetry_router_us(can_sent_us));
+    }
+  }
   const SedsResult result = seds_router_poll_timesync(g_router.r, NULL);
   telemetry_update_network_health(g_router.r);
   return result;
@@ -1288,6 +1317,7 @@ static SedsResult init_telemetry_router_locked(void)
   g_router.start_time = tx_raw_now_ms_locked();
   r = seds_router_new(node_now_since_ms, NULL, locals,
                       sizeof(locals) / sizeof(locals[0]));
+  seds_set_clock_us(node_now_since_us);
   if (!r)
   {
     g_telemetry_init_error_code = TELEMETRY_INIT_ROUTER_NEW_FAILED;
