@@ -22,7 +22,12 @@ typedef unsigned long ULONG;
 typedef struct{unsigned unused;}TX_THREAD;
 typedef struct{unsigned unused;}FDCAN_HandleTypeDef;
 typedef struct{uint32_t Identifier,DataLength;}FDCAN_RxHeaderTypeDef;
-typedef struct{uint32_t std_id;uint8_t len,data[64];}can_bus_rx_frame_t;
+typedef struct{uint32_t std_id;uint8_t len,ts[3],data[64];}can_bus_rx_frame_t;
+/* Microsecond RX stamp (board_clock_us.h), inert here. */
+static uint64_t stub_board_us;
+__attribute__((unused)) static uint64_t board_now_us(void){return stub_board_us;}
+__attribute__((unused)) static uint64_t g_can_rx_us;
+__attribute__((unused)) static uint64_t can_bus_frame_rx_us(const can_bus_rx_frame_t *f){(void)f;return stub_board_us;}
 #define CAN_BUS_POLLING 0
 #define HAL_OK 0
 #define FDCAN_RX_FIFO0 0
@@ -190,7 +195,12 @@ static int can_bus_recover_if_bus_off(void){return HAL_OK;}
 static void can_tx_queue_service(void){}
 static uint16_t g_rx_head,g_rx_tail;
 static uint32_t g_rx_dropped_frames,g_board_health_can_rx_drops;
-typedef struct{uint32_t std_id;uint8_t len,data[64];}can_bus_rx_frame_t;
+typedef struct{uint32_t std_id;uint8_t len,ts[3],data[64];}can_bus_rx_frame_t;
+/* Microsecond RX stamp (board_clock_us.h), inert here. */
+static uint64_t stub_board_us;
+__attribute__((unused)) static uint64_t board_now_us(void){return stub_board_us;}
+__attribute__((unused)) static uint64_t g_can_rx_us;
+__attribute__((unused)) static uint64_t can_bus_frame_rx_us(const can_bus_rx_frame_t *f){(void)f;return stub_board_us;}
 static uint8_t result[128];
 static unsigned calls;
 static void can_bus_notify_rx(const uint8_t *p,size_t n){assert(!irq&&n==128);memcpy(result,p,n);calls++;}
