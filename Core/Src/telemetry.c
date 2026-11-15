@@ -435,6 +435,15 @@ static SedsResult flight_state_admit(const SedsPacketView *pkt)
 
   if (thread_comm_get_abort() != 0U)
   {
+    /* The station sends ABORT and the Aborted FLIGHT_STATE together; when
+     * the ABORT latched first, the matching value agrees with the latch.
+     * Accept it (the flight-state cache records Aborted) without applying
+     * it again. Every other value stays refused in Abort. */
+    uint8_t aborted_value = 0U;
+    if (pkt != NULL && pkt->payload != NULL && pkt->payload_len == 1U &&
+        seds_pkt_get_u8(pkt, &aborted_value, 1U) == 1 &&
+        flight_state_from_wire(aborted_value, NULL) == FLIGHT_STATE_NET_ABORTED)
+      return FSTATE_OUT(pkt, SEDS_OK, 0U);
     return FSTATE_OUT(pkt, SEDS_PERMISSION_DENIED, 4U);
   }
 
