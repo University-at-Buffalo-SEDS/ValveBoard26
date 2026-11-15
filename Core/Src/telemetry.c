@@ -388,6 +388,36 @@ SedsResult Abort_handler(const SedsPacketView *pkt, void *user)
   return SEDS_OK;
 }
 
+/* Simulator-only FLIGHT_STATE admission probe (FLIGHT_STATE_PROBE, never in
+ * release images): packets reaching the handler, applied, refused, and the
+ * last refusal's reason, value and station stamp (ms). Reasons: 1 command
+ * cutoff, 2 stale (recovery floor), 3 managed authority, 4 Abort latched,
+ * 5 malformed, 6 older than the applied state, 7 apply failed. */
+#if FLIGHT_STATE_PROBE
+volatile uint32_t g_dbg_fstate_rx __attribute__((used));
+volatile uint32_t g_dbg_fstate_applied __attribute__((used));
+volatile uint32_t g_dbg_fstate_refused __attribute__((used));
+volatile uint32_t g_dbg_fstate_reason __attribute__((used));
+volatile uint32_t g_dbg_fstate_refused_value __attribute__((used));
+volatile uint32_t g_dbg_fstate_refused_stamp_lo __attribute__((used));
+volatile uint32_t g_dbg_fstate_refused_stamp_hi __attribute__((used));
+static SedsResult fstate_probe(const SedsPacketView *pkt, SedsResult result, uint32_t reason)
+{
+  if (reason == 0U) { ++g_dbg_fstate_applied; return result; }
+  ++g_dbg_fstate_refused;
+  g_dbg_fstate_reason = reason;
+  g_dbg_fstate_refused_value = (pkt && pkt->payload && pkt->payload_len) ? pkt->payload[0] : 0xFFU;
+  g_dbg_fstate_refused_stamp_lo = pkt ? (uint32_t)pkt->timestamp : 0U;
+  g_dbg_fstate_refused_stamp_hi = pkt ? (uint32_t)(pkt->timestamp >> 32U) : 0U;
+  return result;
+}
+#define FSTATE_RX() (++g_dbg_fstate_rx)
+#define FSTATE_OUT(pkt, result, reason) fstate_probe((pkt), (result), (reason))
+#else
+#define FSTATE_RX() ((void)0)
+#define FSTATE_OUT(pkt, result, reason) (result)
+#endif
+
 /* SEDS_PERMISSION_DENIED: deliberately refused (stale, aborted, malformed or
  * not allowed in this state), never applied. Other errors are transient. */
 static SedsResult flight_state_admit(const SedsPacketView *pkt)
@@ -395,16 +425,17 @@ static SedsResult flight_state_admit(const SedsPacketView *pkt)
   /* Endpoint fanout may also deliver SDK diagnostics or other data types.
    * Only this handler's actual command contract can mutate board state. */
   if (pkt != NULL && pkt->ty != SEDS_DT_FLIGHT_STATE) return SEDS_OK;
-  if (pkt != NULL && board_recovery_sync_command_cutoff()!=SEDS_OK) return SEDS_IO;
+  FSTATE_RX();
+  if (pkt != NULL && board_recovery_sync_command_cutoff()!=SEDS_OK) return FSTATE_OUT(pkt, SEDS_IO, 1U);
   /* Explicit recovery installs a persisted replay floor before clearing abort.
    * The endpoint path keeps the managed-variable authority gate: a refused
    * managed value is acknowledged now, so this handler also runs for it. */
-  if (pkt != NULL && (board_recovery_command_is_stale(pkt) ||
-                      !board_recovery_managed_update_allowed(pkt))) return SEDS_PERMISSION_DENIED;
+  if (pkt != NULL && board_recovery_command_is_stale(pkt)) return FSTATE_OUT(pkt, SEDS_PERMISSION_DENIED, 2U);
+  if (pkt != NULL && !board_recovery_managed_update_allowed(pkt)) return FSTATE_OUT(pkt, SEDS_PERMISSION_DENIED, 3U);
 
   if (thread_comm_get_abort() != 0U)
   {
-    return SEDS_PERMISSION_DENIED;
+    return FSTATE_OUT(pkt, SEDS_PERMISSION_DENIED, 4U);
   }
 
   uint8_t flight_state = 0U;
@@ -412,7 +443,7 @@ static SedsResult flight_state_admit(const SedsPacketView *pkt)
       seds_pkt_get_u8(pkt, &flight_state, 1U) != 1)
   {
     g_flight_state_handler_error_count++;
-    return SEDS_PERMISSION_DENIED;
+    return FSTATE_OUT(pkt, SEDS_PERMISSION_DENIED, 5U);
   }
 
   /* Contract set (a) only: a retired value (older firmware) maps to the
@@ -431,9 +462,10 @@ static SedsResult flight_state_admit(const SedsPacketView *pkt)
   if (applied != TX_SUCCESS)
   {
     g_flight_state_handler_error_count++;
-    return applied == THREAD_COMM_STALE_TIMESTAMP ? SEDS_PERMISSION_DENIED : SEDS_HANDLER_ERROR;
+    return applied == THREAD_COMM_STALE_TIMESTAMP ? FSTATE_OUT(pkt, SEDS_PERMISSION_DENIED, 6U)
+                                                  : FSTATE_OUT(pkt, SEDS_HANDLER_ERROR, 7U);
   }
-  return SEDS_OK;
+  return FSTATE_OUT(pkt, SEDS_OK, 0U);
 }
 
 SedsResult Flight_State_handler(const SedsPacketView *pkt, void *user)

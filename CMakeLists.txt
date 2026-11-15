@@ -35,6 +35,11 @@ option(SEDS_FIRMWARE_SIM_TEST "Enable simulator-only network observability" OFF)
 if(SEDS_FIRMWARE_SIM_TEST)
     add_compile_definitions(SEDS_FIRMWARE_SIM_TEST=1)
 endif()
+# Simulator-only FLIGHT_STATE admission probe (never in release images).
+option(FLIGHT_STATE_PROBE "Simulator-only FLIGHT_STATE admission probe" OFF)
+if(FLIGHT_STATE_PROBE)
+    add_compile_definitions(FLIGHT_STATE_PROBE=1)
+endif()
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
