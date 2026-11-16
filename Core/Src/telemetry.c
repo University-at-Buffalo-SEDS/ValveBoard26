@@ -146,7 +146,13 @@ static ULONG g_network_clock_resync_tick;
  * tick, under the router lock. Unlike the forward-only recovery station
  * clock it follows a GS clock step in either direction. */
 #define STATION_REPORT_REFERENCE_TICKS (30U * (ULONG)TX_TIMER_TICKS_PER_SECOND)
-#define STATION_REPORT_AGREEMENT_MS 2000U
+/* The GS refuses a valve report stamped more than 100 ms ahead of its network
+ * clock and confirms a valve only until 2 s after the report's stamp, so a
+ * board clock that lags the GS shortens every confirmation by its lag. The
+ * heartbeat estimate is a lower bound of GS time (transit only delays it);
+ * the SEDSnet clock is preferred only while it reads at or at most this much
+ * above it, never behind it. */
+#define STATION_REPORT_LEAD_MS 50U
 static uint64_t g_station_report_utc;
 static ULONG g_station_report_tick;
 volatile uint32_t g_telemetry_network_ready = 0U;
@@ -1033,7 +1039,8 @@ SedsResult telemetry_poll_discovery(void)
 
 #ifdef TELEMETRY_ENABLED
 /* The GS admits a valve report only near its own network clock. The SEDSnet
- * clock is used while it agrees with the latest GS heartbeat; while it is
+ * clock is used while it reads within STATION_REPORT_LEAD_MS above the latest
+ * GS heartbeat (never behind it: a lagging follower ages every report); while it is
  * restarting, invalid or stepped away from the GS (a source change), the
  * heartbeat time advanced by board ticks keeps reports flowing and admissible.
  * 0 only when neither clock is known: the report stays pending. */
@@ -1044,8 +1051,7 @@ static uint64_t telemetry_report_utc_locked(void)
   if (g_station_report_utc == 0U || age > STATION_REPORT_REFERENCE_TICKS) return network;
   const uint64_t station = g_station_report_utc +
       ((uint64_t)age * 1000U) / (uint64_t)TX_TIMER_TICKS_PER_SECOND;
-  if (network != 0U && network + STATION_REPORT_AGREEMENT_MS >= station &&
-      network <= station + STATION_REPORT_AGREEMENT_MS) return network;
+  if (network >= station && network <= station + STATION_REPORT_LEAD_MS) return network;
   return station;
 }
 #endif
