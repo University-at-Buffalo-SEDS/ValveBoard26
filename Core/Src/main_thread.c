@@ -22,15 +22,18 @@ TX_THREAD main_thread;
 /* Rebalance one KiB toward the publishing tasks; measured control headroom
  * exceeded six KiB in the linked flight and network profiles. */
 #define MAIN_THREAD_STACK_SIZE (11U * 1024U)
-/* GSE requires actual valve-state reports fresher than two seconds. */
-#define UMBILICAL_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
+/* GSE confirms a valve only while its newest report is at most 2 s old,
+ * counted from this board's timestamp. Report twice a second so one lost,
+ * late or refused report (plus transport and clock age) cannot let the
+ * station's confirmation lapse; at 1 s, two periods already filled the window. */
+#define UMBILICAL_STATUS_PERIOD_TICKS ((TX_TIMER_TICKS_PER_SECOND >= 2U) ? (TX_TIMER_TICKS_PER_SECOND / 2U) : 1U)
 #define LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS 10000U
 _Static_assert(THREAD_COMM_LAUNCH_EFFECT_DELAY_MS == LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS,"Launch timeline delay drift");
 #define LAUNCH_SEQUENCE_PILOT_OPEN_DURATION_MS 1500U
 #define LAUNCH_SEQUENCE_PILOT_STATUS_PERIOD_TICKS \
     ((TX_TIMER_TICKS_PER_SECOND >= 10U) ? (TX_TIMER_TICKS_PER_SECOND / 10U) : 1U)
 #define MAIN_THREAD_MAX_COMMANDS_PER_TICK 4U
-#define ABORT_STATUS_PERIOD_TICKS TX_TIMER_TICKS_PER_SECOND
+#define ABORT_STATUS_PERIOD_TICKS UMBILICAL_STATUS_PERIOD_TICKS
 #define ABORT_LED_PERIOD_TICKS ((TX_TIMER_TICKS_PER_SECOND >= 2U) ? (TX_TIMER_TICKS_PER_SECOND / 2U) : 1U)
 
 
