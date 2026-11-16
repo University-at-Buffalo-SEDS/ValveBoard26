@@ -197,6 +197,7 @@ static SedsRouter*recovery_router=&router;
 static SedsResult seds_router_get_network_time_ms(SedsRouter*r,uint64_t*out){assert(r);*out=1000;return SEDS_OK;}
 static __attribute__((unused)) uint64_t board_recovery_station_now(SedsRouter*r){uint64_t t=0;return seds_router_get_network_time_ms(r,&t)?0U:t;}
 static __attribute__((unused)) uint64_t station_estimate(void){return 0U;}
+static __attribute__((unused)) uint8_t board_recovery_predates_step(const SedsPacketView*p){(void)p;return 0U;}
 static __attribute__((unused)) uint8_t board_recovery_station_behind(uint64_t m,uint64_t s){return s&&m>s&&m-s>60000U;}
 #define FSTATE_RX() ((void)0)
 #define FSTATE_OUT(pkt, result, reason) (result)
@@ -338,7 +339,7 @@ def build(board,candidate):
     cache=(source/'Core/Src/flight_state_cache.c').read_text()
     refusal=['board_recovery_refused'] if 'board_recovery_refused(void)' in transport else []
     admit=['flight_state_admit'] if 'flight_state_admit(' in telemetry else []
-    fstate='\n'.join(function(transport,n)for n in ['board_recovery_sync_command_cutoff','board_recovery_command_is_stale','board_recovery_managed_update_allowed',*refusal])+'\n'+'\n'.join(function(telemetry,n)for n in [*admit,'Flight_State_handler','flight_state_cache_apply_network_update'])+'\n'+function(cache,'clear_managed_cache')+'\n'+function(cache,'persist_pending')+'\n'+function(cache,'persist_update')
+    fstate='\n'.join(function(transport,n)for n in ['board_recovery_sync_command_cutoff','command_time_stale','board_recovery_command_is_stale','board_recovery_managed_update_allowed',*refusal])+'\n'+'\n'.join(function(telemetry,n)for n in [*admit,'Flight_State_handler','flight_state_cache_apply_network_update'])+'\n'+function(cache,'clear_managed_cache')+'\n'+function(cache,'persist_pending')+'\n'+function(cache,'persist_update')
     if 'flight_state_cache_from_wire(' in cache:
         # Contract set (a) mapping: the header block, its counters and the
         # counting receiver, ahead of the handlers that call them.
