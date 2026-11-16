@@ -437,6 +437,15 @@ static uint8_t network_timestamp_allowed_locked(uint64_t timestamp_ms)
     return persistent_store_controls_ready() &&
         (g_command_cutoff_ms == 0U || timestamp_ms > g_command_cutoff_ms);
 }
+UINT thread_comm_rebase_command_cutoff(uint64_t cutoff_ms)
+{
+    if (cutoff_ms == 0U || g_thread_comm_initialized == 0U ||
+        tx_mutex_get(&g_thread_comm_state_mutex, TX_NO_WAIT) != TX_SUCCESS)
+        return TX_MUTEX_ERROR;
+    g_command_cutoff_ms = cutoff_ms;
+    (void)tx_mutex_put(&g_thread_comm_state_mutex);
+    return TX_SUCCESS;
+}
 UINT thread_comm_publish_command_cutoff(uint64_t cutoff_ms)
 {
     if (cutoff_ms == 0U || g_thread_comm_initialized == 0U ||

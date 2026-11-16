@@ -106,6 +106,9 @@ UINT thread_comm_send(thread_comm_msg_t msg, ULONG wait_option);
 #define THREAD_COMM_STALE_TIMESTAMP ((UINT)0xF001U)
 #define THREAD_COMM_COMMIT_UNCERTAIN ((UINT)0xF002U)
 UINT thread_comm_publish_command_cutoff(uint64_t cutoff_ms);
+/* Only after a verified backward station clock step: sets the RAM cutoff to
+ * the station freshness window, which may lower it. */
+UINT thread_comm_rebase_command_cutoff(uint64_t cutoff_ms);
 UINT thread_comm_admit_network(thread_comm_msg_t msg, uint64_t timestamp_ms);
 UINT thread_comm_apply_network_flight_state(uint8_t state,uint64_t timestamp_ms);
 UINT thread_comm_admit_network_automatic(thread_comm_msg_t msg, uint64_t timestamp_ms);

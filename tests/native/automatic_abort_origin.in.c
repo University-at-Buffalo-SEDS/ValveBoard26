@@ -38,6 +38,8 @@ static SedsResult seds_router_log_string_ex(void*r,SedsDataType t,const char*s,s
 typedef struct{const uint8_t*payload;size_t payload_len;uint64_t timestamp;uint32_t ty;}SedsPacketView;
 static uint8_t board_recovery_command_time_allowed(uint64_t t){return cutoff==0||t>cutoff;}
 static uint8_t board_recovery_floor_active(void){return cutoff!=0;}
+static uint8_t board_recovery_floor_cached_cutoff(uint64_t*c){*c=cutoff;return 1U;}
+static uint8_t board_recovery_station_behind(uint64_t m,uint64_t s){return s&&m>s&&m-s>60000U;}
 static int seds_router_get_network_time_ms(void*r,uint64_t*out){assert(r);*out=now_utc;return 0;}
 /* Station-clock fixture: the freshness clock equals the network clock here. */
 static uint64_t board_recovery_station_now(void*r){uint64_t t=0;return seds_router_get_network_time_ms(r,&t)?0U:t;}

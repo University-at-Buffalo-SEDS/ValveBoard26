@@ -71,6 +71,8 @@ static uint64_t telemetry_unix_ms_locked(void){uint64_t t=0;return seds_router_g
 static unsigned restarts;
 static SedsResult telemetry_configure_timesync_locked(SedsRouter*r){assert(r==&router_cookie);net_valid=false;restarts++;return SEDS_OK;}
 static void telemetry_event_clock_observe(uint64_t utc,uint32_t tick){(void)utc;(void)tick;}
+enum {SEDS_DT_FLIGHT_STATE=11};
+static SedsResult seds_router_invalidate_network_variable_cache(SedsRouter*r,int ty,bool*out){(void)r;(void)ty;(void)out;return SEDS_OK;}
 static bool telemetry_router_enter(void){return true;}
 static bool telemetry_router_leave(void){return true;}
 static uint8_t authorized_primary(SedsRouter*r,const SedsPacketView*p){(void)r;return p&&p->sender_len==2&&!memcmp(p->sender,"GS",2);}

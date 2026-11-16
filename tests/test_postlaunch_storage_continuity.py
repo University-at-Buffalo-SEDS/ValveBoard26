@@ -30,7 +30,7 @@ def compile_case(code,case,inline_state=False):
  if 'ULONG tx_time_get(void){' not in effective:code+='\nULONG tx_time_get(void){return 0;}\n'
  if 'SedsResult Valve_Command_handler(' in code:
   telemetry=(ROOT/'Core/Src/telemetry.c').read_text()
-  adapter='\nstatic SedsResult seds_router_get_network_time_ms(void*r,uint64_t*out){(void)r;*out=10000U;return SEDS_OK;}\n'
+  adapter='\nstatic uint64_t board_recovery_station_now(void*r){(void)r;return 10000U;}\n'
   helpers=adapter+function(telemetry,'launch_monotonic_tick')+'\n'+function(telemetry,'admit_timed_launch')+'\n'
   if 'network_admission_result(' in telemetry:
    helpers+='static SedsResult board_recovery_refused(void){return SEDS_OK;}\n'+function(telemetry,'network_admission_result')+'\n'

@@ -55,7 +55,7 @@ typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;cons
 static uint8_t board_recovery_command_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static uint8_t board_recovery_automatic_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static struct{void*r;}g_router;
-static SedsResult seds_router_get_network_time_ms(void*router,uint64_t*now){(void)router;*now=10000U;return SEDS_OK;}
+static uint64_t board_recovery_station_now(void*router){(void)router;return 10000U;}
 static bool board_recovery_manual_stop_source_allowed(void*r,const SedsPacketView*p){(void)r;(void)p;return false;}
 static int32_t seds_pkt_get_u8(const SedsPacketView*p,uint8_t*out,size_t n){assert(n==1);*out=p->payload[0];return 1;}
 static int telemetry_broadcast_abort(const char*reason){assert(!strcmp(reason,"Valve board abort command"));return 0;}

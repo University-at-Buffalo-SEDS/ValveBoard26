@@ -255,7 +255,10 @@ static bool telemetry_unix_ms_to_utc(uint64_t unix_ms, int32_t *year, uint8_t *m
 static uint32_t launch_monotonic_tick(void){return (uint32_t)tx_time_get();}
 static UINT admit_timed_launch(const SedsPacketView*p) {
  uint64_t utc=0U;const uint32_t before=launch_monotonic_tick();
- if(!g_router.r||seds_router_get_network_time_ms(g_router.r,&utc)!=SEDS_OK)return TX_QUEUE_ERROR;
+ /* Judged against the station clock, which follows a GS clock step at once;
+  * the board's network clock may still be slewing toward the GS. */
+ if(!g_router.r)return TX_QUEUE_ERROR;
+ utc=board_recovery_station_now(g_router.r);if(!utc||utc==UINT64_MAX)return TX_QUEUE_ERROR;
  const uint32_t after=launch_monotonic_tick();
  if((uint32_t)(after-before)>1U)return TX_QUEUE_ERROR;
  return thread_comm_request_network_launch_original_at(p->timestamp,p->sender,(uint32_t)p->sender_len,utc,before,launch_monotonic_tick);
