@@ -6,7 +6,10 @@
  * Ordinary RAM and the bootloader do not own these registers. No flash writes,
  * allocator calls, RTC oscillator or RTOS services are required. */
 #define ABORT_MAGIC UINT32_C(0x41425254)
-/* Launch inhibition owns backup registers 28/29; abort owns 30/31. */
+/* Launch inhibition owns backup registers 28/29; abort owns 30/31; the
+ * post-Launch auto-vent marker owns 26/27: tag 0x56 in the top byte, bit 16
+ * vented, low 16 bits Launch elapsed seconds; 27 holds the complement. */
+#define VENT_MARKER_TAG UINT32_C(0x56000000)
 static uint8_t launch_latched;
 static uint8_t launch_verified;
 static uint8_t latched;
@@ -88,6 +91,11 @@ uint8_t board_launch_latch_set_verified(void)
 {
     launch_latched = 1U;
     if (!enable_backup_writes()) return 0U;
+    /* A new Launch starts with no elapsed time and no vent. */
+    if (TAMP->BKP28R != UINT32_C(0x4c41554e)) {
+        TAMP->BKP26R = 0U;
+        TAMP->BKP27R = 0U;
+    }
     TAMP->BKP28R = UINT32_C(0x4c41554e);
     TAMP->BKP29R = ~UINT32_C(0x4c41554e);
     __DSB();
@@ -119,6 +127,8 @@ uint8_t board_abort_latch_clear_for_recovery(void)
     TAMP->BKP29R = 0U;
     TAMP->BKP30R = 0U;
     TAMP->BKP31R = 0U;
+    TAMP->BKP26R = 0U;
+    TAMP->BKP27R = 0U;
     __DSB();
     if (TAMP->BKP28R != 0U || TAMP->BKP29R != 0U ||
         TAMP->BKP30R != 0U || TAMP->BKP31R != 0U) return 0U;
@@ -126,4 +136,35 @@ uint8_t board_abort_latch_clear_for_recovery(void)
     launch_latched = 0U;
     latched = 0U;
     return 1U;
+}
+
+/* Absent, torn or foreign: no elapsed time, not vented (the guard then runs
+ * in full from boot and the board holds closed until the countdown ends). */
+uint8_t board_vent_marker_load(uint32_t *elapsed_s, uint8_t *vented)
+{
+    *elapsed_s = 0U;
+    *vented = 0U;
+    if (!backup_ready) return 0U;
+    const uint32_t m = TAMP->BKP26R;
+    if ((m & UINT32_C(0xFF000000)) != VENT_MARKER_TAG || TAMP->BKP27R != ~m) return 0U;
+    *elapsed_s = m & 0xFFFFU;
+    *vented = (uint8_t)((m >> 16) & 1U);
+    return 1U;
+}
+void board_vent_marker_store(uint32_t elapsed_s, uint8_t vented)
+{
+    if (!backup_ready) return;
+    if (elapsed_s > 0xFFFFU) elapsed_s = 0xFFFFU;
+    const uint32_t m = VENT_MARKER_TAG | (vented ? UINT32_C(0x10000) : 0U) | elapsed_s;
+    /* Invalidate first: a reset between the two writes reads as absent. */
+    TAMP->BKP27R = 0U;
+    TAMP->BKP26R = m;
+    TAMP->BKP27R = ~m;
+    __DSB();
+}
+uint8_t board_vent_marker_vented(void)
+{
+    uint32_t elapsed;
+    uint8_t vented;
+    return board_vent_marker_load(&elapsed, &vented) && vented;
 }

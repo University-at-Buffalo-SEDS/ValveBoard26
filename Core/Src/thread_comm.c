@@ -253,6 +253,25 @@ void thread_comm_overpressure_release(void)
     g_overpressure_relief_owned = 0U;
     if (tx_mutex_put(&g_thread_comm_state_mutex) != TX_SUCCESS) g_command_admission_fault = 1U;
 }
+/* Post-Launch auto-vent (vent_countdown.h). Rechecked under the owner: only
+ * after an accepted, unaborted Launch, never while recovery is pending and
+ * never while the pilot sequence runs. The countdown's burn guard puts this
+ * long after the pilot window; an accepted Launch that still has not started
+ * by then is retired so it can never open the pilot into an open vent. */
+uint8_t thread_comm_post_launch_vent_effect(void (*apply)(void *), void *context)
+{
+    if (!apply || !g_thread_comm_initialized ||
+        tx_mutex_get(&g_thread_comm_state_mutex, TX_WAIT_FOREVER) != TX_SUCCESS) return 0U;
+    const uint8_t allowed = board_launch_latch_is_set() && !g_thread_comm_abort && !g_recovery_pending &&
+        g_accepted_launch.phase != LAUNCH_RUNNING;
+    if (allowed && (g_accepted_launch.phase == LAUNCH_PENDING || g_accepted_launch.phase == LAUNCH_TAKEN)) {
+        g_thread_comm_launch_sequence_pending = 0U;
+        g_accepted_launch.phase = LAUNCH_COMPLETED;
+    }
+    if (allowed) apply(context);
+    if (tx_mutex_put(&g_thread_comm_state_mutex) != TX_SUCCESS) g_command_admission_fault = 1U;
+    return allowed;
+}
 /* Same local Abort owner and report as the safety thread, including Startup:
  * a tank at the abort pressure is never a commissioning artifact. */
 uint8_t thread_comm_request_overpressure_abort(uint64_t at_ms, uint32_t detail, uint64_t original_utc)

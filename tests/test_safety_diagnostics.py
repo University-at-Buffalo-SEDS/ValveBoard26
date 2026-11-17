@@ -33,7 +33,8 @@ static uint64_t safety_now_ms(void) { return now_ms; }
 static uint64_t thread_comm_get_groundstation_heartbeat_ms(void) { return heartbeat; }
 static uint32_t thread_comm_abort_allowed(void) { return allowed; }
 static uint32_t thread_comm_heartbeat_abort_allowed(void) { return allowed; }
-static uint32_t thread_comm_get_flight_state(void) { return 3; }
+static uint32_t flight_state_now(void);
+static uint32_t thread_comm_get_flight_state(void) { return flight_state_now(); }
 static uint32_t suppressed;
 static uint8_t thread_comm_request_local_abort(uint32_t reason,uint64_t at,uint64_t hb,uint32_t state,uint32_t detail,uint64_t utc,uint8_t heartbeat_only) {
  (void)heartbeat_only;if(aborted||suppressed)return 0;aborted=1;calls++;
@@ -49,17 +50,21 @@ typedef uint32_t GPIO_PinState;
 #define Continuity_Pin 0
 #define CONTINUITY_PRESENT_STATE 1
 #define VALVE_FLIGHT_STATE_LAUNCH 7
-#define SAFETY_LAUNCH_CONTINUITY_TIMEOUT_MS 300000ULL
 #define CMD_ABORT 0
 #define TX_NO_WAIT 0
 static uint32_t continuity=1, safety_last_continuity_state;
 static uint32_t safety_continuity_loss_count, safety_continuity_loss_latched_count;
-static uint32_t safety_launch_continuity_timeout_count;
 static uint64_t safety_launch_continuity_loss_since_ms;
+static uint32_t flight_state = 3, launch_latch;
+static uint8_t board_launch_latch_is_set(void) { return (uint8_t)launch_latch; }
 static uint32_t HAL_GPIO_ReadPin(int p, int n) { (void)p; (void)n; return continuity; }
 """
         else:
             code += "static void main_task_force_outputs_safe_off(void) { calls++; }\n"
+        if valve:
+            code += "static uint32_t flight_state_now(void) { return flight_state; }\n"
+        else:
+            code += "static uint32_t flight_state_now(void) { return 3; }\n"
         code += functions + r"""
 int main(void) {
     /* Ten minutes of regular heartbeats, including concurrent newer samples.
@@ -99,6 +104,26 @@ int main(void) {
     assert(g_safety_first_abort.at_ms==15000 && g_safety_first_abort.detail==0);
     heartbeat=1; now_ms=20000; safety_check_heartbeat();
     assert(g_safety_first_abort.reason==SAFETY_ABORT_CONTINUITY);
+    /* After Launch a break never aborts; it feeds the auto-vent countdown
+     * from its first sample, also after a reset (latch, flight state Startup). */
+    for (int retained = 0; retained < 2; retained++) {
+        aborted=0; allowed=0; continuity=1; safety_check_continuity();
+        assert(safety_launch_continuity_loss_since_ms==0);
+        flight_state = retained ? 0 : 7; launch_latch = 1;
+        now_ms=40000; continuity=0; safety_check_continuity();
+        assert(!aborted && safety_launch_continuity_loss_since_ms==40000);
+        now_ms=45000; safety_check_continuity();
+        assert(safety_launch_continuity_loss_since_ms==40000);
+        continuity=1; safety_check_continuity();
+        assert(safety_launch_continuity_loss_since_ms==0);
+        now_ms=0; continuity=0; safety_check_continuity();
+        assert(safety_launch_continuity_loss_since_ms==1);
+        continuity=1; safety_check_continuity();
+    }
+    /* Before Launch with Abort not allowed (Startup): no countdown input. */
+    flight_state=0; launch_latch=0; continuity=0; now_ms=50000; safety_check_continuity();
+    assert(safety_launch_continuity_loss_since_ms==0);
+    flight_state=3; allowed=1; continuity=1;
 """
         else:
             code += r"""

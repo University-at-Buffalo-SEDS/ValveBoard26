@@ -22,6 +22,8 @@ void data_acq_latest_pressure(overpressure_sample_t *out);
 
 void safety_thread_entry(ULONG initial_input);
 UINT create_safety_thread(TX_BYTE_POOL *byte_pool);
+/* First sample of the current continuity break after Launch, 0 intact. */
+uint64_t safety_launch_continuity_broken_since_ms(void);
 
 extern TX_EVENT_FLAGS_GROUP event_flags;
 extern TX_QUEUE tx_queue;

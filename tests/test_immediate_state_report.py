@@ -29,6 +29,7 @@ static uint8_t g_nitrous_servo_open_state, g_no_servo_open_state;
 static int output, output_id, reports,pilot_solenoid;
 static int32_t g_sim_pilot_solenoid_result;static uint8_t g_pilot_valve_state,g_sim_pilot_valve_state;
 static int solenoidOn(int*p){(void)p;return 0;}static void solenoidOff(int*p){(void)p;}
+static int operator_commands;static void vent_operator_command(void){operator_commands++;}
 static unsigned thread_comm_manual_effect_owned(uint64_t t,uint32_t e,void(*apply)(void*),void*p){assert(!t&&e==7);apply(p);return 1;}
 static void dump_servo_open(void) { output=1; output_id=2; }
 static void dump_servo_close(void) { output=0; output_id=2; }
@@ -44,6 +45,7 @@ int main(void) {
     command(CMD_NORMALLY_OPEN_OPEN); assert(reports==3 && output==1);
     command(CMD_NORMALLY_OPEN_CLOSE); assert(reports==4 && output==0);
     command(CMD_NORMALLY_OPEN_CLOSE); assert(reports==5 && output==0);
+    assert(operator_commands==5); /* each applied operator valve command cancels the auto-vent countdown */
 }
 """
         with tempfile.TemporaryDirectory() as tmp:

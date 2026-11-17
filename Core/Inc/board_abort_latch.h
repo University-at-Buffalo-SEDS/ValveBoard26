@@ -23,4 +23,10 @@ uint8_t board_launch_latch_was_verified(void);
 
 uint8_t board_abort_latch_clear_for_recovery(void);
 
+/* Post-Launch auto-vent marker (vent_countdown.h). Cleared by a new Launch
+ * marker and by recovery. A torn or absent marker loads as 0/not vented. */
+uint8_t board_vent_marker_load(uint32_t *elapsed_s, uint8_t *vented);
+void board_vent_marker_store(uint32_t elapsed_s, uint8_t vented);
+uint8_t board_vent_marker_vented(void);
+
 #endif

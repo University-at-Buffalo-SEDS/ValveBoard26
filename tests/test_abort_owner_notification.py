@@ -31,6 +31,7 @@ static void apply_manual_valve_locked(void*context){apply_automatic_valve(*(uint
 static int publish_umbilical_status(unsigned cmd,unsigned value){(void)cmd;(void)value;return 0;}
 /* No overpressure latch in these ownership cases (tests/test_overpressure.py). */
 static uint8_t overpressure_refused(thread_comm_msg_t cmd){(void)cmd;return 0;}
+static void vent_operator_command(void){}
 ACTUAL_CONSUMER
 static unsigned recoveries;
 static void recover_then_launch(void){

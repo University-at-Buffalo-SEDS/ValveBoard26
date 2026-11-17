@@ -8,6 +8,7 @@
 #include "thread_comm.h"
 #include "tx_api.h"
 #include "safety_diagnostics.h"
+#include "board_abort_latch.h"
 
 
 
@@ -15,7 +16,6 @@ TX_THREAD safety_thread;
 
 #define SAFETY_THREAD_STACK_SIZE (4U * 1024U)
 #define SAFETY_HEARTBEAT_TIMEOUT_MS (5000ULL)
-#define SAFETY_LAUNCH_CONTINUITY_TIMEOUT_MS (5ULL * 60ULL * 1000ULL)
 #define SAFETY_CHECK_PERIOD_TICKS ((TX_TIMER_TICKS_PER_SECOND + 99U) / 100U)
 #ifndef CONTINUITY_PRESENT_STATE
 #define CONTINUITY_PRESENT_STATE GPIO_PIN_SET
@@ -25,9 +25,10 @@ static uint64_t safety_heartbeat_missing_since_ms;
 static volatile uint32_t safety_heartbeat_timeout_count;
 static volatile uint32_t safety_continuity_loss_count;
 static volatile uint32_t safety_continuity_loss_latched_count;
-static volatile uint32_t safety_launch_continuity_timeout_count;
 static volatile GPIO_PinState safety_last_continuity_state;
-static uint64_t safety_launch_continuity_loss_since_ms;
+/* First sample of the current post-Launch continuity break, 0 intact. It
+ * feeds the post-Launch auto-vent countdown (vent_countdown.h). */
+static volatile uint64_t safety_launch_continuity_loss_since_ms;
 static ULONG safety_thread_stack[SAFETY_THREAD_STACK_SIZE / sizeof(ULONG)];
 
 static uint64_t safety_now_ms(void)
@@ -100,27 +101,31 @@ static void safety_check_continuity(void)
         return;
     }
 
-    if (flight_state >= VALVE_FLIGHT_STATE_LAUNCH)
+    /* After Launch a break never aborts; it starts the auto-vent countdown.
+     * The launch latch also covers a board reset after Launch, which boots
+     * in Startup. */
+    if (flight_state >= VALVE_FLIGHT_STATE_LAUNCH || board_launch_latch_is_set())
     {
-        const uint64_t now_ms = safety_now_ms();
-
         if (safety_launch_continuity_loss_since_ms == 0ULL)
         {
-            safety_launch_continuity_loss_since_ms = now_ms;
-            return;
-        }
-
-        if ((now_ms - safety_launch_continuity_loss_since_ms) >=
-            SAFETY_LAUNCH_CONTINUITY_TIMEOUT_MS)
-        {
-            safety_launch_continuity_timeout_count++;
-            /* Diagnostic only: launch continuity loss must never abort. */
+            const uint64_t now_ms = safety_now_ms();
+            safety_launch_continuity_loss_since_ms = now_ms ? now_ms : 1ULL;
         }
         return;
     }
 
     safety_continuity_loss_count = 0U;
     safety_launch_continuity_loss_since_ms = 0ULL;
+}
+
+uint64_t safety_launch_continuity_broken_since_ms(void)
+{
+    uint64_t a, b;
+    do {
+        a = safety_launch_continuity_loss_since_ms;
+        b = safety_launch_continuity_loss_since_ms;
+    } while (a != b);
+    return a;
 }
 
 void safety_thread_entry(ULONG initial_input)

@@ -22,7 +22,7 @@ typedef struct {uint32_t CR1;} PwrFake;
 static PwrFake pwr;
 static unsigned dbp_fail;
 static PwrFake *pwr_view(void){if(dbp_fail)pwr.CR1=0;return &pwr;}
-static struct {uint32_t BKP28R, BKP29R, BKP30R, BKP31R;} tamp;
+static struct {uint32_t BKP26R, BKP27R, BKP28R, BKP29R, BKP30R, BKP31R;} tamp;
 #define RCC (&rcc)
 #define PWR (pwr_view())
 #define TAMP (&tamp)

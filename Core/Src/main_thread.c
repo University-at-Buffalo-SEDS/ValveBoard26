@@ -14,6 +14,7 @@
 #include "solenoid_driver.h"
 #include "servo_driver.h"
 #include "overpressure.h"
+#include "vent_countdown.h"
 #include "telemetry_event_clock.h"
 #include <stdbool.h>
 
@@ -144,10 +145,12 @@ static void normally_open_valve_open(void)
 
 /* The TAMP launch marker survives watchdog, brownout and NRST resets. After an
  * accepted, unaborted Launch a reset must not drain the tank of a burning
- * motor; only an explicit Stop or operator valve command opens Vent/Dump. */
+ * motor; only an explicit Stop, an operator valve command or the post-Launch
+ * auto-vent (vent_countdown.h) opens Vent/Dump. Once auto-vented, the
+ * retained vent marker keeps a reset from closing them again. */
 static uint8_t post_launch_reset_hold(void)
 {
-    return board_launch_latch_is_set() && !board_abort_latch_is_set();
+    return board_launch_latch_is_set() && !board_abort_latch_is_set() && !board_vent_marker_vented();
 }
 
 
@@ -406,6 +409,7 @@ static uint8_t overpressure_refused(thread_comm_msg_t cmd){
     g_overpressure_pending|=1U;
     return 1U;
 }
+static void vent_operator_command(void);
 static void handle_command(thread_comm_msg_t cmd,uint32_t command_epoch){
     if(cmd==CMD_ABORT){(void)thread_comm_request_manual_abort();return;}
     if (!persistent_store_controls_ready()) {
@@ -440,6 +444,7 @@ static void handle_command(thread_comm_msg_t cmd,uint32_t command_epoch){
     const uint8_t valve=(uint8_t)cmd;
     if(cmd==CMD_PILOT_OPEN||cmd==CMD_PILOT_CLOSE||cmd==CMD_DUMP_OPEN||cmd==CMD_DUMP_CLOSE||cmd==CMD_NORMALLY_OPEN_OPEN||cmd==CMD_NORMALLY_OPEN_CLOSE){
       if(thread_comm_manual_effect_owned(0U,command_epoch,apply_manual_valve_locked,(void*)&valve)){
+        vent_operator_command();
         if(cmd==CMD_PILOT_OPEN||cmd==CMD_PILOT_CLOSE)(void)publish_umbilical_status(CMD_PILOT_OPEN,g_pilot_valve_state);
         else if(cmd==CMD_DUMP_OPEN||cmd==CMD_DUMP_CLOSE)(void)publish_umbilical_status(CMD_DUMP_OPEN,g_nitrous_servo_open_state);
         else (void)publish_umbilical_status(CMD_NORMALLY_OPEN_OPEN,g_no_servo_open_state);
@@ -480,6 +485,78 @@ static void service_abort_state(void)
     }
 }
 
+
+/* ---- Post-Launch auto-vent (control owner only) ---- */
+static vent_countdown_t g_vent;
+static uint32_t g_vent_marker_stored = UINT32_MAX;
+/* Simulator/debug probe: state | triggers << 2 | remaining seconds << 8. */
+volatile uint32_t g_sim_vent_state;
+
+static uint64_t main_now_ms(void)
+{
+    return ((uint64_t)tx_time_get() * 1000ULL) / TX_TIMER_TICKS_PER_SECOND;
+}
+
+static uint8_t vent_launched(void)
+{
+    return board_launch_latch_is_set() && !board_abort_latch_is_set();
+}
+
+static void vent_marker_sync(uint64_t now)
+{
+    const uint32_t marker = vent_countdown_elapsed_s(&g_vent, now) |
+        (g_vent.state == VENT_CD_VENTED ? 0x10000U : 0U);
+    if (!g_vent.launched || marker == g_vent_marker_stored) return;
+    board_vent_marker_store(marker & 0xFFFFU, (uint8_t)(marker >> 16));
+    g_vent_marker_stored = marker;
+}
+
+static void vent_boot(void)
+{
+    uint32_t elapsed = 0U;
+    uint8_t vented = 0U;
+    (void)board_vent_marker_load(&elapsed, &vented);
+    vent_countdown_boot(&g_vent, main_now_ms(), vent_launched(), elapsed, vented);
+}
+
+/* The Abort safe state: same outputs and order as abort_state. */
+static void vent_locked(void *context)
+{
+    (void)context;
+    main_thread_force_outputs_safe_off();
+}
+
+static void service_vent_countdown(void)
+{
+    const uint64_t now = main_now_ms();
+    if (vent_countdown_step(&g_vent, now, vent_launched(), thread_comm_get_groundstation_heartbeat_ms(),
+                            safety_launch_continuity_broken_since_ms()) &&
+        g_launch_sequence_active == 0U && thread_comm_post_launch_vent_effect(vent_locked, 0)) {
+        vent_countdown_vented(&g_vent, now);
+        vent_marker_sync(now);
+        publish_abort_umbilical_statuses();
+    }
+    vent_marker_sync(now);
+    g_sim_vent_state = g_vent.state | ((uint32_t)g_vent.triggers << 2) |
+        (((vent_countdown_remaining_ms(&g_vent, now) + 999U) / 1000U) << 8);
+#ifdef TELEMETRY_ENABLED
+    if (vent_countdown_report_due(&g_vent, now)) {
+        char text[VENT_REPORT_MAX];
+        vent_countdown_report_attempt(&g_vent, now);
+        (void)vent_countdown_format_report(&g_vent, now, text, sizeof text);
+        if (log_telemetry_string_asynchronous(SEDS_DT_WARNING, text) == SEDS_OK)
+            vent_countdown_report_sent(&g_vent, now);
+    }
+#endif
+}
+
+/* An applied operator valve command: the operator has control again. */
+static void vent_operator_command(void)
+{
+    const uint64_t now = main_now_ms();
+    vent_countdown_operator(&g_vent, now);
+    vent_marker_sync(now);
+}
 
 /* Servo compare/GPIO readback is commanded state, not physical position. */
 static uint8_t recovery_read_outputs(uint32_t *mask)
@@ -578,6 +655,7 @@ void main_thread_entry(ULONG initial_input)
     }
     
     thread_comm_msg_t msg;uint32_t command_epoch=0U;
+    vent_boot();
     
     board_recovery_bind_owner(recovery_read_outputs, recovery_prepare_outputs, recovery_finish_owner);
     (void)board_bootstrap_storage_bind_owner(bootstrap_stop_owner);
@@ -589,6 +667,7 @@ void main_thread_entry(ULONG initial_input)
         board_bootstrap_storage_service();
         if (!persistent_store_controls_ready()&&!thread_comm_launch_continuity()&&!post_launch_reset_hold()) main_thread_force_outputs_safe_off();
         service_overpressure();
+        service_vent_countdown();
         service_launch_sequence_request();
 
         if (thread_comm_get_abort() != 0U)

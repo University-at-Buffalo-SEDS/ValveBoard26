@@ -369,7 +369,7 @@ bool persistent_store_commit_absent_floor(const uint8_t value[16]){(void)value;r
 #define __DSB() ((void)0)
 static struct {uint32_t APB1ENR1;} rcc;
 static struct {uint32_t CR1;} pwr;
-static struct {uint32_t BKP28R,BKP29R,BKP30R,BKP31R;} tamp;
+static struct {uint32_t BKP26R,BKP27R,BKP28R,BKP29R,BKP30R,BKP31R;} tamp;
 #define RCC (&rcc)
 #define PWR (&pwr)
 #define TAMP (&tamp)

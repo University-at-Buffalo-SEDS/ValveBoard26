@@ -88,6 +88,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/main_thread.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/data_acq_thread.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/overpressure.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/vent_countdown.c
     "$<$<BOOL:${ENABLE_TELEMETRY}>:${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/pressure_sd.c>"
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/power_i2c_recovery.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/safety_thread.c

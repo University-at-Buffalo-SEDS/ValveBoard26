@@ -196,6 +196,9 @@ void thread_comm_service_safety_publication(void);
 #define THREAD_COMM_OVERPRESSURE_ANY_STATE 4U    /* ignore the Launch exclusion */
 uint8_t thread_comm_overpressure_excluded(void);
 uint8_t thread_comm_overpressure_effect(uint8_t flags, void (*apply)(void *), void *context);
+/* Post-Launch auto-vent effect under the shared state owner; refused unless an
+ * accepted, unaborted Launch has finished (or predates this boot). */
+uint8_t thread_comm_post_launch_vent_effect(void (*apply)(void *), void *context);
 void thread_comm_overpressure_release(void);
 uint8_t thread_comm_request_overpressure_abort(uint64_t at_ms, uint32_t detail, uint64_t original_utc);
 void thread_comm_note_overpressure_ack(void);

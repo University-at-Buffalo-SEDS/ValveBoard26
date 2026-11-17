@@ -2,7 +2,8 @@
 
 A watchdog, brownout or NRST reset keeps the TAMP launch marker. Opening Vent
 and Dump then would drain the oxidiser tank of a burning motor; only an
-explicit Stop or operator valve command may do that after Launch.
+explicit Stop, operator valve command or the post-Launch auto-vent may do
+that after Launch, and a reset after the auto-vent must not close them again.
 """
 from pathlib import Path
 import re
@@ -24,7 +25,7 @@ STUB = r"""
 #define __DSB() ((void)0)
 static struct {uint32_t APB1ENR1;} rcc;
 static struct {uint32_t CR1;} pwr;
-static struct {uint32_t BKP28R, BKP29R, BKP30R, BKP31R;} tamp;
+static struct {uint32_t BKP26R, BKP27R, BKP28R, BKP29R, BKP30R, BKP31R;} tamp;
 #define RCC (&rcc)
 #define PWR (&pwr)
 #define TAMP (&tamp)
@@ -61,8 +62,10 @@ static int thread_comm_bind_manual_stop_apply(void (*apply)(void)) {
 /*ACTUAL_HELPERS*/
 static void boot(ULONG initial_input) /*ACTUAL_PROLOGUE*/
 static void loop_guard(void) { /*ACTUAL_GUARD*/ }
+static bool vented_marker;
 static void reset_with(bool launched, bool aborted) {
   memset(&tamp, 0, sizeof tamp);
+  if (vented_marker) { tamp.BKP26R = UINT32_C(0x5601003C); tamp.BKP27R = ~UINT32_C(0x5601003C); }
   if (launched) { tamp.BKP28R = UINT32_C(0x4c41554e); tamp.BKP29R = ~UINT32_C(0x4c41554e); }
   if (aborted) { tamp.BKP30R = UINT32_C(0x41425254); tamp.BKP31R = ~UINT32_C(0x41425254); }
   g_no_servo_open_state = g_nitrous_servo_open_state = 0U; g_pilot_valve_state = 1U;
@@ -83,6 +86,18 @@ int main(void) {
   assert(!g_pilot_valve_state);
   assert(!g_no_servo_open_state && !g_nitrous_servo_open_state);
   loop_guard();
+  assert(!g_no_servo_open_state && !g_nitrous_servo_open_state);
+  /* Reset after the post-Launch auto-vent: the marker keeps it vented. */
+  vented_marker = true;
+  reset_with(true, false);
+  assert(g_no_servo_open_state && g_nitrous_servo_open_state && !g_pilot_valve_state);
+  /* A torn marker reads as absent: hold closed (the countdown vents later). */
+  vented_marker = false;
+  memset(&tamp, 0, sizeof tamp);
+  tamp.BKP28R = UINT32_C(0x4c41554e); tamp.BKP29R = ~UINT32_C(0x4c41554e);
+  tamp.BKP26R = UINT32_C(0x5601003C);
+  g_no_servo_open_state = g_nitrous_servo_open_state = 0U; g_outputs_initialized = 0U;
+  board_abort_latch_init(); boot(0UL);
   assert(!g_no_servo_open_state && !g_nitrous_servo_open_state);
   return 0;
 }

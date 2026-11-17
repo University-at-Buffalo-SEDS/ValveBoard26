@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
 struct RccFake{uint32_t APB1ENR1;};struct PwrFake{uint32_t CR1;};
-struct TampFake{uint32_t BKP28R,BKP29R,BKP30R,BKP31R;};
+struct TampFake{uint32_t BKP26R,BKP27R,BKP28R,BKP29R,BKP30R,BKP31R;};
 extern struct RccFake test_rcc;extern struct PwrFake test_pwr;extern struct TampFake test_tamp;
 #define RCC (&test_rcc)
 #define PWR (&test_pwr)
