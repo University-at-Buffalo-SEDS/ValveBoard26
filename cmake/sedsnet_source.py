@@ -18,7 +18,7 @@ def usable(path):
     return all((path / f).is_file() for f in ('CMakeLists.txt', 'Cargo.toml', 'build.rs'))
 
 
-def select_source(cache, repository, fallbacks, offline=False, timeout=15, ref="dev"):
+def select_source(cache, repository, fallbacks, offline=False, timeout=15, ref="main"):
     if ref not in ("main", "dev"):
         raise ValueError("SEDSnet ref must be main or dev")
     cache.mkdir(parents=True, exist_ok=True)
@@ -70,7 +70,7 @@ def main():
     parser.add_argument('--repository', required=True)
     parser.add_argument('--fallback', action='append', default=[], type=Path)
     parser.add_argument('--offline', action='store_true')
-    parser.add_argument('--ref', choices=('main', 'dev'), default='dev')
+    parser.add_argument('--ref', choices=('main', 'dev'), default='main')
     args = parser.parse_args()
     try:
         print(select_source(args.cache.resolve(), args.repository, args.fallback, args.offline, ref=args.ref))
