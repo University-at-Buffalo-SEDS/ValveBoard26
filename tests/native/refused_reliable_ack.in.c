@@ -65,8 +65,6 @@ static uint8_t authorized_primary(SedsRouter*router,const SedsPacketView*packet)
 static void board_recovery_observe_station_time(SedsRouter*r,const SedsPacketView*p){(void)r;(void)p;}
 static bool bootstrap_request_fresh(uint64_t s,uint64_t n){(void)s;(void)n;abort();}
 static uint64_t board_recovery_station_now(SedsRouter*r){(void)r;abort();}
-#define FSTATE_RX() ((void)0)
-#define FSTATE_OUT(pkt, result, reason) (result)
 uint8_t board_recovery_decode_request(const uint8_t*b,size_t n,BoardRecoveryRequest*o){(void)b;(void)n;(void)o;abort();}
 void board_recovery_encode_status(uint8_t o[BOARD_RECOVERY_STATUS_SIZE],uint8_t r,uint8_t s,uint8_t f,const BoardRecoveryRequest*q,uint64_t g,uint32_t e,uint32_t u,uint32_t m){(void)o;(void)r;(void)s;(void)f;(void)q;(void)g;(void)e;(void)u;(void)m;abort();}
 int32_t board_recovery_snapshot(BoardRecoverySnapshot*o){(void)o;abort();}

@@ -32,7 +32,7 @@ class LaunchAbortPolicyTests(unittest.TestCase):
         shared = (ROOT / 'Core/Src/thread_comm.c').read_text()
         receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Abort_handler')
         command_receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'network_admission_result')+'\n'+function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Valve_Command_handler')
-        clock_adapter = "unsigned long tx_time_get(void){return 0;}\nstatic uint64_t board_recovery_station_now(void*r){(void)r;return 1234;}\n#define FSTATE_RX() ((void)0)\n#define FSTATE_OUT(pkt, result, reason) (result)\n"
+        clock_adapter = "unsigned long tx_time_get(void){return 0;}\nstatic SedsResult seds_router_get_network_time_ms(void*r,uint64_t*out){(void)r;*out=1234;return SEDS_OK;}\n"
         timed_helpers = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'launch_monotonic_tick')+'\n'+function((ROOT / 'Core/Src/telemetry.c').read_text(), 'admit_timed_launch')+'\n'
 
         managed_receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'flight_state_admit')+'\n'+function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Flight_State_handler')
