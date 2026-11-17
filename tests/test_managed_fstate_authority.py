@@ -30,15 +30,15 @@ class ManagedAuthorityTests(unittest.TestCase):
   #define SEDS_DT_FLIGHT_STATE 11U
   #define SEDS_DT_FLIGHT_COMMAND 12U
   #define SEDS_DT_ASCENT_BIASES 13U
-  typedef struct{uint32_t ty;const char*sender;size_t sender_len;uint64_t timestamp;}SedsPacketView;
+  typedef struct{uint32_t ty;const char*sender;size_t sender_len;uint64_t timestamp;uint16_t time_epoch;}SedsPacketView;
+  '''+(ROOT/'Core/Inc/network_stamp.h').read_text()+'''
   static bool ready=true,healthy=true,active=false,time_ok=true;static uint64_t now=20000;
   bool persistent_store_controls_ready(void){return ready;}
   uint8_t board_recovery_floor_is_healthy(void){return healthy;}
   uint8_t board_recovery_floor_active(void){return active;}
   uint8_t board_recovery_command_time_allowed(uint64_t source){return time_ok&&source>100;}
-  SedsResult seds_router_get_network_time_ms(SedsRouter*r,uint64_t*out){assert(r);*out=now;return 0;}
-  uint64_t board_recovery_station_now(SedsRouter*r){uint64_t t=0;return seds_router_get_network_time_ms(r,&t)?0U:t;}
-  '''+function((ROOT/'Core/Src/bootstrap_marker.c').read_text(),'bootstrap_request_fresh')+'''
+  /* SEDSnet freshness fixture: one epoch, network time now. */
+  bool board_recovery_request_fresh(SedsRouter*r,uint64_t s){assert(r);return s&&s!=UINT64_MAX&&(now>=s?now-s<=15000U:s-now<=1000U);}
   bool seds_router_sender_matches_hostname(SedsRouter*r,const char*s,size_t len,const char*name,size_t n){assert(r);return s&&len==n&&!memcmp(s,name,n);}
   '''+function(text,'authorized_primary')+'\n'+function(text,'board_recovery_command_is_stale')+'\n'+body+'''
   int main(int argc,char**argv){assert(argc==2);SedsPacketView p={.ty=SEDS_DT_FLIGHT_STATE,.sender="VB",.sender_len=2,.timestamp=9000};

@@ -139,6 +139,8 @@ bool seds_router_sender_matches_hostname(const SedsRouter*r,const char*s,size_t 
  return length>0&&(size_t)length==n&&!memcmp(s,alias,n);}
 
 SedsResult seds_router_get_network_time_ms(SedsRouter*r,uint64_t*out){assert(sdk_unlocked());(void)r;*out=now;return SEDS_OK;}
+SedsResult seds_router_network_stamp_fresh(SedsRouter*r,uint16_t e,uint64_t t,uint64_t age,uint64_t ahead,bool*out){assert(sdk_unlocked());(void)r;*out=e==0U&&t&&now&&(now>=t?now-t<=age:t-now<=ahead);return SEDS_OK;}
+SedsResult seds_router_raise_time_epoch(SedsRouter*r,uint16_t e,uint16_t*o){(void)r;if(o)*o=e;return SEDS_OK;}
 SedsResult seds_router_log_queue_typed(SedsRouter*r,SedsDataType ty,const void*data,size_t count,size_t size,SedsElemKind kind){assert(sdk_unlocked());(void)r;assert(ty==201&&count==40&&size==1&&kind==SEDS_EK_UNSIGNED);assert(!state_mutex->locked);if(send_failure){send_failure=false;return SEDS_IO;}responses++;memcpy(response,data,40);if(ty==201)assert((response[3]&32U)==EXPECTED_CAP);return SEDS_OK;}
 void seds_router_disable_managed_variable(SedsRouter*r,SedsDataType ty){assert(sdk_unlocked());(void)r;(void)ty;assert(!"whole-service disable forbidden during selective retirement");}
 SedsResult seds_router_invalidate_network_variable_cache(SedsRouter*r,SedsDataType ty,bool*out_invalidated){assert(sdk_unlocked());assert(out_invalidated==NULL);(void)r;assert(!state_mutex->locked&&ty==SEDS_DT_FLIGHT_STATE);return native_cache_fault?SEDS_IO:SEDS_OK;}

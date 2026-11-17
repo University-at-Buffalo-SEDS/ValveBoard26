@@ -32,7 +32,7 @@ class LaunchAbortPolicyTests(unittest.TestCase):
         shared = (ROOT / 'Core/Src/thread_comm.c').read_text()
         receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Abort_handler')
         command_receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'network_admission_result')+'\n'+function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Valve_Command_handler')
-        clock_adapter = "unsigned long tx_time_get(void){return 0;}\nstatic SedsResult seds_router_get_network_time_ms(void*r,uint64_t*out){(void)r;*out=1234;return SEDS_OK;}\n"
+        clock_adapter = "unsigned long tx_time_get(void){return 0;}\nstatic SedsResult seds_router_network_stamp_age_ms(void*r,uint16_t e,uint64_t t,uint8_t*k,int64_t*a){(void)r;(void)e;*k=0U;*a=(int64_t)1234-(int64_t)t;return SEDS_OK;}\n#define FSTATE_RX() ((void)0)\n#define FSTATE_OUT(pkt, result, reason) (result)\n"
         timed_helpers = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'launch_monotonic_tick')+'\n'+function((ROOT / 'Core/Src/telemetry.c').read_text(), 'admit_timed_launch')+'\n'
 
         managed_receiver = function((ROOT / 'Core/Src/telemetry.c').read_text(), 'flight_state_admit')+'\n'+function((ROOT / 'Core/Src/telemetry.c').read_text(), 'Flight_State_handler')
@@ -103,7 +103,8 @@ static unsigned refusals;static SedsResult board_recovery_refused(void){++refusa
 #define SEDS_BAD_ARG -1
 #define SEDS_ERR -2
 #define SEDS_HANDLER_ERROR -3
-typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;const char*sender;size_t sender_len;uint32_t ty;} SedsPacketView;
+typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;const char*sender;size_t sender_len;uint32_t ty;uint16_t time_epoch;} SedsPacketView;
+#include "network_stamp.h"
 static uint8_t board_recovery_command_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static uint8_t board_recovery_automatic_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static uint8_t board_recovery_managed_update_allowed(const SedsPacketView*p){(void)p;return 1;}

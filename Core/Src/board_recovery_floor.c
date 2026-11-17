@@ -5,6 +5,11 @@
 #include <stddef.h>
 #include <stdatomic.h>
 #define BOARD_RECOVERY_FLOOR_KEY UINT32_C(0x4252464c)
+/* Record: issuer (u64 LE), then the floor stamp (u64 LE) as a network stamp
+ * key (network_stamp.h): the SEDSnet time epoch in its top bits above the
+ * millisecond timestamp. A record written before epochs existed holds a plain
+ * timestamp and reads as epoch 0; the layout, size and CRC are unchanged. All
+ * floor/attempted comparisons below therefore order by (epoch, timestamp). */
 /* A checked, nonblocking owner protects every cache field, including64-bit
  * values on CortexM4. No caller waits for this owner or calls SDK while held. */
 static atomic_flag floor_owner = ATOMIC_FLAG_INIT;

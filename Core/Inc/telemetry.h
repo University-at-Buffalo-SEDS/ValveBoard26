@@ -86,6 +86,8 @@ int32_t telemetry_get_init_error_code(void);
 
 uint64_t telemetry_now_ms(void);
 uint64_t telemetry_unix_ms(void);
+/* A received network stamp key (network_stamp.h) on this router's current clock. */
+uint64_t telemetry_stamp_network_ms(uint64_t key);
 uint64_t telemetry_unix_s(void);
 uint8_t telemetry_unix_is_valid(void);
 

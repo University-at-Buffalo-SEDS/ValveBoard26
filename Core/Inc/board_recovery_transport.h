@@ -16,13 +16,16 @@ uint8_t board_recovery_automatic_is_stale(const SedsPacketView *packet);
  * counts it in g_reliable_refusal_count and returns SEDS_OK. */
 extern volatile uint32_t g_reliable_refusal_count;
 SedsResult board_recovery_refused(void);
-/* Advance the station clock from an authorized GS packet's timestamp. */
-void board_recovery_observe_station_time(SedsRouter*router,const SedsPacketView*packet);
-/* Freshness clock: max(valid network time, station clock); 0 when neither. */
-uint64_t board_recovery_station_now(SedsRouter*router);
-/* Network thread only: a valid network clock more than 60 s from the station
- * clock (which then restarts from the next GS packet). */
-bool board_recovery_network_clock_resync_needed(uint64_t network_now);
+/* Request-validity window of a GS-stamped request: at most this old and at
+ * most this far ahead of this node's network time. */
+#define BOARD_RECOVERY_FRESH_AGE_MS UINT64_C(15000)
+#define BOARD_RECOVERY_FRESH_AHEAD_MS UINT64_C(1000)
+/* A network stamp key (network_stamp.h) inside that window, judged with
+ * seds_router_network_stamp_fresh across network time steps. */
+bool board_recovery_request_fresh(SedsRouter*router,uint64_t source);
+/* Once the router exists at boot: raise its time epoch to the epoch of the
+ * persisted replay floor. */
+SedsResult board_recovery_raise_time_epoch(SedsRouter*router);
 #endif
 
 /* Validated floor publication OUTSIDE owner locks. IO/mutex failure is not stale ACK. */

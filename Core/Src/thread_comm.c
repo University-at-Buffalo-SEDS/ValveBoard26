@@ -19,7 +19,10 @@ static uint32_t g_thread_comm_tail = 0U;
 static uint8_t g_thread_comm_initialized = 0U;
 static void (*g_manual_stop_apply)(void);
 /* Published after validated storage access OUTSIDE this mutex. No flash IO in
- * queue/physical-owner admission. Never lowered by ordinary producers. */
+ * queue/physical-owner admission. Never lowered by ordinary producers.
+ * Every network source stamp here (cutoff, accepted Launch owner, recovery
+ * binding) is a network stamp key (network_stamp.h), so these comparisons
+ * order by (time epoch, timestamp) across network time steps. */
 static uint64_t g_command_cutoff_ms;
 static _Atomic uint8_t g_command_admission_fault;
 /* A failed completion retirement release cannot reopen generic admission. */

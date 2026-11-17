@@ -44,7 +44,7 @@ class RefusedReliableAckTests(unittest.TestCase):
         owners = {'authorized_primary': 'board_recovery_transport.c',
                   'board_recovery_refused': 'board_recovery_transport.c',
                   'send_status': 'board_recovery_transport.c',
-                  'bootstrap_now': 'board_recovery_transport.c',
+                  'bootstrap_fresh': 'board_recovery_transport.c',
                   'bootstrap_reply': 'board_recovery_transport.c',
                   'handle_serialized': 'board_recovery_transport.c',
                   'clear_managed_cache': 'flight_state_cache.c',

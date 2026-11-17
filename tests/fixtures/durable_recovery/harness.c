@@ -6,6 +6,7 @@
 #include "board_recovery.h"
 #include "board_recovery_boot.h"
 #include "board_recovery_transport.h"
+#include "network_stamp.h"
 #include "board_abort_latch.h"
 #include "flight_state_cache.h"
 #include <assert.h>
@@ -138,6 +139,8 @@ bool seds_router_sender_matches_hostname(const SedsRouter*r,const char*s,size_t 
  return length>0&&(size_t)length==n&&!memcmp(s,alias,n);}
 
 SedsResult seds_router_get_network_time_ms(SedsRouter*r,uint64_t*out){assert(sdk_unlocked());(void)r;*out=now;return SEDS_OK;}
+SedsResult seds_router_network_stamp_fresh(SedsRouter*r,uint16_t e,uint64_t t,uint64_t age,uint64_t ahead,bool*out){assert(sdk_unlocked());(void)r;*out=e==0U&&t&&now&&(now>=t?now-t<=age:t-now<=ahead);return SEDS_OK;}
+SedsResult seds_router_raise_time_epoch(SedsRouter*r,uint16_t e,uint16_t*o){(void)r;if(o)*o=e;return SEDS_OK;}
 SedsResult seds_router_log_queue_typed(SedsRouter*r,SedsDataType ty,const void*data,size_t count,size_t size,SedsElemKind kind){assert(sdk_unlocked());(void)r;assert(ty==201&&count==40&&size==1&&kind==SEDS_EK_UNSIGNED);assert(!state_mutex->locked);if(send_failure){send_failure=false;return SEDS_IO;}responses++;memcpy(response,data,40);if(ty==201)assert((response[3]&32U)==EXPECTED_CAP);return SEDS_OK;}
 void seds_router_disable_managed_variable(SedsRouter*r,SedsDataType ty){assert(sdk_unlocked());(void)r;(void)ty;assert(!"whole-service disable forbidden during selective retirement");}
 SedsResult seds_router_invalidate_network_variable_cache(SedsRouter*r,SedsDataType ty,bool*out_invalidated){assert(sdk_unlocked());assert(out_invalidated==NULL);(void)r;assert(!state_mutex->locked&&ty==SEDS_DT_FLIGHT_STATE);return native_cache_fault?SEDS_IO:SEDS_OK;}
@@ -153,7 +156,8 @@ static uint8_t read_outputs(uint32_t*out){assert(state_mutex->locked);*out=SAFE_
 static uint8_t last_prepare=255;
 static uint8_t prepare_outputs(uint8_t desired){assert(state_mutex->locked&&desired<=BOARD_RECOVERY_MAX_STATE);last_prepare=desired;return 1;}
 static void finish_outputs(void){assert(state_mutex->locked&&(!store_mutex||!store_mutex->locked));finished++;completed_owner=true;}
-static void request(SedsRouter*r,uint8_t*body,uint64_t timestamp){uint32_t endpoint=RECOVERY_ENDPOINT;SedsPacketView p={.ty=200,.sender="GS",.sender_len=2,.endpoints=&endpoint,.num_endpoints=1,.payload=body,.payload_len=32,.timestamp=timestamp};assert(board_recovery_handle(r,&p,endpoint,123)==SEDS_OK);}
+/* timestamp is a network stamp key (network_stamp.h): epoch 0 keys are plain ms. */
+static void request(SedsRouter*r,uint8_t*body,uint64_t timestamp){uint32_t endpoint=RECOVERY_ENDPOINT;SedsPacketView p={.ty=200,.sender="GS",.sender_len=2,.endpoints=&endpoint,.num_endpoints=1,.payload=body,.payload_len=32,.timestamp=network_stamp_ms(timestamp),.time_epoch=network_stamp_epoch(timestamp)};assert(board_recovery_handle(r,&p,endpoint,123)==SEDS_OK);}
 
 
 static void put64(uint8_t*p,uint64_t v){for(unsigned i=0;i<8;i++)p[i]=(uint8_t)(v>>(8*i));}

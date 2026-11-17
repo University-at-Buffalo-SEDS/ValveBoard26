@@ -60,6 +60,7 @@ ULONG tx_time_get(void){return 100;}
 uint64_t telemetry_unix_ms(void){return 10000;}
 int telemetry_publish_flight_state_at(uint8_t state,uint64_t timestamp){assert(state==7&&timestamp);return 0;}
 int telemetry_send_actuator_command_at(uint8_t cmd,uint64_t timestamp){assert(cmd==14&&timestamp);peer_sends++;return 0;}
+uint64_t telemetry_stamp_network_ms(uint64_t key){return key;}
 int telemetry_send_actuator_command(uint8_t cmd){assert(cmd==14);peer_sends++;return 0;}
 static int publish_umbilical_status(uint8_t cmd,uint8_t state){assert(cmd==6&&state==1);status_sends++;return 0;}
 #define LAUNCH_SEQUENCE_PILOT_OPEN_DELAY_MS 10000U

@@ -34,6 +34,7 @@ extern int telemetry_router_leave(void);
 #include <string.h>
 #include "thread_comm.h"
 #include "board_recovery_transport.h"
+#include "network_stamp.h"
 #include "board_abort_latch.h"
 
 /* Passive debugger evidence: success is API acceptance, not a remote ACK. */
@@ -136,19 +137,6 @@ RouterState g_router = {.r = NULL, .created = 0U, .start_time = 0ULL};
  * remote discovery topology change and a valid SEDSNet network clock. */
 volatile uint32_t g_telemetry_discovery_seen = 0U;
 volatile uint32_t g_telemetry_timesync_valid = 0U;
-/* Network clock restarts after it disagreed with the station clock by >60 s. */
-volatile uint32_t g_network_clock_resyncs = 0U;
-/* A restart cannot fix a source that disagrees with the GS; repeating it on
- * every GS packet kept the clock torn down. Monotonic ticks pace it. */
-#define NETWORK_CLOCK_RESYNC_HOLDOFF_TICKS (30U * (ULONG)TX_TIMER_TICKS_PER_SECOND)
-static ULONG g_network_clock_resync_tick;
-/* Latest GS heartbeat time (the station's own network clock) and its receipt
- * tick, under the router lock. Unlike the forward-only recovery station
- * clock it follows a GS clock step in either direction. */
-#define STATION_REPORT_REFERENCE_TICKS (30U * (ULONG)TX_TIMER_TICKS_PER_SECOND)
-#define STATION_REPORT_AGREEMENT_MS 2000U
-static uint64_t g_station_report_utc;
-static ULONG g_station_report_tick;
 volatile uint32_t g_telemetry_network_ready = 0U;
 volatile uint32_t g_telemetry_peer_mask = 0U;
 volatile uint32_t g_sim_heartbeat_attempts = 0U;
@@ -253,12 +241,21 @@ static bool telemetry_unix_ms_to_utc(uint64_t unix_ms, int32_t *year, uint8_t *m
  * Pair quantization is bounded to one ThreadX tick. Accepted owners never
  * consult this clock again and exact duplicates keep their first deadline. */
 static uint32_t launch_monotonic_tick(void){return (uint32_t)tx_time_get();}
+/* The command's age comes from SEDSnet, translated across network time steps
+ * (kind 1: a newer epoch this node is still re-anchoring to, aged by how long
+ * ago this node first heard of it). The owner's deadline arithmetic receives
+ * that age as an observation in the stamp's own time base. */
 static UINT admit_timed_launch(const SedsPacketView*p) {
- uint64_t utc=0U;const uint32_t before=launch_monotonic_tick();
- if(!g_router.r||seds_router_get_network_time_ms(g_router.r,&utc)!=SEDS_OK)return TX_QUEUE_ERROR;
+ const uint64_t source=network_stamp_of(p);uint8_t kind=3U;int64_t age=0;
+ const uint32_t before=launch_monotonic_tick();
+ if(!g_router.r||!source||source==UINT64_MAX||
+    seds_router_network_stamp_age_ms(g_router.r,p->time_epoch,p->timestamp,&kind,&age)!=SEDS_OK||kind>1U)return TX_QUEUE_ERROR;
  const uint32_t after=launch_monotonic_tick();
  if((uint32_t)(after-before)>1U)return TX_QUEUE_ERROR;
- return thread_comm_request_network_launch_original_at(p->timestamp,p->sender,(uint32_t)p->sender_len,utc,before,launch_monotonic_tick);
+ const uint64_t magnitude=age<0?(uint64_t)(-(age+1))+1U:(uint64_t)age;
+ const uint64_t observed=age<0?(magnitude<source?source-magnitude:0U):(magnitude<UINT64_MAX-source?source+magnitude:0U);
+ if(!observed)return TX_QUEUE_ERROR;
+ return thread_comm_request_network_launch_original_at(source,p->sender,(uint32_t)p->sender_len,observed,before,launch_monotonic_tick);
 }
 
 /* A command refused for safety or staleness stays refused but is
@@ -275,7 +272,7 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
    * use its retained RAM cutoff when later storage access is unavailable. */
   if(pkt&&pkt->payload&&pkt->payload_len==1U&&pkt->payload[0]==CMD_ABORT&&
      board_recovery_manual_stop_source_allowed(g_router.r,pkt)){
-    const UINT stopped=thread_comm_request_accepted_launch_manual_abort(pkt->timestamp);
+    const UINT stopped=thread_comm_request_accepted_launch_manual_abort(network_stamp_of(pkt));
     if(stopped==THREAD_COMM_STALE_TIMESTAMP)return board_recovery_refused();
     if(stopped==TX_SUCCESS){
       (void)telemetry_broadcast_abort("Valve board abort command");
@@ -288,7 +285,7 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
    * Refused/uncertain queue attempts never appear in this owner receipt. */
   if(pkt&&pkt->payload&&pkt->payload_len==1U&&pkt->payload[0]==CMD_SEQUENCE){
     if(pkt->sender_len>THREAD_COMM_LAUNCH_SENDER_MAX||(!pkt->sender&&pkt->sender_len))return board_recovery_refused();
-    if(thread_comm_launch_original_accepted(pkt->timestamp,pkt->sender,(uint32_t)pkt->sender_len))return SEDS_OK;
+    if(thread_comm_launch_original_accepted(network_stamp_of(pkt),pkt->sender,(uint32_t)pkt->sender_len))return SEDS_OK;
   }
 
   /* Publish storage-validated cutoff before state-lock admission; no NVM
@@ -319,7 +316,7 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
   if ((cmd_u8 & THREAD_COMM_AUTOMATIC_TAG) != 0U) {
     const uint8_t command = cmd_u8 & (uint8_t)~THREAD_COMM_AUTOMATIC_TAG;
     if (!(command <= CMD_DUMP_CLOSE)) return board_recovery_refused();
-    return network_admission_result(thread_comm_admit_network_automatic((thread_comm_msg_t)command,pkt->timestamp));
+    return network_admission_result(thread_comm_admit_network_automatic((thread_comm_msg_t)command,network_stamp_of(pkt)));
   }
 
   g_sim_valve_commands_received++;
@@ -352,7 +349,7 @@ SedsResult Valve_Command_handler(const SedsPacketView *pkt, void *user)
    * actually owns it. A transient mutex/queue collision must be visible to
    * SEDSNet so its handler retry can deliver the command instead of silently
    * losing it. */
-  return network_admission_result(thread_comm_admit_network((thread_comm_msg_t)cmd_u8,pkt->timestamp));
+  return network_admission_result(thread_comm_admit_network((thread_comm_msg_t)cmd_u8,network_stamp_of(pkt)));
 }
 
 SedsResult Abort_handler(const SedsPacketView *pkt, void *user)
@@ -377,7 +374,7 @@ SedsResult Abort_handler(const SedsPacketView *pkt, void *user)
   if(pkt&&pkt->payload&&pkt->payload_len==sizeof manual&&
      !memcmp(pkt->payload,manual,sizeof manual-1U)&&pkt->payload[sizeof manual-1U]=='K'&&
      board_recovery_manual_stop_source_allowed(g_router.r,pkt)){
-    (void)thread_comm_request_manual_abort_original_utc(pkt->timestamp);return SEDS_OK;
+    (void)thread_comm_request_manual_abort_original_utc(network_stamp_of(pkt));return SEDS_OK;
   }
   (void)pkt;
   (void)user;
@@ -467,7 +464,7 @@ static SedsResult flight_state_admit(const SedsPacketView *pkt)
   g_flight_state_handler_count++;
   g_last_flight_state_packet = flight_state;
 
-  const UINT applied = thread_comm_apply_network_flight_state(flight_state,pkt->timestamp);
+  const UINT applied = thread_comm_apply_network_flight_state(flight_state,network_stamp_of(pkt));
   if (applied != TX_SUCCESS)
   {
     g_flight_state_handler_error_count++;
@@ -493,14 +490,6 @@ SedsResult Heartbeat_handler(const SedsPacketView *pkt, void *user)
 {
   (void)sim_probe_heartbeat_handler(pkt, user);
   (void)user;
-  /* GS heartbeats keep the recovery freshness clock current, also in Abort. */
-  if (pkt != NULL) board_recovery_observe_station_time(g_router.r, pkt);
-  if (pkt != NULL && pkt->ty == SEDS_DT_HEARTBEAT && pkt->timestamp != 0U &&
-      pkt->timestamp != UINT64_MAX && ground_heartbeat_owner_matches(pkt->sender, pkt->sender_len))
-  {
-    g_station_report_utc = pkt->timestamp;
-    g_station_report_tick = tx_time_get();
-  }
 
   if (thread_comm_get_abort() != 0U)
   {
@@ -653,6 +642,37 @@ uint64_t telemetry_unix_ms(void)
   uint64_t result = telemetry_unix_ms_locked();
 #ifdef TELEMETRY_ENABLED
   if (!telemetry_router_leave()) return 0;
+#endif
+  return result;
+}
+
+/* A received network stamp key (network_stamp.h) as a timestamp on this
+ * router's current clock, for a packet this board originates "at" that
+ * instant: the SDK attaches the router's CURRENT epoch to a supplied
+ * timestamp. Same epoch: unchanged. Older epoch: translated by its SEDSnet
+ * age. Otherwise the router's current time; the key's own milliseconds only
+ * while the router has no network time at all. */
+uint64_t telemetry_stamp_network_ms(uint64_t key)
+{
+  if (key == 0ULL || key == UINT64_MAX) return 0ULL;
+  uint64_t result = network_stamp_ms(key);
+#ifdef TELEMETRY_ENABLED
+  if (!telemetry_router_enter()) return 0ULL;
+  uint64_t now = 0ULL;
+  uint16_t epoch = 0U;
+  uint8_t kind = 3U;
+  int64_t age = 0;
+  if (g_router.r != NULL &&
+      seds_router_get_network_time_ms_with_epoch(g_router.r, &now, &epoch) == SEDS_OK &&
+      epoch != network_stamp_epoch(key))
+  {
+    result = now;
+    if (seds_router_network_stamp_age_ms(g_router.r, network_stamp_epoch(key), network_stamp_ms(key),
+                                         &kind, &age) == SEDS_OK && kind == 0U &&
+        age >= 0 && (uint64_t)age < now)
+      result = now - (uint64_t)age;
+  }
+  if (!telemetry_router_leave()) return 0ULL;
 #endif
   return result;
 }
@@ -888,15 +908,6 @@ static void telemetry_update_network_health(SedsRouter *router)
   if (seds_router_get_network_time_ms(router, &network_time_ms) == SEDS_OK)
   {
     g_telemetry_timesync_valid = 1U;
-    if ((g_network_clock_resyncs == 0U ||
-         (ULONG)(now_ticks - g_network_clock_resync_tick) >= NETWORK_CLOCK_RESYNC_HOLDOFF_TICKS) &&
-        board_recovery_network_clock_resync_needed(network_time_ms) &&
-        telemetry_configure_timesync_locked(router) == SEDS_OK)
-    {
-      g_network_clock_resyncs++;
-      g_network_clock_resync_tick = now_ticks;
-      network_time_ms = 0ULL;
-    }
   }
   /* Keep an observed sample only; safety never enters the SDK or extrapolates. */
   telemetry_event_clock_observe(network_time_ms, (uint32_t)now_ticks);
@@ -1029,21 +1040,13 @@ SedsResult telemetry_poll_discovery(void)
 
 
 #ifdef TELEMETRY_ENABLED
-/* The GS admits a valve report only near its own network clock. The SEDSnet
- * clock is used while it agrees with the latest GS heartbeat; while it is
- * restarting, invalid or stepped away from the GS (a source change), the
- * heartbeat time advanced by board ticks keeps reports flowing and admissible.
- * 0 only when neither clock is known: the report stays pending. */
+/* Valve reports carry the router's own network clock; the SDK attaches its
+ * current time epoch and the GS judges the report's age across network time
+ * steps. 0 while the router has no network time: the report stays pending. */
 static uint64_t telemetry_report_utc_locked(void)
 {
-  const uint64_t network = telemetry_unix_ms_locked();
-  const ULONG age = (ULONG)(tx_time_get() - g_station_report_tick);
-  if (g_station_report_utc == 0U || age > STATION_REPORT_REFERENCE_TICKS) return network;
-  const uint64_t station = g_station_report_utc +
-      ((uint64_t)age * 1000U) / (uint64_t)TX_TIMER_TICKS_PER_SECOND;
-  if (network != 0U && network + STATION_REPORT_AGREEMENT_MS >= station &&
-      network <= station + STATION_REPORT_AGREEMENT_MS) return network;
-  return station;
+  uint64_t network = 0ULL;
+  return seds_router_get_network_time_ms(g_router.r, &network) == SEDS_OK ? network : 0ULL;
 }
 #endif
 
@@ -1431,6 +1434,8 @@ static SedsResult init_telemetry_router_locked(void)
     seds_router_free(r);
     return result;
   }
+  /* The network epoch never falls below the persisted replay floor's. */
+  (void)board_recovery_raise_time_epoch(r);
   /* Publish only a complete router. RX and lazy producers share its mutex. */
   board_recovery_transport_set_router(r);
   g_router.r = r;

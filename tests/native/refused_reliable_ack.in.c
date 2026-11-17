@@ -10,6 +10,9 @@
 #include "board_recovery.h"
 #include "board_bootstrap_storage.h"
 #include "flight_state_cache.h"
+#include "network_stamp.h"
+#define FSTATE_RX() ((void)0)
+#define FSTATE_OUT(pkt, result, reason) (result)
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -62,9 +65,7 @@ static int persistent_store_try_set(uint32_t k,const void*v,size_t n,bool*busy){
 static ULONG tx_time_get(void){return 1;}
 /* Recovery collaborators: the refused paths never reach them. */
 static uint8_t authorized_primary(SedsRouter*router,const SedsPacketView*packet);
-static void board_recovery_observe_station_time(SedsRouter*r,const SedsPacketView*p){(void)r;(void)p;}
-static bool bootstrap_request_fresh(uint64_t s,uint64_t n){(void)s;(void)n;abort();}
-static uint64_t board_recovery_station_now(SedsRouter*r){(void)r;abort();}
+static bool board_recovery_request_fresh(SedsRouter*r,uint64_t s){(void)r;(void)s;abort();}
 uint8_t board_recovery_decode_request(const uint8_t*b,size_t n,BoardRecoveryRequest*o){(void)b;(void)n;(void)o;abort();}
 void board_recovery_encode_status(uint8_t o[BOARD_RECOVERY_STATUS_SIZE],uint8_t r,uint8_t s,uint8_t f,const BoardRecoveryRequest*q,uint64_t g,uint32_t e,uint32_t u,uint32_t m){(void)o;(void)r;(void)s;(void)f;(void)q;(void)g;(void)e;(void)u;(void)m;abort();}
 int32_t board_recovery_snapshot(BoardRecoverySnapshot*o){(void)o;abort();}
@@ -74,12 +75,12 @@ bool board_bootstrap_storage_pending(void){abort();}
 bool board_bootstrap_storage_uncertain_first(void){abort();}
 bool board_bootstrap_storage_query_healthy(void){abort();}
 bool board_bootstrap_storage_note_query(const BoardRecoveryRequest*r,uint64_t a,uint64_t b,uint32_t c){(void)r;(void)a;(void)b;(void)c;abort();}
-int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*r,uint64_t a,uint64_t b,uint32_t c,void*d,BootstrapReply e,BootstrapNow f){(void)r;(void)a;(void)b;(void)c;(void)d;(void)e;(void)f;abort();}
+int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*r,uint64_t a,uint32_t c,void*d,BootstrapReply e,BootstrapFresh f){(void)r;(void)a;(void)c;(void)d;(void)e;(void)f;abort();}
 /* SOURCE_FUNCTION:authorized_primary */
 /* SOURCE_FUNCTION:board_recovery_refused */
 static uint64_t last_query_issuer;
 /* SOURCE_FUNCTION:send_status */
-/* SOURCE_FUNCTION:bootstrap_now */
+/* SOURCE_FUNCTION:bootstrap_fresh */
 /* SOURCE_FUNCTION:bootstrap_reply */
 /* SOURCE_FUNCTION:handle_serialized */
 static bool g_persist_pending;static uint32_t g_last_refresh_ms;

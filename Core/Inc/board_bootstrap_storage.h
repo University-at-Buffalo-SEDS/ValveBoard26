@@ -7,7 +7,9 @@ typedef enum {BOOTSTRAP_NONE,BOOTSTRAP_VIRGIN,BOOTSTRAP_MISSING_GENERATION,BOOTS
 typedef enum {BOOTSTRAP_NOT_ELIGIBLE,BOOTSTRAP_STORED_INHIBITED,BOOTSTRAP_IO,BOOTSTRAP_STALE,BOOTSTRAP_INVALID} BoardBootstrapResult;
 typedef struct{uint64_t durable_generation;uint32_t actual_abort_epoch;}BoardBootstrapReply;
 typedef bool(*BootstrapReply)(void*,const BoardRecoveryRequest*,uint8_t);
-typedef uint64_t(*BootstrapNow)(void*);
+/* Request freshness of a network stamp key (network_stamp.h), judged by the
+ * SEDSnet router across network time steps; never a local clock. */
+typedef bool(*BootstrapFresh)(void*,uint64_t);
 /* Storage-only probe in explicit boot exclusivity before first restore. */
 void board_bootstrap_storage_probe_boot(void);
 /* Main control task only; binds checked owner callbacks and one job slot. */
@@ -21,7 +23,7 @@ bool board_bootstrap_storage_query_healthy(void);
 bool board_bootstrap_storage_note_query(const BoardRecoveryRequest*,uint64_t,uint64_t,uint32_t);
 /* Primary/freshness/shape checks precede staging. -1 means main owner owes
  * the application reply; an SDK ACK is never provisioning confirmation. */
-int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*,uint64_t,uint64_t,uint32_t,void*,BootstrapReply,BootstrapNow);
+int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*,uint64_t,uint32_t,void*,BootstrapReply,BootstrapFresh);
 /* Main job implementation and owner-completed finalizer; no wire registration. */
-BoardBootstrapResult board_bootstrap_storage_first_leg(const BoardRecoveryRequest*,uint64_t,uint64_t,BoardBootstrapReply*);
+BoardBootstrapResult board_bootstrap_storage_first_leg(const BoardRecoveryRequest*,uint64_t,bool,BoardBootstrapReply*);
 #endif

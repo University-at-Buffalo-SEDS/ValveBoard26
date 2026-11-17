@@ -39,7 +39,9 @@ typedef int SedsResult;
 #define SEDS_PERMISSION_DENIED -4
 #define SEDS_IO -9
 #define SEDS_DT_FLIGHT_STATE 256715704U
-typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;const char*sender;size_t sender_len;uint32_t ty;} SedsPacketView;
+typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;const char*sender;size_t sender_len;uint32_t ty;uint16_t time_epoch;} SedsPacketView;
+/* network_stamp.h key of a view (epoch above a 47-bit timestamp). */
+#define network_stamp_of(v) ((uint64_t)(v)->time_epoch<<47|(v)->timestamp)
 #define FLIGHT_STATE_NET_ABORTED 15U
 #define FLIGHT_STATE_NET_INVALID 0xFFU
 static uint8_t flight_state_from_wire(uint8_t raw, uint8_t *retired){(void)retired;return raw>16U?FLIGHT_STATE_NET_INVALID:raw;}

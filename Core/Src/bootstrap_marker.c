@@ -29,5 +29,3 @@ void bootstrap_marker_request(BootstrapMarker*out,const BoardRecoveryRequest*r,u
  *out=(BootstrapMarker){.state=1,.desired=r->desired_state,.version=version,.kind=kind,.first_epoch=r->expected_abort_epoch,.first_time=source,.first_nonce=r->nonce,.first_issuer=r->issuer_session,.first_expected_generation=r->expected_boot_generation};
 }
 
-/* Pure request-time validation shared by storage admission and QUERY arming. */
-bool bootstrap_request_fresh(uint64_t source,uint64_t now){return source&&source!=UINT64_MAX&&now&&now!=UINT64_MAX&&(now>=source?now-source<=15000U:source-now<=1000U);}

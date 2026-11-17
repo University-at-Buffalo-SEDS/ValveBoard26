@@ -206,7 +206,9 @@ static void start_launch_sequence(thread_comm_launch_owner_t owner)
     g_launch_owner=owner;
     if(!thread_comm_launch_begin_owned_deadline(&owner,start_launch_sequence_locked,&request,&request.now)||!request.started)return;
 #ifdef TELEMETRY_ENABLED
-    const uint64_t launch_timestamp_ms=owner.source_utc;
+    /* The accepted owner keeps the command's network stamp key; publish at
+     * that instant on this router's current clock. */
+    const uint64_t launch_timestamp_ms=telemetry_stamp_network_ms(owner.source_utc);
     if(launch_timestamp_ms!=0ULL){
         (void)telemetry_publish_flight_state_at(VALVE_FLIGHT_STATE_LAUNCH,launch_timestamp_ms);
         (void)telemetry_send_actuator_command_at(CMD_IGNITER_SEQUENCE,launch_timestamp_ms);

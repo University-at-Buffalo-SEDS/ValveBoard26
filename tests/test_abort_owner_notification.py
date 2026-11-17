@@ -51,11 +51,12 @@ static SedsResult board_recovery_sync_command_cutoff(void){return SEDS_OK;}
 static SedsResult board_recovery_refused(void){return SEDS_OK;}
 #define SEDS_BAD_ARG -1
 #define SEDS_HANDLER_ERROR -3
-typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;const char*sender;size_t sender_len;uint32_t ty;} SedsPacketView;
+typedef struct {const uint8_t*payload;size_t payload_len;uint64_t timestamp;const char*sender;size_t sender_len;uint32_t ty;uint16_t time_epoch;} SedsPacketView;
+#include "network_stamp.h"
 static uint8_t board_recovery_command_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static uint8_t board_recovery_automatic_is_stale(const SedsPacketView*p){(void)p;return 0;}
 static struct{void*r;}g_router;
-static SedsResult seds_router_get_network_time_ms(void*router,uint64_t*now){(void)router;*now=10000U;return SEDS_OK;}
+static SedsResult seds_router_network_stamp_age_ms(void*router,uint16_t epoch,uint64_t stamp,uint8_t*kind,int64_t*age){(void)router;assert(epoch==0U);*kind=0U;*age=(int64_t)10000-(int64_t)stamp;return SEDS_OK;}
 static bool board_recovery_manual_stop_source_allowed(void*r,const SedsPacketView*p){(void)r;(void)p;return false;}
 static int32_t seds_pkt_get_u8(const SedsPacketView*p,uint8_t*out,size_t n){assert(n==1);*out=p->payload[0];return 1;}
 static int telemetry_broadcast_abort(const char*reason){assert(!strcmp(reason,"Valve board abort command"));return 0;}

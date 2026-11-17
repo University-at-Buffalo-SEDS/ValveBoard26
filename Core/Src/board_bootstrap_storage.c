@@ -22,7 +22,7 @@ static _Atomic bool pending,known_identity,repairable_floor,healthy_floor,runtim
 static BootstrapMarker history;
 static TX_MUTEX jobs_mutex;
 static bool reply_waiting;static uint32_t reply_started;
-static struct {BoardRecoveryRequest request;uint64_t source;void*context;BootstrapReply reply;BootstrapNow now;uint8_t result,kind,phase;bool valid,waiting,dirty;}job;
+static struct {BoardRecoveryRequest request;uint64_t source;void*context;BootstrapReply reply;BootstrapFresh fresh;uint8_t result,kind,phase;bool valid,waiting,dirty;}job;
 /* These query fields have ONE serialized SDK transport owner; main never writes. */
 typedef struct {uint64_t nonce,issuer,source,generation;uint32_t epoch;bool valid;BoardRecoveryCompletedLaunch completed;} BootstrapQuery;
 static BootstrapQuery query;
@@ -228,9 +228,9 @@ static BoardBootstrapResult write_transaction(const BoardRecoveryRequest*r,uint6
  if((!readonly_identity||!view.absent)&&(!board_recovery_floor_accept_bootstrap(accepted)||thread_comm_publish_command_cutoff(accepted)!=TX_SUCCESS))return BOOTSTRAP_IO;
  metadata_store_bool(&floor_publication_pending, (false));metadata_store_bool(&uncertain_first, (false));return BOOTSTRAP_STORED_INHIBITED;
 }
-BoardBootstrapResult board_bootstrap_storage_first_leg(const BoardRecoveryRequest*r,uint64_t source,uint64_t now,BoardBootstrapReply*out){
+BoardBootstrapResult board_bootstrap_storage_first_leg(const BoardRecoveryRequest*r,uint64_t source,bool fresh,BoardBootstrapReply*out){
  if(!r||!out||!recovery_shape(r)||!r->expected_boot_generation||!r->expected_abort_epoch||r->expected_abort_epoch==UINT32_MAX)return BOOTSTRAP_INVALID;
- *out=(BoardBootstrapReply){0};if(!bootstrap_request_fresh(source,now))return BOOTSTRAP_STALE;
+ *out=(BoardBootstrapReply){0};if(!fresh)return BOOTSTRAP_STALE;
  BoardBootstrapResult result=write_transaction(r,source,JOB_FIRST);if(result!=BOOTSTRAP_STORED_INHIBITED)return result;
  BoardRecoverySnapshot live={0};(void)board_recovery_snapshot(&live);out->durable_generation=board_recovery_boot_current();out->actual_abort_epoch=live.abort_epoch;
  return live.abort_epoch==r->expected_abort_epoch&&(live.flags&BOARD_RECOVERY_ABORT_LATCHED)?BOOTSTRAP_STORED_INHIBITED:BOOTSTRAP_IO;
@@ -243,26 +243,29 @@ static bool prepare_transaction(const BoardRecoveryRequest*r,uint64_t source,boo
  if(flight_state_cache_prepare_recovery(r->desired_state)!=0||!board_recovery_bind_bootstrap_request(r->expected_boot_generation,r->expected_abort_epoch,r->desired_state,r->issuer_session,source)){board_recovery_cancel_prepare(r->desired_state,r->expected_abort_epoch);return false;}
  BoardRecoverySnapshot snapshot={0};return board_recovery_apply_safe(r->desired_state,r->expected_abort_epoch,&snapshot)==-14;
 }
-int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*r,uint64_t source,uint64_t network_now,uint32_t live_epoch,void*context,BootstrapReply reply,BootstrapNow now){
- if(!r||!reply||!now||!recovery_shape(r))return BOARD_RECOVERY_RESULT_INVALID;
+int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*r,uint64_t source,uint32_t live_epoch,void*context,BootstrapReply reply,BootstrapFresh fresh){
+ if(!r||!reply||!fresh||!recovery_shape(r))return BOARD_RECOVERY_RESULT_INVALID;
+ /* Judged before jobs_mutex: no SDK call under an application owner. The
+  * QUERY tuple has this one SDK transport owner, so it cannot change here. */
+ const bool source_fresh=fresh(context,source),query_fresh=query.valid&&fresh(context,query.source);
  if(!jobs_enter())return BOARD_RECOVERY_RESULT_IO;
  bool duplicate=job.valid&&same_tuple(r,&job.request);int32_t result=BOARD_RECOVERY_RESULT_IO;
  if(duplicate){
   if(!same_request(r,&job.request)||source!=job.source)result=BOARD_RECOVERY_RESULT_INVALID;
-  else if(!bootstrap_request_fresh(source,network_now))result=BOARD_RECOVERY_RESULT_STALE;
+  else if(!source_fresh)result=BOARD_RECOVERY_RESULT_STALE;
   else if(job.waiting)result=job.phase?BOARD_RECOVERY_RESULT_PENDING:-1;
   else result=job.result==BOARD_RECOVERY_RESULT_OK&&live_epoch!=r->expected_abort_epoch+1U?BOARD_RECOVERY_RESULT_STALE:job.result;
  }else if(job.waiting)result=BOARD_RECOVERY_RESULT_IO;
  else if(metadata_load_bool(&history_valid)&&same_tuple(r,(const uint8_t*)&history+offsetof(BootstrapMarker,first_nonce)))result=!marker_request(r,source)?BOARD_RECOVERY_RESULT_INVALID:history.kind==0U||history.state?BOARD_RECOVERY_RESULT_IO:BOARD_RECOVERY_RESULT_STALE;
  else if(!live_epoch||live_epoch==UINT32_MAX||persistent_store_bootstrap_faulted())result=BOARD_RECOVERY_RESULT_IO;
- else if(!bootstrap_request_fresh(source,network_now)||r->expected_abort_epoch!=live_epoch||(job.valid&&source<=job.source)||!board_recovery_floor_allows_recovery_time(r->issuer_session,source))result=BOARD_RECOVERY_RESULT_STALE;
+ else if(!source_fresh||r->expected_abort_epoch!=live_epoch||(job.valid&&source<=job.source)||!board_recovery_floor_allows_recovery_time(r->issuer_session,source))result=BOARD_RECOVERY_RESULT_STALE;
  else{
   uint64_t generation=board_recovery_boot_current();uint8_t kind=0;
   /* The QUERY tuple has one SDK owner; jobs_mutex and !job.waiting exclude
    * runtime publication here. Share this exact common binding, not the
    * independent FIRST/NORMAL/SECOND generation or history conditions. */
   bool uncertain=board_bootstrap_storage_uncertain_first();
-  bool armed=query.valid&&bootstrap_request_fresh(query.source,network_now)&&r->issuer_session==query.issuer&&r->expected_abort_epoch==query.epoch&&!same_tuple(r,&query);
+  bool armed=query.valid&&query_fresh&&r->issuer_session==query.issuer&&r->expected_abort_epoch==query.epoch&&!same_tuple(r,&query);
   if(uncertain&&metadata_load_bool(&history_valid)&&history.kind==0&&history.first_expected_generation==UINT64_MAX&&r->desired_state==history.desired&&r->expected_boot_generation==UINT64_MAX&&armed&&!query.generation&&source>history.first_time)kind=JOB_RECONCILE;
   else if(!uncertain&&(eligible==BOOTSTRAP_VIRGIN||eligible==BOOTSTRAP_MISSING_GENERATION)&&!generation&&r->expected_boot_generation==UINT64_MAX)kind=JOB_FIRST;
   else if(metadata_load_bool(&normal_eligible)&&!metadata_load_bool(&pending)&&generation&&generation!=UINT64_MAX&&r->expected_boot_generation==generation)kind=JOB_NORMAL;
@@ -285,7 +288,7 @@ int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*r,uin
     held=board_recovery_stage_completed_hold(r->expected_abort_epoch,source,query.source,&query.completed);
    if(held!=0)result=held==-10?BOARD_RECOVERY_RESULT_STALE:BOARD_RECOVERY_RESULT_IO;
    else {
-    query.valid=false;job.request=*r;job.source=source;job.context=context;job.reply=reply;job.now=now;job.result=BOARD_RECOVERY_RESULT_IO;job.kind=kind;job.phase=0;job.valid=true;job.waiting=true;job.dirty=false;
+    query.valid=false;job.request=*r;job.source=source;job.context=context;job.reply=reply;job.fresh=fresh;job.result=BOARD_RECOVERY_RESULT_IO;job.kind=kind;job.phase=0;job.valid=true;job.waiting=true;job.dirty=false;
     result=-1;
    }
   }else result=BOARD_RECOVERY_RESULT_STALE;
@@ -294,26 +297,26 @@ int32_t board_bootstrap_storage_stage_first_leg(const BoardRecoveryRequest*r,uin
 }
 void board_bootstrap_storage_service(void){
  if(!metadata_load_bool(&runtime_ready))return;
- BoardRecoveryRequest request={0};uint64_t source=0;void*context=0;BootstrapReply reply=0;BootstrapNow now=0;bool waiting=false,dirty=false;uint8_t result=BOARD_RECOVERY_RESULT_IO,kind=0,phase=0;
+ BoardRecoveryRequest request={0};uint64_t source=0;void*context=0;BootstrapReply reply=0;BootstrapFresh fresh=0;bool waiting=false,dirty=false;uint8_t result=BOARD_RECOVERY_RESULT_IO,kind=0,phase=0;
  if(!jobs_enter())return;
- if(job.valid&&(job.waiting||job.dirty)){request=job.request;source=job.source;context=job.context;reply=job.reply;now=job.now;waiting=job.waiting;dirty=job.dirty;result=job.result;kind=job.kind;phase=job.phase;}
+ if(job.valid&&(job.waiting||job.dirty)){request=job.request;source=job.source;context=job.context;reply=job.reply;fresh=job.fresh;waiting=job.waiting;dirty=job.dirty;result=job.result;kind=job.kind;phase=job.phase;}
  if(!jobs_leave())return;
  bool terminal=false,progress=false,effect=phase!=0U;
  if(waiting){
   BoardRecoverySnapshot snapshot={0};(void)board_recovery_snapshot(&snapshot);
   /* Freshness gates the first effect. A stopped board whose owner apply is
    * not blocked finishes to its safe target; a blocked one still expires. */
-  if(!phase&&!bootstrap_request_fresh(source,now(context))){result=BOARD_RECOVERY_RESULT_STALE;terminal=true;}
+  if(!phase&&!fresh(context,source)){result=BOARD_RECOVERY_RESULT_STALE;terminal=true;}
   else if(!phase&&snapshot.abort_epoch!=request.expected_abort_epoch){result=BOARD_RECOVERY_RESULT_STALE;terminal=true;}
   else if(!phase){
-   if(kind==JOB_FIRST||kind==JOB_RECONCILE){BoardBootstrapReply observed;BoardBootstrapResult status=kind==JOB_FIRST?board_bootstrap_storage_first_leg(&request,source,now(context),&observed):write_transaction(&request,source,JOB_RECONCILE);result=status==BOOTSTRAP_STALE?BOARD_RECOVERY_RESULT_STALE:status==BOOTSTRAP_INVALID?BOARD_RECOVERY_RESULT_INVALID:BOARD_RECOVERY_RESULT_IO;terminal=true;}
+   if(kind==JOB_FIRST||kind==JOB_RECONCILE){BoardBootstrapReply observed;BoardBootstrapResult status=kind==JOB_FIRST?board_bootstrap_storage_first_leg(&request,source,fresh(context,source),&observed):write_transaction(&request,source,JOB_RECONCILE);result=status==BOOTSTRAP_STALE?BOARD_RECOVERY_RESULT_STALE:status==BOOTSTRAP_INVALID?BOARD_RECOVERY_RESULT_INVALID:BOARD_RECOVERY_RESULT_IO;terminal=true;}
    else if(effect=true,!prepare_transaction(&request,source,kind==JOB_NORMAL)){result=BOARD_RECOVERY_RESULT_IO;terminal=true;}
    else{phase=1;result=BOARD_RECOVERY_RESULT_PENDING;progress=true;}
   }else{
    board_recovery_execute_owned();
    int32_t applied=board_recovery_apply_safe(request.desired_state,request.expected_abort_epoch,&snapshot);
    if(applied!=-14){result=applied==0?BOARD_RECOVERY_RESULT_OK:applied==-10?BOARD_RECOVERY_RESULT_STALE:BOARD_RECOVERY_RESULT_IO;terminal=true;}
-   else if(!bootstrap_request_fresh(source,now(context))){result=BOARD_RECOVERY_RESULT_STALE;terminal=true;}
+   else if(!fresh(context,source)){result=BOARD_RECOVERY_RESULT_STALE;terminal=true;}
   }
   /* A refusal before any Stop/storage effect latches nothing: a reset of a
    * running board must not leave it aborted, and its RAM hold is released
