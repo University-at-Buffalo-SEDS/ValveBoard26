@@ -17,7 +17,7 @@ ValveBoard26 targets the STM32G491 and controls fill-system valves while
 sampling the board's ADC inputs. It exchanges commands, acknowledgements, and
 telemetry over SEDSNet CAN-FD.
 
-CMake tracks SEDSNet `main` with an on-disk fallback when offline, and fetches
+CMake tracks SEDSNet `dev` with an on-disk fallback when offline, and fetches
 the SEDS LaunchCore v1.0.0 release; no
 dependency submodules are required. LaunchCore creates the linker scripts from
 `Bootloader/board_config.h` and packages factory, application, and `.seds` OTA
@@ -113,9 +113,9 @@ Use `--no-watchdog` only for a diagnostic build.
 
 ## SEDSnet build configuration
 
-Use `python3 build.py build --release --sedsnet-ref dev` to build the current
-SEDSnet `dev` commit. The same option is accepted by `test` and `flash`.
-Normal builds continue to select `main`. Each branch has its own source cache;
+Normal builds select the current SEDSnet `dev` commit; use
+`python3 build.py build --release --sedsnet-ref main` to build SEDSnet `main`
+instead. The same option is accepted by `test` and `flash`. Each branch has its own source cache;
 when the network is unavailable the last usable on-disk source is retained.
 The selected revision is printed during configure. An explicit CMake source
 override remains local and is never fetched or reset.
@@ -126,7 +126,7 @@ override remains local and is never fetched or reset.
 python3 build.py build --release
 ```
 
-This selects the latest compatible SEDSnet `main` commit and initializes a 4096-byte,
+This selects the latest compatible SEDSnet `dev` commit and initializes a 4096-byte,
 32-handle arena before the router starts. It uses the existing allocator
 pool and leaves ThreadX scheduling unchanged. Compression stays disabled.
 Use `--packet-store heap` to disable the arena, including in a previously enabled build cache.
