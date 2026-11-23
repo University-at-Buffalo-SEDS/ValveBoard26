@@ -156,7 +156,7 @@ class CanRxServiceTests(unittest.TestCase):
             c = Path(directory) / "service.c"
             exe = Path(directory) / "service"
             c.write_text(code)
-            compiled = subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", str(c), "-o", str(exe)], capture_output=True, text=True)
+            compiled = subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-I", str(ROOT / "Core/Inc"), str(c), "-o", str(exe)], capture_output=True, text=True)
             self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
             self.assertEqual(compiled.stderr, "")
             ran = subprocess.run([str(exe), "1", str(int(actuator))], capture_output=True, text=True, timeout=60)
@@ -171,7 +171,7 @@ class CanRxServiceTests(unittest.TestCase):
     def test_real_fragment_reassembly_survives_three_budget_turns(self):
         source = (ROOT / "Core/Src/can_bus.c").read_text()
         macros = block(source, "CAN_BUS_RX_RING_DEPTH") + "\n" + block(source, "CAN_BUS_RX_SERVICE_BUDGET_MS")
-        frag = source[source.index("#define CAN_BUS_FRAG_MAGIC"):source.index("// =========================\n// RX ring buffer")]
+        frag = source[source.index("#define CAN_BUS_REASM_TIMEOUT_MS"):source.index("// =========================\n// RX ring buffer")]
         reasm = source[source.index("#ifndef CAN_BUS_REASM_SLOTS"):source.index("static HAL_StatusTypeDef can_bus_configure_filters", source.index("#ifndef CAN_BUS_REASM_SLOTS"))]
         push = "rb_push" if "static inline void rb_push(" in source else "rb_push_drop_oldest"
         code = r'''
@@ -201,27 +201,35 @@ static uint64_t stub_board_us;
 __attribute__((unused)) static uint64_t board_now_us(void){return stub_board_us;}
 __attribute__((unused)) static uint64_t g_can_rx_us;
 __attribute__((unused)) static uint64_t can_bus_frame_rx_us(const can_bus_rx_frame_t *f){(void)f;return stub_board_us;}
+#include "can_link.h"
 static uint8_t result[128];
 static unsigned calls;
-static void can_bus_notify_rx(const uint8_t *p,size_t n){assert(!irq&&n==128);memcpy(result,p,n);calls++;}
+static size_t result_len;
+static void can_bus_notify_rx(const uint8_t *p,size_t n){assert(!irq&&n<=128);memcpy(result,p,n);result_len=n;calls++;}
 ''' + macros + "\n" + frag + "\n" + reasm
         code += "\nstatic can_bus_rx_frame_t g_rx_ring[CAN_BUS_RX_RING_DEPTH];\n"
-        for name in ["rb_next", "rb_is_full", push, "rb_pop", "reasm_reset", "reasm_get_slot", "reasm_expire_old", "bit_test", "bit_set", "handle_rx_frame", "can_bus_process_rx"]:
+        for name in ["rb_next", "rb_is_full", push, "rb_pop", "handle_rx_frame", "can_bus_process_rx"]:
             code += function(source, name) + "\n"
         code += r'''
 int main(void){
  uint8_t original[128];for(unsigned i=0;i<128;i++)original[i]=(uint8_t)(i^0xa5);
- for(unsigned i=0;i<3;i++){
-  uint8_t frame[64]={0};can_bus_frag_hdr_t h={0};h.magic=CAN_BUS_FRAG_MAGIC;h.source=7;h.seq=4;h.frag_idx=i;h.frag_cnt=3;h.total_len=128;
-  h.flags=(i==0?CAN_BUS_FRAG_F_FIRST:0)|(i==2?CAN_BUS_FRAG_F_LAST:0);memcpy(frame,&h,sizeof(h));
-  unsigned n=128-i*55;if(n>55)n=55;memcpy(frame+sizeof(h),original+i*55,n);
-  INGRESS(0x123,frame,sizeof(frame));
+ (void)reasm_reset;
+ /* Link format v2: FIRST and LAST carry 64 bytes each with no header; a
+  * padded SINGLE follows. One frame per budget turn. */
+ for(unsigned i=0;i<2;i++){
+  uint8_t frame[64];uint32_t id;size_t take;
+  const size_t n=can_link_frame(original,128,i*64U,0x107,frame,&id,&take);
+  assert(n==64&&take==64);
+  INGRESS(id,frame,(uint8_t)n);
  }
- can_bus_process_rx();assert(!calls&&g_reasm[0].active&&g_reasm[0].got_count==1&&g_rx_tail==1);
- can_bus_process_rx();assert(!calls&&g_reasm[0].active&&g_reasm[0].got_count==2&&g_rx_tail==2);
- can_bus_process_rx();assert(calls==1&&!g_reasm[0].active&&g_rx_tail==g_rx_head);
- assert(!memcmp(result,original,sizeof(result))&&!g_rx_dropped_frames&&!g_board_health_can_rx_drops&&!irq);
- puts("actualfragmentreassembly: threebudgetturns, bitmapretained,128bytesexact,once,drop0");
+ {uint8_t frame[64];uint32_t id;size_t take;const size_t n=can_link_frame(original,21,0,0x107,frame,&id,&take);
+  assert(n==24&&(id&CAN_LINK_PAD));INGRESS(id,frame,(uint8_t)n);}
+ can_bus_process_rx();assert(!calls&&g_reasm[0].active&&g_reasm[0].len==64&&g_rx_tail==1);
+ can_bus_process_rx();assert(calls==1&&result_len==128&&!g_reasm[0].active&&g_rx_tail==2);
+ assert(!memcmp(result,original,128));
+ can_bus_process_rx();assert(calls==2&&result_len==21&&!memcmp(result,original,21)&&g_rx_tail==g_rx_head);
+ assert(!g_rx_dropped_frames&&!g_board_health_can_rx_drops&&!irq);
+ puts("actualfragmentreassembly: threebudgetturns, linkv2, 128bytesexact, padded21exact, once, drop0");
  return 0;
 }
 '''.replace("INGRESS(", push + "(")
@@ -229,7 +237,7 @@ int main(void){
             c = Path(directory) / "fragment.c"
             exe = Path(directory) / "fragment"
             c.write_text(code)
-            compiled = subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", str(c), "-o", str(exe)], capture_output=True, text=True)
+            compiled = subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-I", str(ROOT / "Core/Inc"), str(c), "-o", str(exe)], capture_output=True, text=True)
             self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
             self.assertEqual(compiled.stderr, "")
             ran = subprocess.run([str(exe)], capture_output=True, text=True, timeout=30)
