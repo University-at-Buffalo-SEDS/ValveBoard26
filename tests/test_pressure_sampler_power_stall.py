@@ -15,6 +15,12 @@ readings is measured: as the control owner sees it (overpressure stale clock)
 and as published to the station. Cooperative scheduler: no MCU timing, no
 transducer physics, no preemption; a HAL busy-wait advances the clock without
 letting any other thread run, as on the board.
+
+Priorities: the control thread (Main, priority 6) is modelled as preempting a
+Data Acquisition busy-wait at each millisecond when the production priorities
+put Data Acquisition below Main; with equal priorities (the old layout) it
+cannot. The control loop's lateness past each 1 ms wake is measured, so an
+LTC2990 bus fault must never hold off overpressure and command handling.
 """
 from pathlib import Path
 import re
@@ -101,7 +107,7 @@ TELEMETRY = r'''#pragma once
 #include <stdint.h>
 typedef int SedsResult;typedef uint32_t SedsDataType;
 #define SEDS_OK 0
-#define SEDS_DT_FUEL_TANK_PRESSURE 77U
+#define SEDS_DT_OX_TANK_PRESSURE 77U
 #define SEDS_DT_BATTERY_VOLTAGE 78U
 #define SEDS_DT_BATTERY_CURRENT 79U
 SedsResult log_telemetry_asynchronous(SedsDataType type,const void*data,size_t n,size_t size);
@@ -124,6 +130,7 @@ HARNESS = r'''
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <ucontext.h>
 #include "stm32g4xx_hal.h"
 #include "tx_api.h"
@@ -143,6 +150,14 @@ ULONG tx_time_get(void){return now;}
 void HAL_Delay(uint32_t ms){now+=ms;}
 static ucontext_t sched,ctx[2];static uint32_t wake[2];static int current;
 static char stacks[2][1<<16];static TX_THREAD threads[2];
+/* Busy-wait in thread context. With ACQ_PREEMPTIBLE the higher-priority
+ * control thread runs as soon as it is due, as ThreadX would preempt. */
+static void busy(uint32_t ms){
+ while(ms--){
+  now++;
+  if(ACQ_PREEMPTIBLE&&current==1&&(int32_t)(now-wake[0])>=0){current=0;swapcontext(&ctx[1],&ctx[0]);current=1;}
+ }
+}
 UINT tx_thread_sleep(ULONG t){wake[current]=now+(t?t:1U);swapcontext(&ctx[current],&sched);return 0;}
 TX_THREAD*tx_thread_identify(void){return &threads[current];}
 UINT tx_mutex_get(TX_MUTEX*m,ULONG w){(void)m;(void)w;return 0;}
@@ -175,7 +190,7 @@ static Ltc ltc[2];
 static uint32_t bus_fault_until; /* every transaction busy-waits its timeout */
 static Ltc*device(uint16_t address){return (address>>1)==0x4CU?&ltc[0]:(address>>1)==0x4DU?&ltc[1]:NULL;}
 static HAL_StatusTypeDef bus(uint32_t timeout){
- if(bus_fault_until&&now<bus_fault_until){now+=timeout;return HAL_ERROR;}
+ if(bus_fault_until&&now<bus_fault_until){busy(timeout);return HAL_ERROR;}
  return HAL_OK;
 }
 HAL_StatusTypeDef HAL_I2C_IsDeviceReady(I2C_HandleTypeDef*h,uint16_t a,uint32_t trials,uint32_t timeout)
@@ -203,7 +218,7 @@ static uint32_t published_pressure,last_pressure_at,max_published_gap,voltage_re
 static uint8_t measuring;
 SedsResult log_telemetry_asynchronous(SedsDataType type,const void*d,size_t n,size_t s){
  assert(n==1U&&s==sizeof(float));
- if(type==SEDS_DT_FUEL_TANK_PRESSURE){
+ if(type==SEDS_DT_OX_TANK_PRESSURE){
   if(measuring&&published_pressure&&now-last_pressure_at>max_published_gap)max_published_gap=now-last_pressure_at;
   published_pressure++;last_pressure_at=now;
  }else if(type==SEDS_DT_BATTERY_VOLTAGE){assert(isfinite(*(const float*)d));voltage_reports++;}
@@ -227,7 +242,7 @@ static void solenoidOff(Solenoid_t*s){(void)s;moves++;}
 static uint8_t recovery_read_outputs(uint32_t*mask){*mask=6U;return BOARD_RECOVERY_SAFE_OUTPUTS;}
 RECOVERY_PREPARE
 
-static overpressure_t op;static unsigned stale;static uint32_t resync_at,last_seq,last_seq_at,max_gap;
+static overpressure_t op;static unsigned stale;static uint32_t resync_at,last_seq,last_seq_at,max_gap,max_control_late;
 static void control(void){
  for(;;){
   if(resync_at&&now>=resync_at){resync_at=0U;assert(recovery_prepare_outputs(1U)&&moves==3U);}
@@ -236,6 +251,7 @@ static void control(void){
   const uint32_t act=overpressure_step(&op,&s,now,0U);
   if((act&OVERPRESSURE_ACT_FAULT)&&op.fault==OVERPRESSURE_FAULT_STALE)stale++;
   tx_thread_sleep(1U);
+  if(measuring&&now-wake[0]>max_control_late)max_control_late=now-wake[0];
  }
 }
 static void acq(void){data_acq_thread_entry(0);}
@@ -257,8 +273,10 @@ int main(int argc,char**argv){
  assert(voltage_reports>=5U&&current_reports>=5U);
  measuring=1U;const unsigned before=stale;resync_at=10000U;run(10000U);
  const unsigned voltage_at_move=voltage_reports,current_at_move=current_reports;run(16000U);
- printf("%s gap=%u published_gap=%u stale=%u voltage=%u current=%u\n",
-        mode,max_gap,max_published_gap,stale-before,voltage_reports,current_reports);
+ printf("%s gap=%u published_gap=%u stale=%u voltage=%u current=%u control_late=%u\n",
+        mode,max_gap,max_published_gap,stale-before,voltage_reports,current_reports,max_control_late);
+ if(argc>2)assert(max_control_late<=(uint32_t)atoi(argv[2]));
+ if(argc>3)assert(max_control_late>=(uint32_t)atoi(argv[3]));
  assert(moves==3U&&stale==before);
  assert(max_gap<MAX_SAMPLE_GAP_MS&&max_published_gap<MAX_SAMPLE_GAP_MS);
  if(!strcmp(mode,"por_reconfig")){
@@ -287,7 +305,13 @@ class PressureSamplerPowerStall(unittest.TestCase):
         (tmp / 'harness.c').write_text(HARNESS.replace(
             'RECOVERY_PREPARE', function(control, 'recovery_prepare_outputs')))
         cls.binary = tmp / 'sampler'
-        subprocess.run(['cc', '-std=c11', '-D_XOPEN_SOURCE=700', '-DTELEMETRY_ENABLED',
+        cls.cooperative = tmp / 'sampler-equal-priority'
+        for binary, preemptible in ((cls.binary, 1), (cls.cooperative, 0)):
+            cls.build(tmp, binary, preemptible)
+
+    @classmethod
+    def build(cls, tmp, binary, preemptible):
+        subprocess.run(['cc', f'-DACQ_PREEMPTIBLE={preemptible}', '-std=c11', '-D_XOPEN_SOURCE=700', '-DTELEMETRY_ENABLED',
                         f'-DMAX_SAMPLE_GAP_MS={MAX_SAMPLE_GAP_MS}U', '-Wall', '-Wextra',
                         '-Werror', '-Wno-deprecated-declarations', '-fsanitize=undefined', '-fno-sanitize-recover=all',
                         '-I', str(tmp), '-I', str(ROOT / 'Core/Inc'), '-I', str(ROOT / 'Core/Inc/Drivers'),
@@ -295,20 +319,45 @@ class PressureSamplerPowerStall(unittest.TestCase):
                         str(tmp / 'harness.c'), str(ROOT / 'Core/Src/data_acq_thread.c'),
                         str(ROOT / 'Core/Src/Drivers/ltc2990.c'),
                         str(ROOT / 'Drivers/Pressure/pressure_transducer_driver.c'),
-                        str(ROOT / 'Core/Src/overpressure.c'), '-lm', '-o', str(cls.binary)], check=True)
+                        str(ROOT / 'Core/Src/overpressure.c'), '-lm', '-o', str(binary)], check=True)
 
     @classmethod
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    def run_mode(self, mode):
-        result = subprocess.run([str(self.binary), mode], capture_output=True, text=True, timeout=60)
+    def run_mode(self, mode, *bounds, binary=None):
+        result = subprocess.run([str(binary or self.binary), mode, *map(str, bounds)],
+                                capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_resync_with_healthy_power_monitors_keeps_sampling(self): self.run_mode('normal')
     def test_power_monitor_reset_by_servo_move_does_not_stall_sampling(self): self.run_mode('por')
     def test_power_monitor_reset_by_servo_move_is_reconfigured(self): self.run_mode('por_reconfig')
     def test_power_i2c_timeouts_during_servo_move_do_not_stall_sampling(self): self.run_mode('bus')
+
+    def test_data_acquisition_runs_below_the_control_thread(self):
+        acq = (ROOT / 'Core/Src/data_acq_thread.c').read_text()
+        main = (ROOT / 'Core/Src/main_thread.c').read_text()
+        sd = (ROOT / 'Core/Src/pressure_sd.c').read_text()
+        acq_priority = int(re.search(r'#define DATA_ACQ_THREAD_PRIORITY (\d+)U', acq).group(1))
+        self.assertIn('DATA_ACQ_THREAD_PRIORITY,\n                            DATA_ACQ_THREAD_PRIORITY,', acq)
+        create = main[main.index('tx_thread_create(&main_thread'):]
+        main_priority = int(re.findall(r'^\s*(\d+),\s*$', create, re.M)[1])
+        sd_priority = int(re.search(r'"PT SD transmit",run,0,stack,sizeof\(stack\),(\d+),(\d+),', sd).group(1))
+        # ThreadX: a lower number is a higher priority.
+        self.assertGreater(acq_priority, main_priority)
+        self.assertGreater(sd_priority, acq_priority)
+
+    def test_power_i2c_timeouts_never_delay_the_control_loop(self):
+        # Preempted at each millisecond: at most one tick late.
+        self.run_mode('bus', 1)
+
+    def test_equal_priority_would_stall_the_control_loop(self):
+        # The model detects the old layout: each failed transaction holds the
+        # control loop off for its whole HAL timeout.
+        header = (ROOT / 'Core/Inc/Drivers/ltc2990.h').read_text()
+        timeout = int(re.search(r'#define LTC2990_TIMEOUT_MS\s+\((\d+)U\)', header).group(1))
+        self.run_mode('bus', 1000, timeout, binary=self.cooperative)
 
 
 if __name__ == '__main__':

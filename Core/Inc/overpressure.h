@@ -36,7 +36,7 @@ typedef struct {
     uint32_t seq;      /* Increments per acquisition; 0 means none yet. */
     uint32_t at_ms;    /* Monotonic acquisition time (wrapping). */
     uint32_t raw_adc;
-    float psi;         /* Same calibrated value published as FUEL_TANK_PRESSURE. */
+    float psi;         /* Same calibrated value published as OX_TANK_PRESSURE. */
     uint8_t valid;
     /* Transducer still in its bounded post-start settle window: acquisition
      * is running but there is no usable reading yet (valid is 0). */

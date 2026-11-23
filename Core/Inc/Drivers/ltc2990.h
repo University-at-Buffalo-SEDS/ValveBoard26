@@ -44,7 +44,10 @@
 
 #define LTC2990_I2C_READY_TRIALS        (2U)
 #define LTC2990_I2C_READY_TIMEOUT_MS    (10U)
-#define LTC2990_TIMEOUT_MS              (25U)
+/* One register is ~40 bit times (0.4 ms at 100 kHz); 5 ms bounds a failed
+ * transaction tightly. HAL's fixed 25 ms BUSY wait can still apply to a held
+ * bus; the Data Acquisition thread runs below the control thread for that. */
+#define LTC2990_TIMEOUT_MS              (5U)
 /* TINT precedes voltage/current and can take 55 ms; include bus margin. */
 #define LTC2990_DATA_READY_TIMEOUT_MS   (100U)
 

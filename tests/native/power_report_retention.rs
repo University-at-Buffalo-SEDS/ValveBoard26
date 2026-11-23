@@ -33,7 +33,7 @@ fn main() {
     sent.lock().unwrap().clear();
     let voltage = DataType::named("BATTERY_VOLTAGE");
     let current = DataType::named("BATTERY_CURRENT");
-    let bulk = DataType::named("FUEL_TANK_PRESSURE");
+    let bulk = DataType::named("OX_TANK_PRESSURE");
     router
         .log_queue_ts(voltage, 1001, &[12.4f32])
         .expect("voltage accepted");

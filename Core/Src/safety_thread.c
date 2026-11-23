@@ -9,6 +9,7 @@
 #include "tx_api.h"
 #include "safety_diagnostics.h"
 #include "board_abort_latch.h"
+#include "continuity_debounce.h"
 
 
 
@@ -29,6 +30,8 @@ static volatile GPIO_PinState safety_last_continuity_state;
 /* First sample of the current post-Launch continuity break, 0 intact. It
  * feeds the post-Launch auto-vent countdown (vent_countdown.h). */
 static volatile uint64_t safety_launch_continuity_loss_since_ms;
+/* Debounced wire state (continuity_debounce.h); zero-initialised = intact. */
+static continuity_debounce_t safety_continuity;
 static ULONG safety_thread_stack[SAFETY_THREAD_STACK_SIZE / sizeof(ULONG)];
 
 static uint64_t safety_now_ms(void)
@@ -84,9 +87,15 @@ static void safety_check_continuity(void)
 {
     const GPIO_PinState continuity_state = HAL_GPIO_ReadPin(Continuity_GPIO_Port, Continuity_Pin);
     const uint8_t flight_state = thread_comm_get_flight_state();
+    const uint64_t now_ms = safety_now_ms();
+    const uint8_t was_broken = safety_continuity.broken;
     safety_last_continuity_state = continuity_state;
 
-    if (continuity_state == CONTINUITY_PRESENT_STATE)
+    /* Only a break confirmed over CONTINUITY_DEBOUNCE_SAMPLES consecutive
+     * samples counts; a single glitch neither aborts nor starts the vent. */
+    if (continuity_debounce_step(&safety_continuity,
+                                 continuity_state == CONTINUITY_PRESENT_STATE ? 1U : 0U,
+                                 now_ms) == 0U)
     {
         safety_continuity_loss_count = 0U;
         safety_launch_continuity_loss_since_ms = 0ULL;
@@ -103,13 +112,14 @@ static void safety_check_continuity(void)
 
     /* After Launch a break never aborts; it starts the auto-vent countdown.
      * The launch latch also covers a board reset after Launch, which boots
-     * in Startup. */
+     * in Startup. A break confirmed now counts from its first sample; one
+     * carried over from before Launch counts from now, as before. */
     if (flight_state >= VALVE_FLIGHT_STATE_LAUNCH || board_launch_latch_is_set())
     {
         if (safety_launch_continuity_loss_since_ms == 0ULL)
         {
-            const uint64_t now_ms = safety_now_ms();
-            safety_launch_continuity_loss_since_ms = now_ms ? now_ms : 1ULL;
+            const uint64_t since = was_broken ? now_ms : safety_continuity.broken_since_ms;
+            safety_launch_continuity_loss_since_ms = since ? since : 1ULL;
         }
         return;
     }

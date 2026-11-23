@@ -233,7 +233,8 @@ UINT pressure_sd_init(pressure_transducer_t *sensor)
     source=sensor;
     UINT status=tx_queue_create(&queue,"PT SD capture",4,storage,sizeof(storage));
     if(status!=TX_SUCCESS)return status;
-    status=tx_thread_create(&worker,"PT SD transmit",run,0,stack,sizeof(stack),7,7,TX_NO_TIME_SLICE,TX_AUTO_START);
+    /* Below the Data Acquisition thread (7), which takes the 50 Hz sample. */
+    status=tx_thread_create(&worker,"PT SD transmit",run,0,stack,sizeof(stack),8,8,TX_NO_TIME_SLICE,TX_AUTO_START);
     if(status!=TX_SUCCESS){tx_queue_delete(&queue);return status;}
     ready=1;return TX_SUCCESS;
 }

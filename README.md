@@ -68,7 +68,7 @@ limits live in `sim/board.json`.
 The board protects the tank without the GroundStation link, mirroring the
 GroundStation rules with fixed thresholds (`Core/Inc/overpressure.h`):
 
-- Fresh `FUEL_TANK_PRESSURE` readings continuously at or above 850 psi for
+- Fresh `OX_TANK_PRESSURE` readings continuously at or above 850 psi for
   250 ms (acquisition timestamps, about 13 samples at 50 Hz) open Dump and Vent
   and send automatic Nitrogen/Nitrous close commands to the Actuator Board.
   Real tank pressure rises over seconds; a floating input or solenoid

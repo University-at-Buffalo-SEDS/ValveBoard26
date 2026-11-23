@@ -9,7 +9,7 @@ branch of all three repositories on 2026-11-22.
 The VB has **no SD card**. It does two things with the OX-tank pressure
 transducer:
 
-- It publishes a decimated live stream (`FUEL_TANK_PRESSURE`, 50 Hz) to the GS.
+- It publishes a decimated live stream (`OX_TANK_PRESSURE`, 50 Hz) to the GS.
 - It sends a lossless 250 Hz archive stream (`VALVE_PRESSURE_SD_V1`) to the
   DAQ board, which writes it to its own SD card.
 
@@ -36,7 +36,7 @@ flowchart LR
   ISR -->|"TX_QUEUE, 32 batches"| SDT["PT SD transmit thread"]
   DAQT -->|"overpressure_sample_t snapshot"| MAIN["Main thread<br/>overpressure, vent, valves"]
   SAFE -->|"abort request, continuity-loss time"| MAIN
-  DAQT -->|"FUEL_TANK_PRESSURE 50 Hz<br/>BATTERY_VOLTAGE/CURRENT 1 Hz"| ROUTER["SEDSnet router<br/>Telemetry thread"]
+  DAQT -->|"OX_TANK_PRESSURE 50 Hz<br/>BATTERY_VOLTAGE/CURRENT 1 Hz"| ROUTER["SEDSnet router<br/>Telemetry thread"]
   SDT -->|"VALVE_PRESSURE_SD_V1 62.5 pkt/s"| ROUTER
   MAIN -->|"UMBILICAL_STATUS, WARNING, ACTUATOR_COMMAND, FLIGHT_STATE"| ROUTER
   HEALTH -->|"BOARD_HEALTH 0.2 Hz"| ROUTER
@@ -52,7 +52,7 @@ The sampling, control and publishing schedule:
 sequenceDiagram
   participant T3 as TIM3/ADC3/DMA (500 Hz)
   participant ISR as DMA HT/TC ISR (prio 6)
-  participant SD as PT SD transmit (thread 7)
+  participant SD as PT SD transmit (thread 8)
   participant ACQ as Data Acq (thread 6)
   participant MAIN as Main (thread 6)
   participant SAFE as Safety (thread 5)
@@ -66,7 +66,7 @@ sequenceDiagram
   end
   loop every 20 ms (VALVE_PRESSURE_REPORT_TICKS)
     ACQ->>ACQ: latest DMA sample -> psi -> snapshot
-    ACQ->>NET: FUEL_TANK_PRESSURE (f32), unless settling
+    ACQ->>NET: OX_TANK_PRESSURE (f32), unless settling
   end
   loop every 1 s
     ACQ->>NET: BATTERY_VOLTAGE, BATTERY_CURRENT (LTC2990)
@@ -91,10 +91,10 @@ higher priority. No thread uses time slicing.
 | Context | Priority | Period / trigger | Work | Source |
 |---|---|---|---|---|
 | Telemetry thread | 5 | `tx_thread_sleep(1)` loop | CAN RX drain (16 ms budget), discovery and `BOARD_HEALTH` poll, timesync, OTA, `process_all_queues_timeout(1)`, abort-report retry (at most 1/s) | `Core/Src/telemetry_thread.c:91-140`, `Core/Src/can_bus.c:188` |
-| Safety thread | 5 | every 10 ticks (`SAFETY_CHECK_PERIOD_TICKS`) | GS heartbeat timeout (5000 ms), continuity pin | `Core/Src/safety_thread.c:17-19,131-158` |
+| Safety thread | 5 | every 10 ticks (`SAFETY_CHECK_PERIOD_TICKS`) | GS heartbeat timeout (5000 ms), continuity pin (debounced, 4 samples) | `Core/Src/safety_thread.c:17-19,131-158` |
 | Main thread | 6 | `tx_thread_sleep(1)` loop | overpressure, post-Launch vent, Launch sequence, up to 4 commands per pass, status publication | `Core/Src/main_thread.c:36,634-735` |
-| Data Acquisition thread | 6 | 20 ticks, minus work time, at least 1 | PT live sample and snapshot. LTC2990 power at 1 s, with failed-device retry every 5 s | `Core/Src/data_acq_thread.c:18-22,215-258`, `Core/Inc/telemetry_rates.h:5-27` |
-| PT SD transmit thread | 7 | blocks on capture queue | Converts and encodes 4-sample batches and publishes `VALVE_PRESSURE_SD_V1` | `Core/Src/pressure_sd.c:172-238` |
+| Data Acquisition thread | 7 (below Main, so an LTC2990 busy-wait never holds off control) | 20 ticks, minus work time, at least 1 | PT live sample and snapshot. LTC2990 power at 1 s, with failed-device retry every 5 s | `Core/Src/data_acq_thread.c:18-22,215-258`, `Core/Inc/telemetry_rates.h:5-27` |
+| PT SD transmit thread | 8 | blocks on capture queue | Converts and encodes 4-sample batches and publishes `VALVE_PRESSURE_SD_V1` | `Core/Src/pressure_sd.c:172-238` |
 | DMA1_Channel1 IRQ (ADC3) | NVIC 6 | DMA half and full transfer, every 16 ms | `HAL_ADC_ConvHalfCpltCallback` / `ConvCpltCallback` → `capture()` | `Core/Src/main.c:607`, `Core/Src/pressure_sd.c:73-117` |
 | FDCAN2 IT0/IT1 IRQ | NVIC 6 | CAN frame RX/TX | Drains FIFO into a 64-frame ring | `Core/Src/stm32g4xx_hal_msp.c:267-269`, `Core/Src/can_bus.c:181` |
 | USB_LP IRQ | NVIC 5 | USB | CDC debug only | `Core/Src/stm32g4xx_hal_msp.c:533` |
@@ -113,14 +113,14 @@ that is about 3.54 Mbit/s.
 | Item | OX-tank pressure (live) | OX-tank pressure (archive) | Battery voltage | Battery current | Continuity | Die temperature |
 |---|---|---|---|---|---|---|
 | Sensor | Tank PT, 0–2000 psi span | same PT | LTC2990 @0x4D, V2 × 5.7 divider | LTC2990 @0x4C, 20 mΩ shunt | Launch continuity wire | STM32 TS + VREFINT |
-| Pin / ADC | PB13, ADC3 IN5, 47.5-cycle sample (`pressure_transducer_driver.c:111`) | same | I2C2 | I2C2 | PB15 input, no pull (`main.c:646-650`) | ADC1 internal, 640.5 cycles (`board_temperature.c:62-63`) |
+| Pin / ADC | PB13, ADC3 IN5, 47.5-cycle sample (`pressure_transducer_driver.c:111`) | same | I2C2 | I2C2 | PB15 input, pull-down: an open wire reads broken (`main.c:646-650`) | ADC1 internal, 640.5 cycles (`board_temperature.c:62-63`) |
 | Sample rate | 500 Hz, TIM3 | 500 Hz | on demand: trigger, then 10 ms conversion (`ltc2990.c:150-152`) | same | – | on demand |
 | Read rate | 50 Hz: newest ring entry (`pressure_transducer_driver.c:119-131`) | 250 Hz: every second conversion of each half ring (`pressure_sd.c:104`) | 1 Hz (`data_acq_thread.c:19,189`) | 1 Hz | 100 Hz | 0.2 Hz (`board_temperature.c:16`) |
 | Filtering | none. Point sample, ≤ 2 ms old. Decimation without anti-aliasing | none. Decimation by 2 | none | none | **no debounce**: one sample acts | none |
 | Processing | linear: `psi = (code − 0)·2000/(3103 − 0)`. Codes ≤ 8 give 0 psi; result clamped to 0–2000 (`pressure_transducer_driver.c:6-28,77-103`). Not published for 1000 ms after ADC start (`PRESSURE_TRANSDUCER_SETTLE_MS`) | same conversion, done in the thread (`pressure_sd.c:195`). The ISR drops samples during the settle window (`pressure_sd.c:76`) | `code·5/16384·5.7` (`ltc2990.h:25,31`, `ltc2990.c:281-299`) | `code·19.42 µV/(0.02·10k/81.5k)`, then `·0.58047616 − 1.4267476` (`ltc2990.h:35-43`, `ltc2990.c:301-311,358-368`). NaN is dropped (`ltc2990.c:23-26`) | `GPIO_PIN_SET` = present (`safety_thread.c:20-22`) | factory TS_CAL1/2 and VREFINT_CAL (`board_temperature.c:19-29`) |
 | Units / calibration | psi, fixed in firmware. No runtime calibration. Load-cell temperature compensation does not apply | psi plus raw 12-bit code | V | A | – | 0.01 °C, packed into health word 1 |
 | SD save | none on the VB | DAQ SD, every sample (see §4.3) | none | none | none | none |
-| Network type | `FUEL_TANK_PRESSURE` (id 79920485, f32×1) | `VALVE_PRESSURE_SD_V1` (id 157797238, u8×44) | `BATTERY_VOLTAGE` f32×1 | `BATTERY_CURRENT` f32×1 | none. Only abort reasons and vent warnings carry it | `BOARD_HEALTH` u32×24 word 1 bits 16–31 |
+| Network type | `OX_TANK_PRESSURE` (id 265512518, f32×1; was `FUEL_TANK_PRESSURE`, id 79920485) | `VALVE_PRESSURE_SD_V1` (id 157797238, u8×44) | `BATTERY_VOLTAGE` f32×1 | `BATTERY_CURRENT` f32×1 | none. Only abort reasons and vent warnings carry it | `BOARD_HEALTH` u32×24 word 1 bits 16–31 |
 | Send rate | 50 Hz producer target (`telemetry_rates.h:5-7`) | one packet per 16 ms half ring (62.5 pkt/s, 4 samples each) | 1 Hz | 1 Hz | – | every 5 s (`board_health.c:27`) |
 | Reliability / priority | reliable Off, priority 0, endpoints GROUND_STATION + SD_CARD (`config/sedsnet.json`) | reliable Unordered, priority 0, endpoint VALVE_PRESSURE_LOG only | Unordered, 0 | Unordered, 0 | – | Off, 0 |
 | Egress policy | queued (`seds_router_log_queue_typed`, `telemetry.c:1527-1548`). CAN data band `0x106` (`board_can_priority.h:20-21`). The CAN TX queue drops frames older than 1000 ms (`can_tx_queue.c:11,105-108`) | Admission is refused while committed reliable traffic ≥ window − max(4, 25 %) (`pressure_sd_admission.h:254-293`). A refused batch keeps its bytes and clocks and retries every 1 ms; each call has a 200 ms budget (`pressure_sd.c:124-171,204-215`). Overflow of the 32-batch capture queue is a counted loss | queued, data band | queued, data band | – | `seds_router_log_bytes_ex(..., true)` (`board_health.c:49`) |
@@ -187,8 +187,8 @@ sequenceDiagram
   inside the same main-loop pass that applied the command.
 - Board-side latency from command receipt to output: at most one telemetry
   loop plus one main-loop pass (≈ 1–2 ms) when the main thread is not blocked.
-  It can be longer while the equal-priority Data Acquisition thread runs (see
-  §5).
+  The Data Acquisition thread runs one priority level lower, so an LTC2990
+  I2C wait no longer delays it (§5, item 2).
 - Launch timeline: the pilot solenoid opens 10 000 ms after the accepted
   Launch deadline and closes after 1500 ms (`main_thread.c:31-33,231-276`).
 
@@ -203,7 +203,7 @@ sequenceDiagram
 | Invalid / stale | raw ≥ 3103 or ≥ 4095, NaN or out of range → `F` fault. No valid sample for 2000 ms → `S` fault | 2000 ms | `overpressure.c:10-21,107-113` |
 | Acknowledge | cmd 16. Accepted only when no pilot window is running, a fresh sample exists and psi < 850. No valve moves | – | `overpressure.c:159-172` |
 | Heartbeat abort | no GS heartbeat for 5000 ms, armed after the first heartbeat, in Idle < state < Launch | checked every 10 ms | `safety_thread.c:53-81`, `thread_comm.c:846-854` |
-| Continuity abort | pin not `SET` → abort in Startup < state < Launch | **single 10 ms sample** | `safety_thread.c:83-102`, `thread_comm.c:835-843` |
+| Continuity abort | pin not `SET` for 4 consecutive samples → abort in Startup < state < Launch | 4 samples 10 ms apart: confirmed 30–40 ms after the break (`continuity_debounce.h`) | `safety_thread.c:83-102`, `thread_comm.c:835-843` |
 | Post-Launch auto-vent | link loss or a continuity break starts a countdown. The vent fires at max(start + 150 s, Launch + 60 s) | link loss is detected after 5 s | `vent_countdown.h:40-46` |
 | Abort safe state | vent open, dump open, pilot off. Statuses every 500 ms | – | `main_thread.c:168-187,461-486` |
 
@@ -217,7 +217,7 @@ is 250 ms (sustain) + up to 20 ms (sample phase) + up to one main-loop pass.
 | Stream | Saved on the VB | Saved on the DAQ SD | Reaches the GS | Saved by the GS |
 |---|---|---|---|---|
 | OX-tank psi, 250 Hz raw + psi | no | yes, every sample | no | only as part of a downloaded DAQ CSV attached to a capture |
-| `FUEL_TANK_PRESSURE` 50 Hz | no | the type lists SD_CARD, but the DAQ records the 250 Hz archive instead | yes | every sample: raw row + derived `PRESSURE_TRANSDUCER_CALIBRATED` |
+| `OX_TANK_PRESSURE` 50 Hz | no | the type lists SD_CARD, but the DAQ records the 250 Hz archive instead | yes | every sample: raw row + derived `PRESSURE_TRANSDUCER_CALIBRATED` |
 | `BATTERY_VOLTAGE` / `_CURRENT` | no | the type lists SD_CARD | yes | raw rows + derived battery rows |
 | `UMBILICAL_STATUS` cmd 0–2 | no | – | yes | synthetic `VALVE_STATE` rows |
 | `UMBILICAL_STATUS` cmd 6 | no | – | yes | **not recorded** (it only drives the GS launch clock) |
@@ -237,7 +237,8 @@ All paths are in `GroundStation26/backend/src/`.
 - **Decode.** The GROUND_STATION endpoint handler handles `UMBILICAL_STATUS` at
   ingress (`main.rs:2089-2130`) and pushes everything else to the telemetry
   task (`main.rs:2132-2137`). `ABORT` has its own handler (`main.rs:2160-2170`).
-  - `FUEL_TANK_PRESSURE` uses the generic f32 path. The GS treats it as sensor
+  - `OX_TANK_PRESSURE` (formerly `FUEL_TANK_PRESSURE`; the GS maps the old
+    name to the new one for older recordings) uses the generic f32 path. The GS treats it as sensor
     `IADC` (`telemetry_task/derived.rs:624-629`) and applies the GS `iadc`
     linear fit. The shipped fit is identity (`m = 1`, `b = 0`). The result is
     stored as `PRESSURE_TRANSDUCER_CALIBRATED` (`telemetry_task/loadcell.rs:17`).
@@ -257,7 +258,7 @@ All paths are in `GroundStation26/backend/src/`.
   `data/recordings/events/<kind>/<stamp>_<label>/recording.db`. Windows
   (pre/post): Launch 600/300 s, Abort 300/300 s, Fill 120/120 s, ValveSelfTest
   60/60 s, ColdFlow 120/180 s (`recording_store.rs:127-161`). The test-fire CSV
-  includes `FUEL_TANK_PRESSURE`, `IADC` and `PRESSURE_TRANSDUCER_CALIBRATED`
+  includes the tank pressure, `IADC` and `PRESSURE_TRANSDUCER_CALIBRATED`
   but not `VALVE_STATE` (`test_fire_csv.rs:58-70`).
 - **Burn report.** The GS has no dedicated burn report. The generic report
   studio (`recording_report.rs` and `recording_report.py`) renders any
@@ -287,20 +288,31 @@ unchanged (`Core/Src/sd_card.c:1043,1710`).
 
 No firmware was changed. Items are ordered by operational impact.
 
-1. **The continuity abort has no debounce.** One 10 ms read of PB15 that is not
-   `SET` aborts the board in Fill or Armed (`Core/Src/safety_thread.c:83-101`).
-   The pin has no pull (`Core/Src/main.c:646-650`). A connector bounce or EMI
-   glitch while servos move is enough to abort.
-2. **Equal-priority blocking delays control.** The Data Acquisition and Main
-   threads both run at priority 6 with no time slice
-   (`data_acq_thread.c:254`, `main_thread.c:729`). LTC2990 transactions
-   busy-wait in HAL up to `LTC2990_TIMEOUT_MS` = 25 ms per register on failure
-   (`ltc2990.h:47`, comment at `data_acq_thread.c:200`). During that time the
-   main thread cannot run overpressure or commands. The pressure sample itself
-   keeps running through the wait service.
-3. **The stream name does not match the sensor.** The OX-tank PT is published
-   as `FUEL_TANK_PRESSURE` (`data_acq_thread.c:164`). The DAQ docs call it OX
-   tank (`DAQ-Board/docs/sd-record-format.md:73`). The GS has no OX type.
+1. **Fixed: the continuity abort had no debounce.** One 10 ms read of PB15
+   that was not `SET` aborted the board in Fill or Armed, and the pin had no
+   pull. PB15 now has a pull-down, so an open or cut wire reads broken
+   (fail-safe; an intact loop drives it high). The safety thread changes the
+   wire state only after 4 consecutive samples (30 ms span), so a real break
+   aborts (or, after Launch, starts the auto-vent countdown from its first
+   sample) 30–40 ms after it happens, and shorter glitches in either
+   direction are ignored (`Core/Inc/continuity_debounce.h`,
+   `tests/test_continuity_debounce.py`, `tests/test_safety_diagnostics.py`).
+   No VB schematic is in the repository; the pull direction follows the
+   firmware's `CONTINUITY_PRESENT_STATE` = `SET` and the simulator's
+   "high = loop closed" model.
+2. **Fixed: equal-priority blocking delayed control.** The Data Acquisition
+   thread now runs at priority 7, below the Main thread (6), and the PT SD
+   transmit worker moved from 7 to 8 to stay below it. A failing LTC2990
+   transaction still busy-waits inside HAL, but the control loop preempts it
+   at its next tick. `LTC2990_TIMEOUT_MS` is now 5 ms (was 25 ms) to bound
+   the pressure-sample jitter in the same thread; HAL's own fixed 25 ms BUSY
+   wait can still apply to a held bus. `tests/test_pressure_sampler_power_stall.py`
+   models the preemption: during an I2C fault the control loop is at most
+   0 ms late, against 29 ms with the old equal priorities.
+3. **Fixed: the stream name did not match the sensor.** The OX-tank PT is
+   now published as `OX_TANK_PRESSURE` (type id 265512518). The old
+   `FUEL_TANK_PRESSURE` (79920485) is no longer sent; the GS keeps it as a
+   decode alias for older recordings and layouts.
 4. **Calibration diverges after a GS fit change.** The board psi is final
    (firmware constants, 3103 codes = 2000 psi). The GS applies its `iadc` fit
    on top for `PRESSURE_TRANSDUCER_CALIBRATED`, while the DAQ SD stores board

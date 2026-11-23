@@ -82,7 +82,7 @@ TELEMETRY = r'''#pragma once
 #include <stddef.h>
 typedef int SedsResult;
 #define SEDS_OK 0
-#define SEDS_DT_FUEL_TANK_PRESSURE 77U
+#define SEDS_DT_OX_TANK_PRESSURE 77U
 SedsResult log_telemetry_asynchronous(unsigned type,const void*data,size_t n,size_t size);
 '''
 
@@ -156,7 +156,7 @@ ADC_HandleTypeDef hadc3={&dma};TIM_HandleTypeDef htim3;I2C_HandleTypeDef hi2c2;
 /* Publication and power sensors. A power read may stall the acquisition loop. */
 static unsigned published;static uint32_t first_published_at;static uint32_t stall_at,stall_ms;
 SedsResult log_telemetry_asynchronous(unsigned type,const void*d,size_t n,size_t s)
-{assert(type==SEDS_DT_FUEL_TANK_PRESSURE&&n==1U&&s==sizeof(float));(void)d;if(!published++)first_published_at=now;return SEDS_OK;}
+{assert(type==SEDS_DT_OX_TANK_PRESSURE&&n==1U&&s==sizeof(float));(void)d;if(!published++)first_published_at=now;return SEDS_OK;}
 int8_t LTC2990_Init(LTC2990_Handle_t*h,I2C_HandleTypeDef*i,uint8_t a,int r){(void)h;(void)i;(void)a;(void)r;return 0;}
 void LTC2990_Get_Values(LTC2990_Handle_t*h,float*v){(void)h;(void)v;}
 /* Inert driver: its waits are the stub sleeps below, never serviced. */

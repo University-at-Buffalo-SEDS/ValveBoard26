@@ -7,7 +7,7 @@ are rejected. ADC3/TIM3 also samples at 500 Hz: the 170 MHz timer uses prescaler
 1699 and period 199 in both generated C and `Valve_Board26.ioc`.
 
 Pressure reporting reads the latest ADC DMA sample and queues the existing
-`FUEL_TANK_PRESSURE` telemetry type. Calibration is unchanged; the ADC trigger
+`OX_TANK_PRESSURE` telemetry type. Calibration is unchanged; the ADC trigger
 rate remains 500 Hz. Power telemetry remains 1 Hz. Reporting every ADC sample
 previously added 500 messages/s to the shared gateway and allowed battery updates
 to disappear for 10–15 seconds while pressure continued arriving. The 50 Hz

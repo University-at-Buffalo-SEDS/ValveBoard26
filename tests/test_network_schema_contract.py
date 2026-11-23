@@ -36,14 +36,17 @@ class StableSchemaIdentityTests(unittest.TestCase):
             ("DT", "types", 0x5459, legacy_types),
         ]:
             names = {entry["name"] for entry in schema[collection]}
-            for name, numeric in re.findall(
-                rf"#define SEDS_{kind}_(\w+) \(\(SedsData\w+\)(\d+)U\)", header
-            ):
+            explicit = {entry["name"]: entry["id"] for entry in schema[collection] if "id" in entry}
+            defines = re.findall(
+                rf"#define SEDS_{kind}_(\w+) \(\((?:SedsData\w+|uint32_t)\)(\d+)U\)", header
+            )
+            self.assertTrue(defines, f"no SEDS_{kind}_ identities parsed from the header")
+            for name, numeric in defines:
                 self.assertIn(name, names)
                 value = 0x811c9dc5 ^ namespace
                 for byte in name.encode("utf-8"):
                     value = ((value ^ byte) * 0x01000193) & 0xffffffff
-                expected = legacy.get(name, 0x10000 | (value & 0x0fffffff))
+                expected = explicit.get(name, legacy.get(name, 0x10000 | (value & 0x0fffffff)))
                 self.assertEqual(int(numeric), expected, name)
 
 

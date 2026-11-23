@@ -20,6 +20,13 @@ TX_THREAD data_acq_thread;
 #define DATA_ACQ_POWER_RETRY_TICKS (5U * TX_TIMER_TICKS_PER_SECOND)
 #define DATA_ACQ_STARTUP_DELAY_TICKS (1U * TX_TIMER_TICKS_PER_SECOND)
 #define DATA_ACQ_PRESSURE_PERIOD_TICKS VALVE_PRESSURE_REPORT_TICKS
+/* Below the Main (control) thread, priority 6. An LTC2990 transaction that
+ * fails busy-waits inside HAL (up to LTC2990_TIMEOUT_MS, and HAL's own fixed
+ * 25 ms BUSY-flag wait) without yielding; at equal priority with no time
+ * slice that held off overpressure and command handling for the whole wait.
+ * One level lower, the control loop preempts any such wait at its next tick.
+ * The 50 Hz pressure sample keeps its place above the PT SD worker (8). */
+#define DATA_ACQ_THREAD_PRIORITY 7U
 _Static_assert(TX_TIMER_TICKS_PER_SECOND <= 1000U && 1000U % TX_TIMER_TICKS_PER_SECOND == 0U, "wrapping ms clock");
 
 static LTC2990_Handle_t ltc2990_voltage_handle;
@@ -41,7 +48,7 @@ static ULONG data_acq_thread_stack[DATA_ACQ_THREAD_STACK_SIZE / sizeof(ULONG)];
 /* Written only by this thread, read by the control owner. */
 static overpressure_sample_t data_acq_pressure_snapshot;
 
-static pressure_transducer_t fuel_tank_pressure = {
+static pressure_transducer_t ox_tank_pressure = {
     .hadc = &hadc3,
     .trigger_timer = &htim3,
     .channel = ADC_CHANNEL_5,
@@ -123,7 +130,7 @@ static void data_acq_retry_power_init(void)
 
 static void data_acq_pressure_init(void)
 {
-    if (pressureTransducerInit(&fuel_tank_pressure) != HAL_OK) {
+    if (pressureTransducerInit(&ox_tank_pressure) != HAL_OK) {
         data_acq_pressure_init_fail_count++;
     }
 }
@@ -137,7 +144,7 @@ static void data_acq_report_pressure(void)
         return;
     }
 
-    if (pressureTransducerRead(&fuel_tank_pressure, &sample) == HAL_OK) {
+    if (pressureTransducerRead(&ox_tank_pressure, &sample) == HAL_OK) {
         /* Settling after power-up: never published, never tank pressure, but
          * still a live acquisition for the overpressure stale check. */
         const uint8_t settling = pressureTransducerSettled(HAL_GetTick()) == 0U;
@@ -149,9 +156,9 @@ static void data_acq_report_pressure(void)
             .raw_adc = sample.raw_adc,
             .psi = sample.pressure,
             .valid = !settling && overpressure_sample_valid(sample.raw_adc, sample.pressure,
-                                                            fuel_tank_pressure.min_adc,
-                                                            fuel_tank_pressure.max_adc,
-                                                            fuel_tank_pressure.max_pressure),
+                                                            ox_tank_pressure.min_adc,
+                                                            ox_tank_pressure.max_adc,
+                                                            ox_tank_pressure.max_pressure),
             .settling = settling,
         };
         TX_INTERRUPT_SAVE_AREA
@@ -161,7 +168,7 @@ static void data_acq_report_pressure(void)
         data_acq_last_pressure_ticks = now;
 #ifdef TELEMETRY_ENABLED
         if (!settling)
-            (void)log_telemetry_asynchronous(SEDS_DT_FUEL_TANK_PRESSURE, &sample.pressure, 1U,
+            (void)log_telemetry_asynchronous(SEDS_DT_OX_TANK_PRESSURE, &sample.pressure, 1U,
                                              sizeof(sample.pressure));
 #endif
     } else {
@@ -197,7 +204,8 @@ static void data_acq_report_power(void)
         LTC2990_Get_Values(&ltc2990_voltage_handle, ltc2990_latest_voltages);
     }
 
-    /* Failed transactions busy-wait their HAL timeout without a sleep. */
+    /* Failed transactions busy-wait their HAL timeout without a sleep; the
+     * Main thread preempts them (DATA_ACQ_THREAD_PRIORITY). */
     data_acq_report_pressure();
     if (ltc2990_current_ready != 0U) {
         telemetry_ltc2990_update_current(&ltc2990_current_handle);
@@ -241,7 +249,7 @@ UINT create_data_acq_thread(TX_BYTE_POOL *byte_pool)
 {
     (void)byte_pool;
 #ifdef TELEMETRY_ENABLED
-    const UINT pressure_status = pressure_sd_init(&fuel_tank_pressure);
+    const UINT pressure_status = pressure_sd_init(&ox_tank_pressure);
     if (pressure_status != TX_SUCCESS) return pressure_status;
 #endif
 
@@ -251,8 +259,8 @@ UINT create_data_acq_thread(TX_BYTE_POOL *byte_pool)
                             0,
                             data_acq_thread_stack,
                             DATA_ACQ_THREAD_STACK_SIZE,
-                            6,
-                            6,
+                            DATA_ACQ_THREAD_PRIORITY,
+                            DATA_ACQ_THREAD_PRIORITY,
                             TX_NO_TIME_SLICE,
                             TX_AUTO_START);
 }

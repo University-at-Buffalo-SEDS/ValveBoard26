@@ -38,7 +38,9 @@ down while the GroundStation link is lost (no GS heartbeat for 5 s) OR the
 launch continuity wire is broken (`Core/Inc/vent_countdown.h`):
 
 - Link loss is measured from the last GS heartbeat, continuity from the first
-  sample of the break. The vent comes at
+  sample of the break. A break counts only once 4 consecutive 10 ms samples
+  agree (PB15 has a pull-down, so an open wire reads broken); the same
+  debounce gates the pre-Launch continuity abort. The vent comes at
   max(start + 150 s, Launch + 60 s): never during the burn.
 - It is cancelled only when the heartbeat is present AND continuity is intact,
   or by an applied operator valve command (which also restarts a full countdown

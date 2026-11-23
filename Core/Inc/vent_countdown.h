@@ -18,8 +18,8 @@
  *    same 5 s as the pre-Launch heartbeat abort). The countdown is measured
  *    from the LAST heartbeat, so the vent comes 150 s after the last
  *    heartbeat (detection itself happens 5 s in).
- *  - Continuity broken: from the first control-loop sample with the wire
- *    open (the safety thread's existing detection).
+ *  - Continuity broken: from the first sample of a break the safety thread
+ *    has confirmed (4 consecutive samples, continuity_debounce.h).
  *  - Expiry = max(start + VENT_AFTER_LINK_LOSS_MS, Launch + VENT_BURN_GUARD_MS).
  *    The guard covers the 10 s Launch delay, the 1.5 s pilot window and the
  *    burn with a wide margin, so the vent can never fire during the burn even

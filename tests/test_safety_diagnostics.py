@@ -58,6 +58,14 @@ static uint64_t safety_launch_continuity_loss_since_ms;
 static uint32_t flight_state = 3, launch_latch;
 static uint8_t board_launch_latch_is_set(void) { return (uint8_t)launch_latch; }
 static uint32_t HAL_GPIO_ReadPin(int p, int n) { (void)p; (void)n; return continuity; }
+#include "continuity_debounce.h"
+static continuity_debounce_t safety_continuity;
+static void safety_check_continuity(void);
+/* `samples` safety-thread passes (10 ms apart) with the pin at `level`. */
+static void hold(uint32_t level, unsigned samples) {
+    continuity = level;
+    while (samples--) { safety_check_continuity(); now_ms += 10; }
+}
 """
         else:
             code += "static void main_task_force_outputs_safe_off(void) { calls++; }\n"
@@ -99,30 +107,52 @@ int main(void) {
         if valve:
             code += r"""
     assert(!aborted); /* Preserve Valve standalone boot policy. */
-    continuity=0; safety_check_continuity();
+    /* Glitches shorter than the debounce window never abort (Fill/Armed). */
+    for (unsigned run = 1; run < CONTINUITY_DEBOUNCE_SAMPLES; run++) {
+        hold(0, run); assert(!aborted && !g_safety_first_abort.reason);
+        hold(1, 1); assert(!aborted);
+    }
+    for (unsigned i = 0; i < 1000; i++) { hold(0, 1); hold(1, 1); }
+    assert(!aborted && safety_continuity_loss_latched_count == 0);
+    /* A real break aborts once confirmed: CONTINUITY_DEBOUNCE_SAMPLES
+     * samples, 30 ms after its first sample. */
+    now_ms=15000; hold(0, CONTINUITY_DEBOUNCE_SAMPLES - 1); assert(!aborted);
+    hold(0, 1);
     assert(aborted && g_safety_first_abort.reason==SAFETY_ABORT_CONTINUITY);
-    assert(g_safety_first_abort.at_ms==15000 && g_safety_first_abort.detail==0);
+    assert(g_safety_first_abort.at_ms==15000 + 10 * (CONTINUITY_DEBOUNCE_SAMPLES - 1));
+    assert(g_safety_first_abort.at_ms - 15000 <= 50 && g_safety_first_abort.detail==0);
     heartbeat=1; now_ms=20000; safety_check_heartbeat();
     assert(g_safety_first_abort.reason==SAFETY_ABORT_CONTINUITY);
     /* After Launch a break never aborts; it feeds the auto-vent countdown
      * from its first sample, also after a reset (latch, flight state Startup). */
     for (int retained = 0; retained < 2; retained++) {
-        aborted=0; allowed=0; continuity=1; safety_check_continuity();
+        aborted=0; allowed=0; hold(1, CONTINUITY_DEBOUNCE_SAMPLES);
         assert(safety_launch_continuity_loss_since_ms==0);
         flight_state = retained ? 0 : 7; launch_latch = 1;
-        now_ms=40000; continuity=0; safety_check_continuity();
-        assert(!aborted && safety_launch_continuity_loss_since_ms==40000);
-        now_ms=45000; safety_check_continuity();
-        assert(safety_launch_continuity_loss_since_ms==40000);
-        continuity=1; safety_check_continuity();
+        /* A single glitch does not start the countdown. */
+        now_ms=30000; hold(0, CONTINUITY_DEBOUNCE_SAMPLES - 1); hold(1, 1);
         assert(safety_launch_continuity_loss_since_ms==0);
-        now_ms=0; continuity=0; safety_check_continuity();
+        now_ms=40000; hold(0, CONTINUITY_DEBOUNCE_SAMPLES - 1);
+        assert(safety_launch_continuity_loss_since_ms==0);
+        hold(0, 1);
+        assert(!aborted && safety_launch_continuity_loss_since_ms==40000);
+        now_ms=45000; hold(0, 1);
+        assert(safety_launch_continuity_loss_since_ms==40000);
+        /* A one-sample "intact" glitch during the break keeps it counting. */
+        hold(1, 1); assert(safety_launch_continuity_loss_since_ms==40000);
+        hold(1, CONTINUITY_DEBOUNCE_SAMPLES);
+        assert(safety_launch_continuity_loss_since_ms==0);
+        now_ms=0; hold(0, CONTINUITY_DEBOUNCE_SAMPLES);
         assert(safety_launch_continuity_loss_since_ms==1);
-        continuity=1; safety_check_continuity();
+        hold(1, CONTINUITY_DEBOUNCE_SAMPLES);
     }
     /* Before Launch with Abort not allowed (Startup): no countdown input. */
-    flight_state=0; launch_latch=0; continuity=0; now_ms=50000; safety_check_continuity();
+    flight_state=0; launch_latch=0; now_ms=50000; hold(0, CONTINUITY_DEBOUNCE_SAMPLES);
     assert(safety_launch_continuity_loss_since_ms==0);
+    /* That break carried over into Launch counts from Launch, as before. */
+    flight_state=7; now_ms=60000; hold(0, 1);
+    assert(!aborted && safety_launch_continuity_loss_since_ms==60000);
+    hold(1, CONTINUITY_DEBOUNCE_SAMPLES); assert(safety_launch_continuity_loss_since_ms==0);
     flight_state=3; allowed=1; continuity=1;
 """
         else:
