@@ -31,8 +31,13 @@ def cached_source(name, env):
         for candidate in candidates:
             if (candidate / "CMakeLists.txt").is_file():
                 return candidate
-    return next((p for p in ROOT.glob(f"build/*/_deps/{name}-src")
-                 if (p / "CMakeLists.txt").is_file()), None)
+    found = next((p for p in ROOT.glob(f"build/*/_deps/{name}-src")
+                  if (p / "CMakeLists.txt").is_file()), None)
+    if found is not None:
+        return found
+    # Unconfigured checkout: export the commit the firmware pins.
+    from native_sdk import materialize_pinned_dependency
+    return materialize_pinned_dependency(ROOT, name)
 
 
 def overlay_source(destination):

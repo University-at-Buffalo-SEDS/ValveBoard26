@@ -162,8 +162,8 @@ class DurableRecoveryTests(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
   cls.tmp=tempfile.TemporaryDirectory(prefix='recovery-durable-journal-');p=Path(cls.tmp.name);fixtures=ROOT/'tests/fixtures/durable_recovery'
-  from test_no_telemetry import cached_source
-  cls.exe=p/'test';cls.image=p/'power-cut.bin';sdk=Path(os.environ['SEDSNET_TEST_SOURCE']);lc=cached_source('sedslaunchcore','SDK_FREE_LAUNCHCORE_SOURCE')
+  from native_sdk import configured_dependency_source
+  cls.exe=p/'test';cls.image=p/'power-cut.bin';sdk=Path(os.environ['SEDSNET_TEST_SOURCE']);lc=configured_dependency_source(ROOT,'sedslaunchcore','SDK_FREE_LAUNCHCORE_SOURCE')
   if lc is None:raise RuntimeError('Configure firmware once to cache LaunchCore, or set SDK_FREE_LAUNCHCORE_SOURCE to the matching published source')
   assert 'launchcore_persist_get_strict' in (lc/'bootloader/include/launchcore/persist.h').read_text()
   modules=['board_abort_latch.c','thread_comm.c','board_recovery_wire.c','board_recovery_boot.c','board_recovery_transport.c','flight_state_cache.c','persistent_store.c','board_bootstrap_storage.c','bootstrap_marker.c']
